@@ -1,0 +1,5 @@
+---
+
+- include_tasks: packages.yaml
+- include_tasks: selinux.yaml
+- include_tasks: cores.yaml

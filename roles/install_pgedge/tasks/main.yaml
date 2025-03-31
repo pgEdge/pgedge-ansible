@@ -1,0 +1,11 @@
+---
+
+- name: Check for pgEdge software
+  stat:
+    path: "{{ cluster_path }}/pgedge"
+  register: edge_software
+
+- include_tasks: install.yaml
+  when: not edge_software.stat.exists
+
+- include_tasks: environment.yaml

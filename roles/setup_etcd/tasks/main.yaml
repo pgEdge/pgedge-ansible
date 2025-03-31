@@ -1,0 +1,9 @@
+---
+
+- name: Check for etcd data directory
+  stat:
+    path: /var/lib/etcd/postgresql
+  register: etcd_data
+
+- include_tasks: setup.yaml
+  when: not etcd_data.stat.exists

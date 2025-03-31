@@ -1,0 +1,24 @@
+---
+
+- name: Ensure etcd configuration directory exists
+  file:
+    path: /etc/etcd
+    state: directory
+    owner: etcd
+    group: etcd
+  become: true
+
+- name: Create configuration file for etcd node
+  template:
+    src: files/etcd.yaml.j2
+    dest: /etc/etcd/etcd.yaml
+    owner: etcd
+    group: etcd
+  become: true
+
+- name: Enable and start the etcd service
+  service:
+    name: etcd
+    enabled: true
+    state: started
+  become: true

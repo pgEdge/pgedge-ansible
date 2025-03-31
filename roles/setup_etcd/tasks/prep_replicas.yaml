@@ -1,0 +1,7 @@
+---
+
+- name: Stop and remove Postgres data directory on replica
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge service stop
+    rm -Rf {{ pg_data }}

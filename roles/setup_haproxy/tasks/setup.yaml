@@ -1,0 +1,20 @@
+---
+
+- name: Ensure HAProxy configuration directory exists
+  file:
+    path: /etc/haproxy
+    state: directory
+  become: true
+
+- name: Create configuration file for HAProxy node
+  template:
+    src: files/haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+  become: true
+
+- name: Enable and start the HAProxy service
+  service:
+    name: haproxy
+    enabled: true
+    state: restarted
+  become: true

@@ -1,0 +1,16 @@
+---
+
+- name: Disable selinux
+  selinux:
+    state: disabled
+  become: true
+  register: selinux_state
+  when:
+  - "ansible_facts['selinux']['status'] == 'enabled'"
+
+- name: Reboot after modifying SELinux
+  reboot:
+  become: true
+  when:
+  - "ansible_facts['selinux']['status'] == 'enabled'"
+  - selinux_state.changed

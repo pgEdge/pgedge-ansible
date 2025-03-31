@@ -1,0 +1,11 @@
+---
+
+cluster_path: "{{ ansible_facts['user_dir'] }}/pgedge"
+pg_path: "{{ cluster_path }}/pg{{ pg_version }}"
+pg_data: "{{ cluster_path }}/data/pg{{ pg_version }}"
+
+nodes_in_zone: |
+    {{ groups['pgedge'] |
+    map('extract', hostvars) |
+    selectattr('zone', 'eq', zone) |
+    map(attribute='inventory_hostname') }}

@@ -1,0 +1,5 @@
+---
+
+repo: "{{ repo_name if repo_name in ('download', 'upstream', 'devel') else 'download' }}"
+repo_url: "https://pgedge-{{ repo }}.s3.amazonaws.com/REPO"
+cluster_path: "{{ ansible_facts['user_dir'] }}/pgedge"

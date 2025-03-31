@@ -1,0 +1,8 @@
+---
+
+- name: Include Packages HAProxy needs to run or operate
+  package:
+    name:
+    - haproxy
+    state: present
+  become: true

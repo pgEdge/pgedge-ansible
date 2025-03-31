@@ -1,0 +1,16 @@
+---
+
+- name: Check for pre-existing etcd installation
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge um list | grep -q etcd | grep -q Installed
+  register: etcd_download
+  ignore_errors: true
+
+- name: Download / install pgEdge etcd package to server
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge um install etcd
+  when: etcd_download.stdout == ''
+  args:
+    creates: /etc/systemd/system/etcd.service

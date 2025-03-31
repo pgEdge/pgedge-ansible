@@ -1,0 +1,16 @@
+---
+
+- name: Check for pre-existing Patroni installation
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge um list | grep -q patroni | grep -q Installed
+  register: patroni_install
+  ignore_errors: true
+
+- name: Download / install pgEdge Patroni package on server
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge um install patroni
+  when: patroni_install.stdout == ''
+  args:
+    creates: /etc/systemd/system/patroni.service

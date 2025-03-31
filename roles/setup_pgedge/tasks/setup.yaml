@@ -1,0 +1,31 @@
+---
+
+- name: Set up Spock to manage node metadata
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge spock node-create edge{{ zone }}  \
+      'host={{ inventory_hostname }} user=pgedge dbname={{ db_name }}' \
+      {{ db_name }}
+
+- name: Set the snowflake ID for this spock node
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge db guc-set snowflake.node {{ zone }}
+
+- name: Set Spock to copy DDL
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge db guc-set spock.enable_ddl_replication on
+    ./pgedge db guc-set spock.include_ddl_repset on
+
+# Loop through every other known pgEdge node and subscribe to it.
+
+- name: Subscribe to any other pgEdge nodes in the cluster, by zone
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge spock sub-create sub_n{{ zone }}_n{{ remote_zone }}  \
+      'host={{ item }} user=pgedge dbname={{ db_name }}' \
+      {{ db_name }}
+  vars:
+    remote_zone: "{{ hostvars[item]['zone'] }}"
+  loop: "{{ groups['pgedge'] | reject('equalto', inventory_hostname) }}"

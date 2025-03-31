@@ -1,0 +1,12 @@
+---
+
+- name: Include all the packages which should be installed everywhere
+  package:
+    name:
+    - nano
+    - less
+    - rsync
+    - kernel-modules-extra
+    state: present
+  become: true
+

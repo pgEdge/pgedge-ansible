@@ -1,0 +1,18 @@
+---
+
+- name: Download pgEdge installer package
+  uri:
+    url: "{{ repo_url }}/install.py"
+    dest: /tmp/install.py
+    creates: /tmp/install.py
+  environment:
+    REPO: "{{ repo_url }}"
+
+- name: Install pgEdge package on server
+  shell: |
+    python /tmp/install.py
+    if [ $? -eq 0 ]; then
+      rm /tmp/install.py
+    fi
+  environment:
+    REPO: "{{ repo_url }}"

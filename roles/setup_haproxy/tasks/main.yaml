@@ -1,0 +1,4 @@
+---
+
+- include_tasks: packages.yaml
+- include_tasks: setup.yaml

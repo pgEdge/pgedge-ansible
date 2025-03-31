@@ -1,0 +1,31 @@
+# This inventory will produce an HA cluster with the following:
+#
+# * 2 zones
+# * 3 pgEdge nodes in each zone
+# * 1 HAProxy node in each zone
+
+pgedge:
+  vars:
+    repo_name: upstream
+    db_password: secret
+    is_ha_cluster: true
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 1
+    192.168.6.12:
+      zone: 1
+    192.168.6.13:
+      zone: 2
+    192.168.6.14:
+      zone: 2
+    192.168.6.15:
+      zone: 2
+
+haproxy:
+  hosts:
+    192.168.6.16:
+      zone: 1
+    192.168.6.17:
+      zone: 2

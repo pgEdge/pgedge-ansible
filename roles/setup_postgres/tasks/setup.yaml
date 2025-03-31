@@ -1,0 +1,11 @@
+---
+
+- name: Install and set up Postgres using pgedge CLI
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge setup -d {{ db_name }} \
+        -U {{ db_user }} -P {{ db_password }} \
+        --pg_ver {{ pg_version }} \
+        --spock_ver {{ spock_version }}
+  args:
+    creates: "{{ pg_path }}"

@@ -1,0 +1,36 @@
+---
+
+# Allow for "infinite" core dumps
+
+- name: Configure core dumps1
+  blockinfile:
+    path: /etc/security/limits.conf
+    marker: "# {mark} ANSIBLE MANAGED"
+    insertbefore: "^# End of file"
+    block: |
+      *                -       core            unlimited
+  become: true
+  tags:
+  - debug
+
+- name: Configure core dumps2
+  blockinfile:
+    path: /etc/systemd/coredump.conf
+    marker: "# {mark} ANSIBLE MANAGED"
+    insertafter: "EOF"
+    block: |
+      ProcessSizeMax=32G
+      ExternalSizeMax=32G
+      MaxUse=64G
+  become: true
+  tags:
+  - debug
+
+- name: Configure core dumps3
+  lineinfile:
+    path: /etc/systemd/system.conf
+    regexp: "^#?DefaultLimitCORE="
+    line: "DefaultLimitCORE=infinity:infinity"
+  become: true
+  tags:
+  - debug

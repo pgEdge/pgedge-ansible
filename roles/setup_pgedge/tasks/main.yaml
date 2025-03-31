@@ -1,0 +1,10 @@
+---
+
+- include_tasks: ha_setup.yaml
+  when:
+  - is_ha_cluster
+  - inventory_hostname == first_node_in_zone
+
+- include_tasks: setup.yaml
+  when:
+  - not is_ha_cluster

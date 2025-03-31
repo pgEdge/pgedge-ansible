@@ -1,0 +1,32 @@
+---
+
+- name: Set up Spock to manage node metadata
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge spock node-create edge{{ zone }}  \
+      'host={{ subscribe_target }} user=pgedge dbname={{ db_name }}' \
+      {{ db_name }}
+
+# Loop through every _other_ zone than our own, and subscribe to the first
+# proxy there. If there is no proxy, this is a hybrid setup, so subscribe
+# to the representative pgEdge node instead.
+
+- name: Subscribe to any other pgEdge nodes in the cluster, by zone
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge spock sub-create sub_n{{ zone }}_n{{ item }}  \
+      'host={{ conn_target }} user=pgedge dbname={{ db_name }}' \
+      {{ db_name }}
+  vars:
+    remote_first_node: >-
+      {{ groups['pgedge'] |
+      map('extract', hostvars) |
+      selectattr('zone', 'eq', item) |
+      map(attribute='inventory_hostname') | list | first }}
+    remote_first_proxy: >-
+      {{ groups['haproxy'] |
+      map('extract', hostvars) |
+      selectattr('zone', 'eq', item) |
+      map(attribute='inventory_hostname') | list | first }}
+    conn_target: "{{ remote_first_proxy | default(remote_first_node) }}"
+  loop: "{{ zone_list | reject('equalto', zone) }}"

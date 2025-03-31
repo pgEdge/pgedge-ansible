@@ -1,0 +1,80 @@
+{%- set ip_mask = (ansible_facts['default_ipv4']['address'] + '/' +
+      ansible_facts['default_ipv4']['netmask']) |
+      ansible.utils.ipaddr('host/prefix') %}
+scope: pgedge
+namespace: /db/
+name: {{ ansible_hostname }}
+replication_slot_name: {{ ansible_hostname | regex_replace('[\W-]', '_') }}
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: {{ inventory_hostname }}:8008
+
+etcd3:
+  host: {{ inventory_hostname }}:2379
+  ttl: 30
+  protocol: http
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+
+      # Change any cluster-wide configuration settings here
+      parameters:
+        ssl: on
+        ssl_cert_file: "{{ pg_data }}/server.crt"
+        ssl_key_file: "{{ pg_data }}/server.key"
+        archive_mode: "on"
+        archive_command: "/bin/true"
+        TimeZone: "UTC"
+        wal_level: "logical"
+        max_worker_processes: 12
+        max_replication_slots: 16
+        max_wal_senders: 16
+        hot_standby_feedback: "on"
+        track_commit_timestamp: "on"
+        shared_preload_libraries: "pg_stat_statements, snowflake, spock"
+        spock.enable_ddl_replication: "on"
+        spock.include_ddl_repset: "on"
+        spock.exception_behaviour: "sub_disable"
+        spock.conflict_resolution: "last_update_wins"
+        spock.save_resolutions: "on"
+        spock.conflict_log_level: "DEBUG"
+        snowflake.node: {{ zone }}
+
+    # This will tell Patroni to ignore Spock replication slots.
+    ignore_slots:
+    - type: logical
+      plugin: spock_output
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: {{ inventory_hostname }}:5432
+  data_dir: {{ pg_data }}
+  bin_dir: {{ pg_path }}/bin
+  pgpass: {{ ansible_facts['user_dir'] }}/.patroni_pgpass
+
+  # HBA rules go here because the only other way to get them is to fully
+  # bootstrap the cluster from scratch. That basically precludes adding to an
+  # existing cluster.
+
+  pg_hba:
+  - local all pgedge peer
+  - host replication replicator {{ ip_mask }} scram-sha-256
+  - host replication replicator 127.0.0.1/32 scram-sha-256
+  - host all all 0.0.0.0/0 scram-sha-256
+
+  authentication:
+    replication:
+      username: {{ replication_user }}
+      password: {{ replication_password }}
+    superuser:
+      username: {{ db_user }}
+      password: {{ db_password }}
