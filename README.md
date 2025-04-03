@@ -18,6 +18,8 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | is_ha_cluster | false | If true, install etcd and Patroni on all nodes in the `pgedge` group. If HAProxy nodes exist, they will reflect nodes in the same zone. Subscriptions from other pgEdge nodes will also pass through the zone HAProxy. |
 | replication_user | replicator | This user is specifically for Patroni replication purposes. |
 | replication_password | secret | Password for the `replication_user` user. |
+| synchronous_mode | false | Enable to allow Patroni to manage `synchonous_commit` and `synchronous_standby_names` parameters based on HA cluster state. |
+| synchronous_mode_strict | false | When synchronous mode is enabled, Patroni will normally disable synchronous replication if no synchronous replicas are available. Enable this parameter to always enforce synchronous commit. |
 
 Modifying other parameters will have no effect on the cluster.
 
