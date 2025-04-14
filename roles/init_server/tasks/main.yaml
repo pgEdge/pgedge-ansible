@@ -2,4 +2,9 @@
 
 - include_tasks: packages.yaml
 - include_tasks: selinux.yaml
+
 - include_tasks: cores.yaml
+  when: debug_pgedge
+
+- include_tasks: hosts.yaml
+  when: manage_host_file

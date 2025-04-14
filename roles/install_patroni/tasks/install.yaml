@@ -3,9 +3,8 @@
 - name: Check for pre-existing Patroni installation
   shell: |
     cd {{ cluster_path }}
-    ./pgedge um list | grep -q patroni | grep -q Installed
+    ./pgedge um list | grep -q patroni | grep -q Installed | cat
   register: patroni_install
-  ignore_errors: true
 
 - name: Download / install pgEdge Patroni package on server
   shell: |
@@ -14,3 +13,36 @@
   when: patroni_install.stdout == ''
   args:
     creates: /etc/systemd/system/patroni.service
+
+# This next part is a bit of a hack. We create a Python virtualenv and wrapper
+# scripts for the Patroni scripts so the virtualenv is always inherited no
+# matter how they're invoked. This should be deprecated in favor of installing
+# the official Patroni packages instead.
+
+- name: Set up Python virtual environment for Patroni + required libraries
+  pip:
+    virtualenv_command: python3 -m venv
+    virtualenv: /usr/local/patroni/env
+    virtualenv_site_packages: true
+    requirements: /usr/local/patroni/requirements.txt
+  become: true
+
+- name: Add additional cdiff library to Patroni virtualenv
+  pip:
+    virtualenv_command: python3 -m venv
+    virtualenv: /usr/local/patroni/env
+    name: cdiff
+  become: true
+
+- name: Create env wrappers for the main Patroni scripts
+  copy:
+    content: |
+      #!/bin/bash
+      source /usr/local/patroni/env/bin/activate
+      /usr/local/patroni/{{ item }}.py $@
+    dest: "/usr/local/bin/{{ item }}"
+    mode: 0555
+  loop:
+  - patroni
+  - patronictl
+  become: true

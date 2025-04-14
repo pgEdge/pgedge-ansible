@@ -1,0 +1,16 @@
+---
+
+- name: Include Packages Patroni needs to run or operate
+  package:
+    name:
+    - python3-psycopg2
+    state: present
+  become: true
+
+- name: Include Packages Patroni needs to run or operate on Debian systems
+  package:
+    name:
+    - python3-venv
+    state: present
+  become: true
+  when: ansible_facts.os_family == 'Debian'

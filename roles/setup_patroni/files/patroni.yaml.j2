@@ -1,5 +1,5 @@
-{%- set ip_mask = (ansible_facts['default_ipv4']['address'] + '/' +
-      ansible_facts['default_ipv4']['netmask']) |
+{%- set ip_mask = (ansible_default_ipv4.address + '/' +
+      ansible_default_ipv4.netmask) |
       ansible.utils.ipaddr('host/prefix') %}
 scope: pgedge
 namespace: /db/
@@ -68,7 +68,7 @@ postgresql:
   # existing cluster.
 
   pg_hba:
-  - local all pgedge peer
+  - local all {{ ansible_user_id }} peer
   - host replication replicator {{ ip_mask }} scram-sha-256
   - host replication replicator 127.0.0.1/32 scram-sha-256
   - host all all 0.0.0.0/0 scram-sha-256

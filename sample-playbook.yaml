@@ -10,8 +10,4 @@
   - init_server
   - install_pgedge
   - setup_postgres
-  - install_etcd
-  - install_patroni
-  - setup_etcd
-  - setup_patroni
   - setup_pgedge

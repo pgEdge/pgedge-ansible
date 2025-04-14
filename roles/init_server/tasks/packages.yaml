@@ -6,7 +6,6 @@
     - nano
     - less
     - rsync
-    - kernel-modules-extra
+    - "{{ 'kernel-modules-extra' if ansible_facts.os_family == 'RedHat' else 'systemd-coredump' }}"
     state: present
   become: true
-

@@ -1,6 +1,8 @@
 {%- set endpoints = [] %}
 {%- for host in nodes_in_zone %}
-{%- set _ = endpoints.append(hostvars[host]['ansible_hostname'] + '=http://' + host + ':2380') %}
+{%-   set host_name = hostvars[host].ansible_hostname %}
+{%-   set inv_name = hostvars[host].inventory_hostname %}
+{%-   set _ = endpoints.append(host_name + '=http://' + inv_name + ':2380') %}
 {%- endfor %}
 name: {{ ansible_hostname }}
 advertise-client-urls: http://{{ inventory_hostname }}:2379
@@ -9,8 +11,8 @@ initial-advertise-peer-urls: http://{{ inventory_hostname }}:2380
 initial-cluster: {{ endpoints | join(',') }}
 initial-cluster-state: new
 initial-cluster-token: pgedge_cluster
-listen-client-urls: http://{{ inventory_hostname }}:2379,http://localhost:2379
-listen-peer-urls: http://{{ inventory_hostname }}:2380
+listen-client-urls: http://{{ ansible_default_ipv4.address }}:2379,http://127.0.0.1:2379
+listen-peer-urls: http://{{ ansible_default_ipv4.address }}:2380
 dial-timeout: 20s
 read-timeout: 20s
 write-timeout: 20s

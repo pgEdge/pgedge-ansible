@@ -4,7 +4,7 @@
   shell: |
     cd {{ cluster_path }}
     ./pgedge spock node-create edge{{ zone }}  \
-      'host={{ inventory_hostname }} user=pgedge dbname={{ db_name }}' \
+      'host={{ inventory_hostname }} user={{ ansible_user_id }} dbname={{ db_name }}' \
       {{ db_name }}
 
 - name: Set the snowflake ID for this spock node
@@ -24,7 +24,7 @@
   shell: |
     cd {{ cluster_path }}
     ./pgedge spock sub-create sub_n{{ zone }}_n{{ remote_zone }}  \
-      'host={{ item }} user=pgedge dbname={{ db_name }}' \
+      'host={{ item }} user={{ ansible_user_id }} dbname={{ db_name }}' \
       {{ db_name }}
   vars:
     remote_zone: "{{ hostvars[item]['zone'] }}"

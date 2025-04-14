@@ -4,8 +4,8 @@
   file:
     path: /etc/patroni
     state: directory
-    owner: "{{ ansible_facts['user_id'] }}"
-    group: "{{ ansible_facts['user_id'] }}"
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_id }}"
   become: true
 
 - name: Create configuration file for Patroni node
@@ -14,8 +14,26 @@
     dest: /etc/patroni/patroni.yaml
     mode: 0600
 
+- name: Prepare systemd for service override
+  file: 
+    path: /etc/systemd/system/patroni.service.d
+    state: directory
+  become: true
+
+- name: Add a systemd service override for pgEdge modifications
+  copy:
+    content: |
+      [Service]
+      User={{ ansible_user_id }}
+      Group={{ ansible_user_id }}
+      ExecStart=
+      ExecStart=/usr/local/bin/patroni /etc/patroni/patroni.yaml
+    dest: /etc/systemd/system/patroni.service.d/override.conf
+  become: true
+
 - name: Enable and start the Patroni service
-  service:
+  systemd_service:
+    daemon_reload: true
     name: patroni
     enabled: true
     state: started

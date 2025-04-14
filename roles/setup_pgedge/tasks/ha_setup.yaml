@@ -4,18 +4,19 @@
   shell: |
     cd {{ cluster_path }}
     ./pgedge spock node-create edge{{ zone }}  \
-      'host={{ subscribe_target }} user=pgedge dbname={{ db_name }}' \
+      'host={{ subscribe_target }} user={{ ansible_user_id }} dbname={{ db_name }}' \
       {{ db_name }}
 
 # Loop through every _other_ zone than our own, and subscribe to the first
 # proxy there. If there is no proxy, this is a hybrid setup, so subscribe
-# to the representative pgEdge node instead.
+# to the representative pgEdge node instead. We retry a few times in case
+# the proxy layer is still negotiating checks by the time we reach this.
 
 - name: Subscribe to any other pgEdge nodes in the cluster, by zone
   shell: |
     cd {{ cluster_path }}
     ./pgedge spock sub-create sub_n{{ zone }}_n{{ item }}  \
-      'host={{ conn_target }} user=pgedge dbname={{ db_name }}' \
+      'host={{ conn_target }} user={{ ansible_user_id }} dbname={{ db_name }}' \
       {{ db_name }}
   vars:
     remote_first_node: >-
@@ -29,4 +30,8 @@
       selectattr('zone', 'eq', item) |
       map(attribute='inventory_hostname') | list | first }}
     conn_target: "{{ remote_first_proxy | default(remote_first_node) }}"
+  retries: 5
+  delay: 10
+  register: subscription
+  until: subscription.rc == 0
   loop: "{{ zone_list | reject('equalto', zone) }}"

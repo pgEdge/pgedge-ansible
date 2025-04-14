@@ -1,0 +1,17 @@
+---
+
+- name: Ensure host aliases exist for cluster IPs
+  blockinfile:
+    path: /etc/hosts
+    insertafter: EOF
+    state: present
+    marker: "# {mark} pgEdge ANSIBLE MANAGED BLOCK"
+    block: |
+      {% for item in groups.all %}
+      {% set inv_name = hostvars[item].inventory_hostname %}
+      {% set inv_is_ip = inv_name | regex_search('^([0-9]+\\.){3}[0-9]+$') %}
+      {% set host_name = hostvars[item].ansible_hostname %}
+      {% set host_ip = hostvars[item].ansible_default_ipv4.address %}
+      {{ host_ip }} {{ host_name }} {{ inv_name if not inv_is_ip }}
+      {% endfor %}
+  become: true

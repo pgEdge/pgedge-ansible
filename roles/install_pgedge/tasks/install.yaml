@@ -3,16 +3,15 @@
 - name: Download pgEdge installer package
   uri:
     url: "{{ repo_url }}/install.py"
-    dest: /tmp/install.py
-    creates: /tmp/install.py
+    dest: "{{ ansible_user_dir }}/install.py"
   environment:
     REPO: "{{ repo_url }}"
 
 - name: Install pgEdge package on server
   shell: |
-    python /tmp/install.py
+    python3 {{ ansible_user_dir }}/install.py
     if [ $? -eq 0 ]; then
-      rm /tmp/install.py
+      rm {{ ansible_user_dir }}/install.py
     fi
   environment:
     REPO: "{{ repo_url }}"

@@ -13,13 +13,15 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | pg_version | 16 | Postgres version to install. This is left at 16 to facilitate upgrade tests. |
 | spock_version | 4.0.9 | Version of the Spock extension to install. |
 | db_name | demo | Name of the database to use for the Spock cluster. |
-| db_user | admin | Database username. Must be something other than `pgedge`. Note that the CLI will create a `pgedge` user for its own purposes as part of the installation and setup process. |
+| db_user | admin | Database username. Must be something other than the OS username performing the installation. Note that the CLI will create a database user named after the OS user for its own purposes as part of the installation and setup process. |
 | db_password | secret | Password for the `db_user` user. |
 | is_ha_cluster | false | If true, install etcd and Patroni on all nodes in the `pgedge` group. If HAProxy nodes exist, they will reflect nodes in the same zone. Subscriptions from other pgEdge nodes will also pass through the zone HAProxy. |
 | replication_user | replicator | This user is specifically for Patroni replication purposes. |
 | replication_password | secret | Password for the `replication_user` user. |
 | synchronous_mode | false | Enable to allow Patroni to manage `synchonous_commit` and `synchronous_standby_names` parameters based on HA cluster state. |
 | synchronous_mode_strict | false | When synchronous mode is enabled, Patroni will normally disable synchronous replication if no synchronous replicas are available. Enable this parameter to always enforce synchronous commit. |
+| debug_pgedge | true | When enabled, various kernel settings will be configured to retain all core files produced during a process crash. |
+| manage_host_file | true | When enabled, all hosts in the cluster will be listed in the `/etc/hosts` file of every other host. Set to false if external DNS is in use, or inventory hostnames are IP addresses. |
 
 Modifying other parameters will have no effect on the cluster.
 

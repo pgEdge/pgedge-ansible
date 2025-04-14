@@ -1,5 +1,7 @@
 ---
 
+- include_tasks: packages.yaml
+
 - name: Check for Patroni software
   stat:
     path: "/usr/local/patroni"
@@ -7,5 +9,3 @@
 
 - include_tasks: install.yaml
   when: not patroni_software.stat.exists
-
-- include_tasks: environment.yaml
