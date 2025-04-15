@@ -1,6 +1,37 @@
-# Engineering Test Environment Ansible Scripts
+# pgEdge Platform Ansible Collection
 
-Due to the requirement of spinning up clusters on a regular basis, we've supplied a series of Ansible roles which will build a full pgEdge cluster when executed. These will be described here, along with any variables necessary to modify behavior or configuration characteristics.
+Ansible is a common utility for deploying and configuring infrastructure and cluster resources. This is an ansible collection designed for managing pgEdge clusters in this same capacity. This collection provides a series of Ansible roles which will build a full pgEdge cluster when executed.
+
+Each of these will be described here, along with any variables necessary to modify behavior or configuration characteristics.
+
+## Installation
+
+These roles are intended to eventually be available on Ansible Galaxy. Until then, they should be installed this way:
+
+```bash
+git clone git@github.com:pgEdge/pgedge-ansible.git
+cd pgedge-ansible
+make install
+```
+
+It will then be possible to use these roles as the user who installed them. Simply include two lines like this in any playbook:
+
+```yaml
+collections:
+- pgedge.platform
+```
+
+For example:
+
+```yaml
+- hosts: all
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+```
 
 ## Configuration
 
@@ -62,6 +93,15 @@ There are a few files which illustrate how these roles should be utilized:
 * `inventory-ha.yaml` - A sample HA cluster with two zones, three pgEdge nodes in each zone, and one HAProxy node per zone. This is a total of eight nodes.
 * `sample-playbook-ha.yaml` - Calls the roles in the appropriate order, with expected node groups, to produce a fully operational HA cluster.
 
-## Notes
+## Compatibility
 
-These roles are very early in their life, and will likely undergo heavy revision as they mature. They are fairly fragile, and not fully re-entrant if they encounter an unexpected error. This situation will improve with time if we continue using them for testing.
+These roles have been verified as compatible with the following Linux platforms:
+
+* Debian 12 / Bookworm
+* Rocky 9
+
+They may also work with other Debian or RHEL variants as-is, but this has not been validated.
+
+## Other Notes
+
+These roles are very early in their life, and will likely undergo heavy revision as they mature. They are not fully re-entrant if they encounter an unexpected error, so re-running the playbook after a failure may result in further problems. This situation will improve with time as development continues.

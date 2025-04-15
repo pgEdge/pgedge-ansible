@@ -1,0 +1,55 @@
+# This playbook will create an HA cluster assuming two node groups:
+#
+# * pgedge - will receive etcd, Patroni, and pgEdge
+# * haproxy - will receive haproxy
+#
+# CHECK the README for how these roles work
+---
+
+# Begin by "bootstrapping" all pgedge nodes with running software:
+#
+# - Postgres
+# - etcd
+# - Patroni
+#
+# This will also install and configure any pgEdge Distributed Postgres
+# extensions necessary for the cluster to operate.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+  - install_pgedge
+  - setup_postgres
+  - install_etcd
+  - install_patroni
+  - setup_etcd
+  - setup_patroni
+
+# Install HAProxy on dedicated proxy nodes.
+#
+# Do this here to ensure Patroni is up and running and providing a REST
+# interface for HAProxy to use for validating endpoints.
+
+- hosts: haproxy
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+  - setup_haproxy
+
+# Finally, "wire" the pgEdge cluster members together using Ultra-HA design
+
+- hosts: pgedge
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - setup_pgedge

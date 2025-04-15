@@ -6,6 +6,10 @@
 ---
 
 - hosts: pgedge
+
+  collections:
+  - pgedge.platform
+
   roles:
   - init_server
   - install_pgedge
