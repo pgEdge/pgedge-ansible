@@ -1,19 +1,9 @@
 ---
 
-cluster_path: "{{ ansible_facts['user_dir'] }}/pgedge"
-pg_path: "{{ cluster_path }}/pg{{ pg_version }}"
-pg_data: "{{ cluster_path }}/data/pg{{ pg_version }}"
-
 zone_list: >
     {{ groups['all'] |
     map('extract', hostvars) |
     map(attribute='zone') | unique | list }}
-
-nodes_in_zone: >
-    {{ groups['pgedge'] |
-    map('extract', hostvars) |
-    selectattr('zone', 'eq', zone) |
-    map(attribute='inventory_hostname') | list }}
 
 proxies_in_zone: >
     {{ groups['haproxy'] |
@@ -21,7 +11,6 @@ proxies_in_zone: >
     selectattr('zone', 'eq', zone) |
     map(attribute='inventory_hostname') | list }}
 
-first_node_in_zone: "{{ nodes_in_zone | first }}"
 first_proxy_in_zone: "{{ proxies_in_zone | first }}"
 
 # This variable is supplied in the event of hybrid clusters where some pgEdge

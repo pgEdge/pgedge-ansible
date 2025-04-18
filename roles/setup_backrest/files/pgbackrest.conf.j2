@@ -1,0 +1,36 @@
+[pgedge-{{ db_name }}-{{ zone }}]
+
+{% if inventory_hostname in groups.backup %}
+# This is a backup server, so list all hosts in the zone as backup targets
+{% for item in nodes_in_zone %}
+pg{{ loop.index }}-host={{ hostvars[item].inventory_hostname }}
+pg{{ loop.index }}-host-user={{ ansible_user_id }}
+pg{{ loop.index }}-path={{ pg_data }}
+pg{{ loop.index }}-user={{ ansible_user_id }}
+pg{{ loop.index }}-database={{ db_name }}
+{% endfor %}
+{% else %}
+# Nodes should only know about themselves. This prevents replicas from
+# reaching into the primary node to start a backup procedure.
+pg1-path={{ pg_data }}
+pg1-user={{ ansible_user_id }}
+pg1-database={{ db_name }}
+{% endif %}
+
+[global]
+log-path={{ cluster_path }}/data/logs/backrest
+start-fast=y
+repo1-path={{ backup_repo_path }}
+repo1-retention-full={{ full_backup_count }}
+repo1-retention-diff={{ diff_backup_count }}
+repo1-cipher-type={{ backup_repo_cipher_type }}
+repo1-cipher-pass={{ backup_repo_cipher }}
+
+{% if backup_type == 'ssh' %}
+repo1-hardlink=y
+{%   if inventory_hostname not in groups.backup %}
+repo1-type=posix
+repo1-host={{ backup_server }}
+repo1-host-user={{ ansible_user_id }}
+{%   endif %}
+{% endif %}

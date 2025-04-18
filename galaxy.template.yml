@@ -9,10 +9,12 @@ authors:
 
 description: Install and manage a pgEdge Distributed Postgres cluster.
 
-license_file: 'LICENSE.md'
+license: PostgreSQL
 
 tags:
+- pgedge
 - postgresql
+- postgres
 - distributed
 - cluster
 
@@ -20,18 +22,10 @@ dependencies: {}
 
 repository: https://github.com/pgEdge/pgedge-ansible
 
-#documentation: http://docs.example.com
+documentation: https://github.com/pgEdge/pgedge-ansible/README.md
 
 #homepage: http://example.com
 
 issues: https://github.com/pgEdge/pgedge-ansible/issues
 
 build_ignore: []
-
-# A dict controlling use of manifest directives used in building the collection artifact. The key 'directives' is a
-# list of MANIFEST.in style
-# L(directives,https://packaging.python.org/en/latest/guides/using-manifest-in/#manifest-in-commands). The key
-# 'omit_default_directives' is a boolean that controls whether the default directives are used. Mutually exclusive
-# with 'build_ignore'
-# manifest: null
-

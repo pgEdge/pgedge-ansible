@@ -1,0 +1,21 @@
+---
+
+- name: Bootstrap the repository with the PgBackRest metadata
+  shell: |
+    {{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} stanza-create
+  vars:
+    stanza: "--stanza=pgedge-{{ db_name }}-{{ zone }}"
+  environment:
+    LD_LIBRARY_PATH: "{{ pg_path }}/lib"
+
+# We should be able to run this command on every host, as PgBackRest will
+# automatically ignore replicas since we haven't configured it to allow
+# those as backup targets.
+
+- name: Create the initial backup for this instance
+  shell: |
+    {{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=full
+  vars:
+    stanza: "--stanza=pgedge-{{ db_name }}-{{ zone }}"
+  environment:
+    LD_LIBRARY_PATH: "{{ pg_path }}/lib"

@@ -1,0 +1,11 @@
+---
+
+- name: Check for PgBackRest software
+  stat:
+    path: "{{ cluster_path }}/backrest"
+  register: backrest_software
+
+- include_tasks: install.yaml
+  when: not backrest_software.stat.exists
+
+- include_tasks: environment.yaml

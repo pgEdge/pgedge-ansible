@@ -1,0 +1,13 @@
+---
+
+backup_host: ''
+
+backup_repo_type: ssh
+backup_repo_path: "{{ cluster_path }}/data/backrest"
+backup_repo_cipher: "{{ lookup('password', '/dev/null length=20', seed='pgedge' + db_name + '-' + zone | string) }}"
+backup_repo_cipher_type: aes-256-cbc
+
+full_backup_count: 1
+diff_backup_count: 6
+full_backup_schedule: "10 0 * * 0"
+diff_backup_schedule: "10 0 * * 1-6"

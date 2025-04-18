@@ -1,0 +1,18 @@
+---
+
+- name: Make sure the {{ ansible_user_id }} user has a .ssh directory
+  file:
+    path: "{{ ansible_user_dir }}/.ssh"
+    state: directory
+    mode: 0700
+
+- name: Create an SSH key for this server if it doesn't already have one
+  openssh_keypair:
+    path: "{{ ansible_user_dir }}/.ssh/id_ed25519"
+    type: ed25519
+
+- name: Retrieve this server's SSH public key
+  fetch:
+    src: "{{ ansible_user_dir }}/.ssh/id_ed25519.pub"
+    dest: "host-keys/{{ inventory_hostname }}"
+    flat: yes

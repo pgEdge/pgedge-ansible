@@ -1,0 +1,8 @@
+---
+
+- name: Download / install pgEdge PgBackRest package on server
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge um install backrest
+  args:
+    creates: "{{ cluster_path }}/backrest"

@@ -1,0 +1,21 @@
+---
+
+- name: Configure cluster to integrate with PgBackRest
+  lineinfile:
+    path: "{{ pg_data }}/postgresql.auto.conf"
+    line: "{{ item.var }} = '{{ item.setting }}'"
+    regexp: "^{{ item.var }}[ =].*"
+  vars:
+    stanza: "pgedge-{{ db_name }}-{{ zone }}"
+    cmd: "LD_LIBRARY_PATH={{ pg_path }}/lib {{ cluster_path }}/backrest/bin/pgbackrest"
+    push_args: "--stanza={{ stanza }} archive-push %p"
+    pull_args: "--stanza={{ stanza }} archive-get %f %p"
+  loop:
+  - { var: "archive_mode", setting: "on" }
+  - { var: "archive_command", setting: "{{ cmd }} {{ push_args }}" }
+  - { var: "restore_command", setting: "{{ cmd }} {{ pull_args }}" }
+
+- name: Reload the Postgres service to incorporate changes
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge service reload pg{{pg_version}}

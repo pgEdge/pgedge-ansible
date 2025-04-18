@@ -1,0 +1,56 @@
+---
+
+- block:
+
+  - include_tasks: setup.yaml
+
+  - include_tasks: setup_ssh_access.yaml
+    when:
+    - backup_type == 'ssh'
+    - inventory_hostname in groups.pgedge
+
+  - include_tasks: setup_server.yaml
+    when:
+    - backup_type == 'ssh'
+    - inventory_hostname in groups.backup
+
+  - include_tasks: config_postgres.yaml
+    when: 
+    - not is_ha_cluster
+    - inventory_hostname in groups.pgedge
+
+  - include_tasks: config_postgres_ha.yaml
+    when:
+    - is_ha_cluster
+    - inventory_hostname in groups.pgedge
+
+  # Performing the first backup should only be done if this is explicitly a
+  # backup server, or this is a new cluster, making the first node the primary.
+
+  - include_tasks: first_backup.yaml
+    when:
+    - inventory_hostname in groups.backup
+    
+  - include_tasks: first_backup.yaml
+    when:
+    - backup_type != 'ssh'
+    - inventory_hostname == first_node_in_zone
+
+  # Similarly, cron entries can only be defined if this is a backup server,
+  # OR if nodes should be treated as PgBackRest clients to a cloud repo.
+  # Standby servers will simply fail to execute the cron jobs.
+  #
+  # Note: This doesn't account for clusters which want to backup from standby
+  # nodes, but we'll consider that when / if requested since it greatly
+  # complicates scheduling. A potential solution would be to _force_ a backup
+  # server and use a secondary synchronization (cloud) repository.
+
+  - include_tasks: set_cron.yaml
+    when:
+    - inventory_hostname in groups.backup
+
+  - include_tasks: set_cron.yaml
+    when:
+    - backup_type != 'ssh'
+
+  when: backup_server > ''
