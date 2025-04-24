@@ -1,0 +1,33 @@
+---
+
+- name: Set PgBackRest library path in crontab
+  cron:
+    name: LD_LIBRARY_PATH
+    job: "{{ pg_path }}/lib"
+    env: true
+
+- name: Set PgBackRest full backup schedule
+  cron:
+    name: "Full PgBackRest schedule"
+    minute: "{{ full_backup_schedule.split(' ')[0] }}"
+    hour: "{{ full_backup_schedule.split(' ')[1] }}"
+    day: "{{ full_backup_schedule.split(' ')[2] }}"
+    month: "{{ full_backup_schedule.split(' ')[3] }}"
+    weekday: "{{ full_backup_schedule.split(' ')[4] }}"
+    job: '{{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=full'
+  vars:
+    stanza: "--stanza=pgedge-{{ db_name }}-{{ zone }}"
+  when: full_backup_schedule.split(' ') | length == 5
+
+- name: Set PgBackRest differential backup schedule
+  cron:
+    name: "Differential PgBackRest schedule"
+    minute: "{{ diff_backup_schedule.split(' ')[0] }}"
+    hour: "{{ diff_backup_schedule.split(' ')[1] }}"
+    day: "{{ diff_backup_schedule.split(' ')[2] }}"
+    month: "{{ diff_backup_schedule.split(' ')[3] }}"
+    weekday: "{{ diff_backup_schedule.split(' ')[4] }}"
+    job: '{{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=diff'
+  vars:
+    stanza: "--stanza=pgedge-{{ db_name }}-{{ zone }}"
+  when: diff_backup_schedule.split(' ') | length == 5

@@ -1,8 +1,5 @@
 ---
 
-pg_version: 16
-db_user: admin
-db_password: secret
 replication_user: replicator
 replication_password: secret
 synchronous_mode: false

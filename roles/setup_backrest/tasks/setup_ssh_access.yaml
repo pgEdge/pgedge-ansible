@@ -1,0 +1,14 @@
+---
+
+- name: Make sure the backup host is an allowed SSH target
+  known_hosts:
+    name: "{{ backup_server }}"
+    state: present
+    key: "{{ lookup('pipe', 'ssh-keyscan {{ backup_server }}') }}"
+    hash_host: true
+
+- name: Make sure the backup host is authorized to connect
+  authorized_key:
+    user: "{{ ansible_user_id }}"
+    key: "{{ lookup('file', 'host-keys/' + backup_server) }}"
+    state: present

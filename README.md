@@ -53,6 +53,15 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | synchronous_mode_strict | false | When synchronous mode is enabled, Patroni will normally disable synchronous replication if no synchronous replicas are available. Enable this parameter to always enforce synchronous commit. |
 | debug_pgedge | true | When enabled, various kernel settings will be configured to retain all core files produced during a process crash. |
 | manage_host_file | true | When enabled, all hosts in the cluster will be listed in the `/etc/hosts` file of every other host. Set to false if external DNS is in use, or inventory hostnames are IP addresses. |
+| backup_host | '' | Should be set to the hostname where PgBackRest backups should be transmitted. If left empty and `backup_repo_type` is ssh, will default to the first node in the `backup` node group in the same zone. |
+| backup_repo_type | ssh | The type of PgBackRest backup repository to use. Using 'ssh' means backups are stored on a dedicated backup server as defined in the `backup` host group. Other options will be added soon. |
+| backup_repo_path | `$cluster_path/data/backrest` | Full path to storage location of PgBackRest repository. |
+| backup_repo_cipher_type | aes-256-cbc | Encryption algorithm to use for backup files stored in the PgBackRest repository. |
+| backup_repo_cipher | (random) | This should be specified and will define the encryption cipher used for backup files stored in the PgBackRest repository. If not defined, will be set to a 20-character deterministic random string based on the backup repository name. |
+| full_backup_count | 1 | Defines how many full backups to retain in the backup repository. |
+| diff_backup_count | 6 | Defines how many differential backups to retain in the backup repository. |
+| full_backup_schedule | `10 0 * * 0` | Defines a cron-style schedule for automating full PgBackRest backup operations. The default will run every Sunday at 10 minutes after midnight.
+| diff_backup_schedule | `10 0 * * 0` | Defines a cron-style schedule for automating differential PgBackRest backup operations. The default will run every Monday - Saturday at 10 minutes after midnight. |
 
 Modifying other parameters will have no effect on the cluster.
 
@@ -74,7 +83,7 @@ Notable items are listed here:
 
 The full list of roles is as follows, in the expected order of execution:
 
-1. `init_server` - Prepares each server in the cluster to operate in the stack. This should be executed on every available server.
+1. `init_server` - Prepares each server in the cluster to operate in the stack. It also retrieves the public SSH key for each server into a `host-keys` directory on the Ansible controller for potential use by other roles. This should be executed on every available server.
 2. `install_pgedge` - Only installs the `pgedge` CLI software, and does nothing else.
 3. `setup_postgres` - Uses the CLI software `setup` command to create a Postgres instance on each node. This will also install the snowflake and spock extensions. In HA clusters, multiple nodes can be assigned to each zone. Of these, all but the first will have the Postgres stopped, and the data directory wiped. This is a preparation step for Patroni.
 4. `install_etcd` - Only used for HA clusters. Uses the CLI to download and install the version of etcd packaged by pgEdge. The service is not yet configured or started.
@@ -83,15 +92,19 @@ The full list of roles is as follows, in the expected order of execution:
 7. `setup_patroni` - Only used for HA clusters. Fully configures patroni on each node. Nodes in the `pgedge` group in the same zone are configured to be part of the same Patroni cluster. The first node in the list is used to bootstrap Patroni itself, and Patroni will rebuild all other Postgres instances in the zone from this.
 8. `setup_haproxy` - Only used for HA clusters. This should be executed before `setup_pgedge`, as HA clusters are intended to communicate through the proxy layer so subscriptions survive failover events.
 9. `setup_pgedge` - Establishes a pgEdge node for all nodes in the `pgedge` group. Also subscribes each node to every other node. Will additionally set the snowflake node ID to be the same as the zone, so use the zone as a logical node identifier. In HA clusters, node creation only takes place once per zone. HA clusters are also subscribed to either the first HAProxy node in the same zone as the remote pgEdge node, or if this is missing, the first pgEdge node in that zone. This allows for "hybrid" clusters for simplified testing, where a single pgEdge node interacts with a Patroni-managed sub-cluster.
+10. `install_backrest` - Installs PgBackRest backup software on nodes where the role is defined.
+11. `setup_backrest` - Configures PgBackRest on each configured node with the parameter-defined repository target for long-term backup and WAL storage. Additionally:
+  * Configures Postgres to transmit archived WAL files to the PgBackRest repository, and also retrieve WAL files from this location during recovery.
+  * Initializes a backup repository for each defined zone.
+  * Invokes a single backup to bootstrap the repository for each defined zone. As a result, this is best used on new clusters or those without large amounts of data.
+  * Defines full and differential backup automation.
 
 ## Usage
 
-There are a few files which illustrate how these roles should be utilized:
+Files in the [sample-playbooks](./sample_playbooks) directory provide a sample inventory and playbook to illustrate how these roles should be utilized:
 
-* `inventory.yaml` - A sample cluster with three pgEdge nodes.
-* `sample-playbook.yaml` - Calls the roles in the appropriate order to produce a standard pgEdge cluster.
-* `inventory-ha.yaml` - A sample HA cluster with two zones, three pgEdge nodes in each zone, and one HAProxy node per zone. This is a total of eight nodes.
-* `sample-playbook-ha.yaml` - Calls the roles in the appropriate order, with expected node groups, to produce a fully operational HA cluster.
+* [simple-cluster](./sample_playbooks/simple-cluster) - Produces a standard three-node pgEdge cluster.
+* [ultra-ha](./sample_playbooks/ultra-ha) - Produces an Ultra-HA cluster with two zones, three pgEdge nodes in each zone, and one HAProxy node per zone. This is a total of eight nodes.
 
 ## Compatibility
 

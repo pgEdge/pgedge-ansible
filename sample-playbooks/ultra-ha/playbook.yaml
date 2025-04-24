@@ -1,12 +1,26 @@
-# This playbook will create an HA cluster assuming two node groups:
+# This playbook will create an HA cluster assuming three node groups:
 #
 # * pgedge - will receive etcd, Patroni, and pgEdge
 # * haproxy - will receive haproxy
+# * backup - will act as a dedicated backup server per zone
 #
 # CHECK the README for how these roles work
 ---
 
-# Begin by "bootstrapping" all pgedge nodes with running software:
+# All hosts being managed by this collection should be initialized. This will
+# set up SSH host keys in some cases and other prerequisites which may be
+# used by followup roles
+
+- hosts: all
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+
+# Begin deployment by "bootstrapping" all pgedge nodes with running software:
 #
 # - Postgres
 # - etcd
@@ -22,13 +36,14 @@
   - pgedge.platform
 
   roles:
-  - init_server
   - install_pgedge
   - setup_postgres
   - install_etcd
   - install_patroni
+  - install_backrest
   - setup_etcd
   - setup_patroni
+  - setup_backrest
 
 # Install HAProxy on dedicated proxy nodes.
 #
@@ -41,10 +56,9 @@
   - pgedge.platform
 
   roles:
-  - init_server
   - setup_haproxy
 
-# Finally, "wire" the pgEdge cluster members together using Ultra-HA design
+# Then "wire" the pgEdge cluster members together using Ultra-HA design
 
 - hosts: pgedge
 
@@ -53,3 +67,16 @@
 
   roles:
   - setup_pgedge
+
+# Finally, set up the backup server so we capture the final state of any
+# working primary nodes post-deployment.
+
+- hosts: backup
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_pgedge
+  - install_backrest
+  - setup_backrest

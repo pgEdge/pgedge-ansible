@@ -1,0 +1,29 @@
+---
+
+# Patch the Patroni configuration to include required archive and restore
+# commands for PgBackRest. We use a patch apply because patronictl has a bug
+# where its edit-config arguents will not allow spaces even in quoted values.
+
+- name: Configure Patroni to integrate with PgBackRest
+  shell: |
+    cat<<EOF>>patroni.patch
+    postgresql:
+      parameters:
+        hot_standby: true
+        archive_command: "{{ cmd }} {{ push_args }}"
+        restore_command: "{{ cmd }} {{ pull_args }}"
+    EOF
+    patronictl -c /etc/patroni/patroni.yaml edit-config --force \
+               --apply patroni.patch pgedge
+    rm patroni.patch
+  vars:
+    stanza: "pgedge-{{ db_name }}-{{ zone }}"
+    cmd: "LD_LIBRARY_PATH={{ pg_path }}/lib {{ cluster_path }}/backrest/bin/pgbackrest"
+    push_args: "--stanza={{ stanza }} archive-push %p"
+    pull_args: "--stanza={{ stanza }} archive-get %f %p"
+  when: inventory_hostname == first_node_in_zone
+
+- name: Reload the Postgres service to incorporate changes
+  shell: |
+    patronictl -c /etc/patroni/patroni.yaml reload pgedge --force
+  when: inventory_hostname == first_node_in_zone

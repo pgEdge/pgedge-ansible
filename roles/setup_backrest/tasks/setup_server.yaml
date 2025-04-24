@@ -1,0 +1,27 @@
+---
+
+- name: Allow SSH access from all hosts in this zone
+  authorized_key:
+    user: "{{ ansible_user_id }}"
+    key: "{{ lookup('file', 'host-keys/' + item) }}"
+    state: present
+  loop: "{{ nodes_in_zone }}"
+
+- name: Make sure backup targets are known SSH hosts
+  known_hosts:
+    name: "{{ item }}"
+    state: present
+    key: "{{ lookup('pipe', 'ssh-keyscan {{ item }}') }}"
+    hash_host: true
+  loop: "{{ nodes_in_zone }}"
+
+# The PgEdge platform binary for PgBackRest currently relies on installed
+# Postgres libraries, which won't be on a dedicated server by now, so install
+# them manually.
+
+- name: Download / install pgEdge Postgres package to server
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge um install pg{{pg_version}}
+  args:
+    creates: "{{ pg_path }}"

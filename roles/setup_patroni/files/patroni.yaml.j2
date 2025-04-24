@@ -33,6 +33,7 @@ bootstrap:
         ssl: on
         ssl_cert_file: "{{ pg_data }}/server.crt"
         ssl_key_file: "{{ pg_data }}/server.key"
+        listen_addresses: "0.0.0.0"
         archive_mode: "on"
         archive_command: "/bin/true"
         TimeZone: "UTC"

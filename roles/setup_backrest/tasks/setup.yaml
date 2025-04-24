@@ -1,0 +1,20 @@
+---
+
+- name: Ensure PgBackRest configuration directory exists owned by our user
+  file:
+    path: /etc/pgbackrest
+    state: directory
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_id }}"
+  become: true
+
+- name: Create configuration file for PgBackRest
+  template:
+    src: files/pgbackrest.conf.j2
+    dest: /etc/pgbackrest/pgbackrest.conf
+    mode: 0600
+
+- name: Create a log folder for PgBackRest
+  file:
+    path: "{{ cluster_path }}/data/logs/backrest"
+    state: directory

@@ -1,7 +1,1 @@
 ---
-
-nodes_in_zone: |
-    {{ groups['pgedge'] |
-    map('extract', hostvars) |
-    selectattr('zone', 'eq', zone) |
-    map(attribute='inventory_hostname') }}

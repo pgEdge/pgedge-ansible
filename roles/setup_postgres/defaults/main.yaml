@@ -1,9 +1,1 @@
 ---
-
-zone: 1
-pg_version: 16
-spock_version: "4.0.9"
-db_name: demo
-db_user: admin
-db_password: secret
-is_ha_cluster: false
