@@ -8,7 +8,7 @@
 - name: Make sure to source .bashrc.d files on login
   blockinfile:
     path: "{{ ansible_user_dir }}/.bashrc"
-    insertafter: EOF
+    insertbefore: BOF
     state: present
     marker: "# {mark} pgEdge ANSIBLE MANAGED BLOCK"
     block: |
