@@ -1,6 +1,7 @@
 ---
 
 repo_name: download
+repo_prefix: ""
 zone: 1
 pg_version: 16
 spock_version: "4.0.9"
