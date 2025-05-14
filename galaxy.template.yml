@@ -18,7 +18,8 @@ tags:
 - distributed
 - cluster
 
-dependencies: {}
+dependencies:
+  "ansible.utils": ">=2.5.0"
 
 repository: https://github.com/pgEdge/pgedge-ansible
 
