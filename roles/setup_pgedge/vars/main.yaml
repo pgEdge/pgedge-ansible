@@ -6,14 +6,17 @@ zone_list: >
     map(attribute='zone') | unique | list }}
 
 proxies_in_zone: >
-    {{ groups['haproxy'] |
+    {{ groups['haproxy'] | default(()) |
     map('extract', hostvars) |
     selectattr('zone', 'eq', zone) |
     map(attribute='inventory_hostname') | list }}
 
-first_proxy_in_zone: "{{ proxies_in_zone | first }}"
+# This variable serves several purposes:
+# - Sets the proxy to any user-specified target.
+# - Otherwise uses the first known haproxy member in this zone.
+# - Otherwise ensures a subscription target even when there are no proxies.
 
-# This variable is supplied in the event of hybrid clusters where some pgEdge
-# nodes have HA replicas and a proxy set up, and others don't.
-
-subscribe_target: "{{ first_proxy_in_zone | default(first_node_in_zone) }}"
+subscribe_target: >-
+  {{ proxy_node if proxy_node > '' 
+     else proxies_in_zone | first if proxies_in_zone
+     else first_node_in_zone }}

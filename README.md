@@ -47,6 +47,7 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | db_user | admin | Database username. Must be something other than the OS username performing the installation. Note that the CLI will create a database user named after the OS user for its own purposes as part of the installation and setup process. |
 | db_password | secret | Password for the `db_user` user. |
 | is_ha_cluster | false | If true, install etcd and Patroni on all nodes in the `pgedge` group. If HAProxy nodes exist, they will reflect nodes in the same zone. Subscriptions from other pgEdge nodes will also pass through the zone HAProxy. |
+| proxy_node | If specified in an HA cluster, will be used as the pgEdge Spock subscription target instead of the inventory node itself. Otherwise, subscriptions will target the first available HAProxy node in the same zone as the inventory node, or the inventory node if no other options are available. |
 | replication_user | replicator | This user is specifically for Patroni replication purposes. |
 | replication_password | secret | Password for the `replication_user` user. |
 | synchronous_mode | false | Enable to allow Patroni to manage `synchonous_commit` and `synchronous_standby_names` parameters based on HA cluster state. |
