@@ -7,10 +7,14 @@
       'host={{ subscribe_target }} user={{ ansible_user_id }} dbname={{ db_name }}' \
       {{ db_name }}
 
-# Loop through every _other_ zone than our own, and subscribe to the first
-# proxy there. If there is no proxy, this is a hybrid setup, so subscribe
-# to the representative pgEdge node instead. We retry a few times in case
-# the proxy layer is still negotiating checks by the time we reach this.
+# Loop through every _other_ zone than our own and subscribe in this order:
+#
+# - The user-specified proxy_node for the host, if present.
+# - The first node in the `haproxy` group for this zone, if any.
+# - The first pgedge node in the zone itself, assuming no proxies match.
+#
+# We retry a few times in case the proxy layer is still negotiating checks by
+# the time we reach this.
 
 - name: Subscribe to any other pgEdge nodes in the cluster, by zone
   shell: |
@@ -24,12 +28,17 @@
       map('extract', hostvars) |
       selectattr('zone', 'eq', item) |
       map(attribute='inventory_hostname') | list | first }}
-    remote_first_proxy: >-
-      {{ groups['haproxy'] |
+    remote_proxy_node: >-
+      {{ hostvars[remote_first_node].proxy_node | default('') }}
+    remote_proxies: >-
+      {{ groups['haproxy'] | default(()) |
       map('extract', hostvars) |
       selectattr('zone', 'eq', item) |
-      map(attribute='inventory_hostname') | list | first }}
-    conn_target: "{{ remote_first_proxy | default(remote_first_node) }}"
+      map(attribute='inventory_hostname') | list }}
+    conn_target: >-
+      {{ remote_proxy_node if remote_proxy_node > ''
+         else remote_proxies | first if remote_proxies
+         else remote_first_node }}
   retries: 5
   delay: 10
   register: subscription
