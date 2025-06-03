@@ -3,6 +3,7 @@
 # * 2 zones
 # * 3 pgEdge nodes in each zone
 # * 1 HAProxy node in each zone
+# * 1 Backup node in each zone
 
 pgedge:
   vars:
@@ -28,4 +29,11 @@ haproxy:
     192.168.6.16:
       zone: 1
     192.168.6.17:
+      zone: 2
+
+backup:
+  hosts:
+    192.168.6.18:
+      zone: 1
+    192.168.6.19:
       zone: 2
