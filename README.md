@@ -102,10 +102,10 @@ The full list of roles is as follows, in the expected order of execution:
 
 ## Usage
 
-Files in the [sample-playbooks](./sample_playbooks) directory provide a sample inventory and playbook to illustrate how these roles should be utilized:
+Files in the [sample-playbooks](./sample-playbooks) directory provide a sample inventory and playbook to illustrate how these roles should be utilized:
 
-* [simple-cluster](./sample_playbooks/simple-cluster) - Produces a standard three-node pgEdge cluster.
-* [ultra-ha](./sample_playbooks/ultra-ha) - Produces an Ultra-HA cluster with two zones, three pgEdge nodes in each zone, and one HAProxy node per zone. This is a total of eight nodes.
+* [simple-cluster](./sample-playbooks/simple-cluster) - Produces a standard three-node pgEdge cluster.
+* [ultra-ha](./sample-playbooks/ultra-ha) - Produces an Ultra-HA cluster with two zones, three pgEdge nodes in each zone, and one HAProxy node per zone. This is a total of eight nodes.
 
 ## Compatibility
 
