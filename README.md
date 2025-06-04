@@ -40,6 +40,7 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | **Parameter** | **Default** | **Description**                                     |
 |---------------|-------------|-----------------------------------------------------|
 | repo_name | download | Can be one of `download`, `upstream`, or `devel`. This will control which pgEdge repository is used for software installation. |
+| repo_prefix | None | If set, makes it possible to install specific custom or automated builds based on repository prefix. Consult a member of pgEdge staff for valid setting here. |
 | zone | 1 | Zone or region for a node. This helps organize HA clusters. It also doubles as the snowflake ID of a node. For non-HA clusters, just use one node per zone. |
 | pg_version | 16 | Postgres version to install. This is left at 16 to facilitate upgrade tests. |
 | spock_version | 4.0.9 | Version of the Spock extension to install. |
@@ -47,7 +48,7 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | db_user | admin | Database username. Must be something other than the OS username performing the installation. Note that the CLI will create a database user named after the OS user for its own purposes as part of the installation and setup process. |
 | db_password | secret | Password for the `db_user` user. |
 | is_ha_cluster | false | If true, install etcd and Patroni on all nodes in the `pgedge` group. If HAProxy nodes exist, they will reflect nodes in the same zone. Subscriptions from other pgEdge nodes will also pass through the zone HAProxy. |
-| proxy_node | If specified in an HA cluster, will be used as the pgEdge Spock subscription target instead of the inventory node itself. Otherwise, subscriptions will target the first available HAProxy node in the same zone as the inventory node, or the inventory node if no other options are available. |
+| proxy_node | None | If specified in an HA cluster, will be used as the pgEdge Spock subscription target instead of the inventory node itself. Otherwise, subscriptions will target the first available HAProxy node in the same zone as the inventory node, or the inventory node if no other options are available. |
 | replication_user | replicator | This user is specifically for Patroni replication purposes. |
 | replication_password | secret | Password for the `replication_user` user. |
 | synchronous_mode | false | Enable to allow Patroni to manage `synchonous_commit` and `synchronous_standby_names` parameters based on HA cluster state. |
@@ -63,6 +64,7 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | diff_backup_count | 6 | Defines how many differential backups to retain in the backup repository. |
 | full_backup_schedule | `10 0 * * 0` | Defines a cron-style schedule for automating full PgBackRest backup operations. The default will run every Sunday at 10 minutes after midnight.
 | diff_backup_schedule | `10 0 * * 0` | Defines a cron-style schedule for automating differential PgBackRest backup operations. The default will run every Monday - Saturday at 10 minutes after midnight. |
+| exception_behaviour | transdiscard | Defines what Spock should do when it encounters an exception. Default is `transdiscard` to skip offending transaction. See [documentation](https://docs.pgedge.com/platform/exception#spockexception_behaviour). |
 
 Modifying other parameters will have no effect on the cluster.
 

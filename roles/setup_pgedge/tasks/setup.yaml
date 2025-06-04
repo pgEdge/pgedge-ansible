@@ -7,6 +7,11 @@
       'host={{ inventory_hostname }} user={{ ansible_user_id }} dbname={{ db_name }}' \
       {{ db_name }}
 
+- name: Set Spock to handle transaction exceptions
+  shell: |
+    cd {{ cluster_path }}
+    ./pgedge db guc-set spock.exception_behaviour {{ spock_exception_behaviour }}
+
 - name: Set the snowflake ID for this spock node
   shell: |
     cd {{ cluster_path }}
@@ -16,6 +21,7 @@
   shell: |
     cd {{ cluster_path }}
     ./pgedge db guc-set spock.enable_ddl_replication on
+    ./pgedge db guc-set spock.allow_ddl_from_functions on
     ./pgedge db guc-set spock.include_ddl_repset on
 
 # Loop through every other known pgEdge node and subscribe to it.

@@ -11,3 +11,8 @@ nodes_in_zone: |
     map(attribute='inventory_hostname') }}
 
 first_node_in_zone: "{{ nodes_in_zone | first }}"
+
+spock_exception_behaviour: >-
+  {{ exception_behaviour if exception_behaviour in (
+       'discard', 'transdiscard', 'sub_disable'
+     ) else 'transdiscard' }}
