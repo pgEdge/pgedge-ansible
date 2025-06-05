@@ -10,3 +10,4 @@ db_user: admin
 db_password: secret
 
 is_ha_cluster: false
+exception_behaviour: "transdiscard"
