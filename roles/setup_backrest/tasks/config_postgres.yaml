@@ -6,7 +6,7 @@
     line: "{{ item.var }} = '{{ item.setting }}'"
     regexp: "^{{ item.var }}[ =].*"
   vars:
-    stanza: "pgedge-{{ db_name }}-{{ zone }}"
+    stanza: "pgedge-{{ cluster_name }}-{{ zone }}"
     cmd: "LD_LIBRARY_PATH={{ pg_path }}/lib {{ cluster_path }}/backrest/bin/pgbackrest"
     push_args: "--stanza={{ stanza }} archive-push %p"
     pull_args: "--stanza={{ stanza }} archive-get %f %p"

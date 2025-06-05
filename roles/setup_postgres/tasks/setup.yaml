@@ -1,11 +1,29 @@
 ---
 
+# Bootstrap the installation with the first DB name in the list. This list is
+# usually just one item anyway.
+
 - name: Install and set up Postgres using pgedge CLI
   shell: |
     cd {{ cluster_path }}
-    ./pgedge setup -d {{ db_name }} \
+    ./pgedge setup -d {{ db_names | first }} \
         -U {{ db_user }} -P {{ db_password }} \
         --pg_ver {{ pg_version }} \
         --spock_ver {{ spock_version }}
   args:
     creates: "{{ pg_path }}"
+
+# Since we created the instance using the first database name, ensure each
+# remaining database exists and contains the spock and snowflake extensions.
+# Add a gratuitous database name check to avoid additional executions.
+
+- name: Bootstrap additional requested databases
+  shell: |
+    cd {{ pg_path }}/bin
+    db_check=$(./psql -qAtl | cut -d'|' -f 1 | grep {{ item }} | cat)
+    if [ "$db_check" != "{{ item }}" ]; then
+      ./createdb -O {{ db_user }} {{ item }}
+      ./psql -c "CREATE EXTENSION IF NOT EXISTS spock;" {{ item }}
+      ./psql -c "CREATE EXTENSION IF NOT EXISTS snowflake;" {{ item }}
+    fi
+  loop: "{{ db_names[1:] }}"

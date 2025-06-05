@@ -39,12 +39,13 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 
 | **Parameter** | **Default** | **Description**                                     |
 |---------------|-------------|-----------------------------------------------------|
+| cluster_name | demo | Canonical name for the cluster, primarily used for descriptive items and generated values. |
 | repo_name | download | Can be one of `download`, `upstream`, or `devel`. This will control which pgEdge repository is used for software installation. |
 | repo_prefix | None | If set, makes it possible to install specific custom or automated builds based on repository prefix. Consult a member of pgEdge staff for valid setting here. |
 | zone | 1 | Zone or region for a node. This helps organize HA clusters. It also doubles as the snowflake ID of a node. For non-HA clusters, just use one node per zone. |
 | pg_version | 16 | Postgres version to install. This is left at 16 to facilitate upgrade tests. |
 | spock_version | 4.0.9 | Version of the Spock extension to install. |
-| db_name | demo | Name of the database to use for the Spock cluster. |
+| db_names | demo | List of database names to use for the Spock cluster. At least one database name is expected to initialize the cluster. Any missing databases will be created and owned by `db_user`. |
 | db_user | admin | Database username. Must be something other than the OS username performing the installation. Note that the CLI will create a database user named after the OS user for its own purposes as part of the installation and setup process. |
 | db_password | secret | Password for the `db_user` user. |
 | is_ha_cluster | false | If true, install etcd and Patroni on all nodes in the `pgedge` group. If HAProxy nodes exist, they will reflect nodes in the same zone. Subscriptions from other pgEdge nodes will also pass through the zone HAProxy. |
