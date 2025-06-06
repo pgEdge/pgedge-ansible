@@ -4,8 +4,8 @@
   known_hosts:
     name: "{{ backup_server }}"
     state: present
-    key: "{{ lookup('pipe', 'ssh-keyscan {{ backup_server }}') }}"
-    hash_host: true
+    key: "{{ lookup('pipe', 'ssh-keyscan {{ backup_server }} | grep -v ''^\\#''') }}"
+    hash_host: false
 
 - name: Make sure the backup host is authorized to connect
   authorized_key:
