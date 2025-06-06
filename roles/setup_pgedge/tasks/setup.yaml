@@ -4,8 +4,9 @@
   shell: |
     cd {{ cluster_path }}
     ./pgedge spock node-create edge{{ zone }}  \
-      'host={{ inventory_hostname }} user={{ ansible_user_id }} dbname={{ db_name }}' \
-      {{ db_name }}
+      'host={{ inventory_hostname }} user={{ ansible_user_id }} dbname={{ item }}' \
+      {{ item }}
+  loop: "{{ db_names }}"
 
 - name: Set Spock to handle transaction exceptions
   shell: |
@@ -25,13 +26,17 @@
     ./pgedge db guc-set spock.include_ddl_repset on
 
 # Loop through every other known pgEdge node and subscribe to it.
+# This is technically a nested loop, since we need to subscribe to each DB on
+# every node.
 
-- name: Subscribe to any other pgEdge nodes in the cluster, by zone
+- name: Subscribe to other pgEdge nodes and databases in the cluster, by zone
   shell: |
     cd {{ cluster_path }}
     ./pgedge spock sub-create sub_n{{ zone }}_n{{ remote_zone }}  \
-      'host={{ item }} user={{ ansible_user_id }} dbname={{ db_name }}' \
-      {{ db_name }}
+      'host={{ item.0 }} user={{ ansible_user_id }} dbname={{ item.1 }}' \
+      {{ item.1 }}
   vars:
-    remote_zone: "{{ hostvars[item]['zone'] }}"
-  loop: "{{ groups['pgedge'] | reject('equalto', inventory_hostname) }}"
+    remote_zone: "{{ hostvars[item.0]['zone'] }}"
+  loop: >-
+    {{ groups['pgedge'] | reject('equalto', inventory_hostname) | 
+    product(db_names) | list }}

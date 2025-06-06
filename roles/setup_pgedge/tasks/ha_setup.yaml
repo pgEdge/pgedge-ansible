@@ -4,8 +4,9 @@
   shell: |
     cd {{ cluster_path }}
     ./pgedge spock node-create edge{{ zone }}  \
-      'host={{ subscribe_target }} user={{ ansible_user_id }} dbname={{ db_name }}' \
-      {{ db_name }}
+      'host={{ subscribe_target }} user={{ ansible_user_id }} dbname={{ item }}' \
+      {{ item }}
+  loop: "{{ db_names }}"
 
 # Loop through every _other_ zone than our own and subscribe in this order:
 #
@@ -19,21 +20,21 @@
 - name: Subscribe to any other pgEdge nodes in the cluster, by zone
   shell: |
     cd {{ cluster_path }}
-    ./pgedge spock sub-create sub_n{{ zone }}_n{{ item }}  \
-      'host={{ conn_target }} user={{ ansible_user_id }} dbname={{ db_name }}' \
-      {{ db_name }}
+    ./pgedge spock sub-create sub_n{{ zone }}_n{{ item.0 }}  \
+      'host={{ conn_target }} user={{ ansible_user_id }} dbname={{ item.1 }}' \
+      {{ item.1 }}
   vars:
     remote_first_node: >-
       {{ groups['pgedge'] |
       map('extract', hostvars) |
-      selectattr('zone', 'eq', item) |
+      selectattr('zone', 'eq', item.0) |
       map(attribute='inventory_hostname') | list | first }}
     remote_proxy_node: >-
       {{ hostvars[remote_first_node].proxy_node | default('') }}
     remote_proxies: >-
       {{ groups['haproxy'] | default(()) |
       map('extract', hostvars) |
-      selectattr('zone', 'eq', item) |
+      selectattr('zone', 'eq', item.0) |
       map(attribute='inventory_hostname') | list }}
     conn_target: >-
       {{ remote_proxy_node if remote_proxy_node > ''
@@ -43,4 +44,4 @@
   delay: 10
   register: subscription
   until: subscription.rc == 0
-  loop: "{{ zone_list | reject('equalto', zone) }}"
+  loop: "{{ zone_list | reject('equalto', zone) | product(db_names) | list }}"

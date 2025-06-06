@@ -1,5 +1,13 @@
 ---
 
+- name: Make sure cron is actually installed before trying to use it...
+  package:
+    name:
+    - cron
+    state: present
+    lock_timeout: 300
+  become: true
+
 - name: Set PgBackRest library path in crontab
   cron:
     name: LD_LIBRARY_PATH
@@ -16,7 +24,7 @@
     weekday: "{{ full_backup_schedule.split(' ')[4] }}"
     job: '{{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=full'
   vars:
-    stanza: "--stanza=pgedge-{{ db_name }}-{{ zone }}"
+    stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
   when: full_backup_schedule.split(' ') | length == 5
 
 - name: Set PgBackRest differential backup schedule
@@ -29,5 +37,5 @@
     weekday: "{{ diff_backup_schedule.split(' ')[4] }}"
     job: '{{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=diff'
   vars:
-    stanza: "--stanza=pgedge-{{ db_name }}-{{ zone }}"
+    stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
   when: diff_backup_schedule.split(' ') | length == 5

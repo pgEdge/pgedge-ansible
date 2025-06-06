@@ -4,7 +4,7 @@
   shell: |
     {{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} stanza-create
   vars:
-    stanza: "--stanza=pgedge-{{ db_name }}-{{ zone }}"
+    stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
   environment:
     LD_LIBRARY_PATH: "{{ pg_path }}/lib"
 
@@ -16,6 +16,6 @@
   shell: |
     {{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=full
   vars:
-    stanza: "--stanza=pgedge-{{ db_name }}-{{ zone }}"
+    stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
   environment:
     LD_LIBRARY_PATH: "{{ pg_path }}/lib"
