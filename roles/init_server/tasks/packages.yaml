@@ -1,5 +1,10 @@
 ---
 
+- name: Update package cache
+  package:
+    update_cache: true
+  become: true
+
 - name: Include all the packages which should be installed everywhere
   package:
     name:

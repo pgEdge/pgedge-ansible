@@ -1,18 +1,38 @@
 ---
 
+- name: Wait until dpkg unlocks
+  shell: |
+    fuser -v /var/lib/dpkg/lock-frontend
+  become: true
+  register: lock_result
+  until: lock_result.rc == 1
+  retries: 60
+  delay: 2
+  failed_when: lock_result.rc == 0
+  when: ansible_facts.os_family == 'Debian'
+
 - name: Include Packages Patroni needs to run or operate
   package:
     name:
     - python3-psycopg2
     state: present
-    lock_timeout: 300
   become: true
+
+- name: Wait until dpkg unlocks
+  shell: |
+    fuser -v /var/lib/dpkg/lock-frontend
+  become: true
+  register: lock_result
+  until: lock_result.rc == 1
+  retries: 60
+  delay: 2
+  failed_when: lock_result.rc == 0
+  when: ansible_facts.os_family == 'Debian'
 
 - name: Include Packages Patroni needs to run or operate on Debian systems
   package:
     name:
     - python3-venv
     state: present
-    lock_timeout: 300
   become: true
   when: ansible_facts.os_family == 'Debian'
