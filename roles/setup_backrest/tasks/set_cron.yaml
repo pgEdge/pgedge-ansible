@@ -6,6 +6,10 @@
     - cron
     state: present
     lock_timeout: 300
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
   become: true
 
 - name: Set PgBackRest library path in crontab
