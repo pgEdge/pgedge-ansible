@@ -11,7 +11,7 @@
   known_hosts:
     name: "{{ item }}"
     state: present
-    key: "{{ lookup('pipe', 'ssh-keyscan {{ item }} | grep -v ''^\\#'' | head -1') }}"
+    key: "{{ lookup('pipe', 'ssh-keyscan {{ item }} | grep -v ''^\\#''') }}"
     hash_host: false
   loop: "{{ nodes_in_zone }}"
 
