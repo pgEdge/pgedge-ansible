@@ -71,8 +71,8 @@ postgresql:
 
   pg_hba:
   - local all {{ ansible_user_id }} peer
-  - host replication replicator {{ ip_mask }} scram-sha-256
-  - host replication replicator 127.0.0.1/32 scram-sha-256
+  - host replication {{ replication_user }} {{ ip_mask }} scram-sha-256
+  - host replication {{ replication_user }} 127.0.0.1/32 scram-sha-256
   - host all all 0.0.0.0/0 scram-sha-256
 
   authentication:

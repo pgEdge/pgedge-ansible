@@ -1,0 +1,14 @@
+---
+
+# The pgedge CLI will create a 'replicator' user, but this may not be what
+# the role user requested. Create this user explicitly on the primary node.
+# If this is still the default user, the password will be changed instead.
+
+- name: Create user for replication
+  community.postgresql.postgresql_user:
+    login_user: "{{ ansible_user_id }}"
+    login_db: postgres
+    name: "{{ replication_user }}"
+    password: "{{ replication_password }}"
+    role_attr_flags: REPLICATION
+    login_unix_socket: /tmp

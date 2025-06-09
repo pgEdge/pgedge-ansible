@@ -8,11 +8,16 @@
 - include_tasks: setup.yaml
   when: not pg_installed.stat.exists
 
+- include_tasks: packages.yaml
+
 - include_tasks: environment.yaml
+
+- include_tasks: prep_primary.yaml
+  when:
+  - is_ha_cluster
+  - inventory_hostname == first_node_in_zone
 
 - include_tasks: prep_replicas.yaml
   when:
   - is_ha_cluster
   - inventory_hostname != first_node_in_zone
-
-
