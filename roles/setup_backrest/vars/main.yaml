@@ -3,9 +3,18 @@
 backup_type: "{{ backup_repo_type if backup_repo_type in ('ssh', 's3') else 'ssh' }}"
 
 default_backup_server: >-
-  {{ groups['backup'] |
+  {{ groups['backup'] | default(()) |
   map('extract', hostvars) |
   selectattr('zone', 'eq', zone) |
   map(attribute='inventory_hostname') | list | first | default('') }}
 
 backup_server: "{{ backup_host or default_backup_server }}"
+
+default_repo_params:
+  region: "us-east-1"
+  endpoint: "s3.amazonaws.com"
+  bucket: "pgbackrest"
+  access_key: ""
+  secret_key: ""
+
+backup_params: "{{ default_repo_params | combine(backup_repo_params) }}"

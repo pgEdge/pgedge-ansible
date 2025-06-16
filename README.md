@@ -57,14 +57,15 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | debug_pgedge | true | When enabled, various kernel settings will be configured to retain all core files produced during a process crash. |
 | manage_host_file | true | When enabled, all hosts in the cluster will be listed in the `/etc/hosts` file of every other host. Set to false if external DNS is in use, or inventory hostnames are IP addresses. |
 | backup_host | '' | Should be set to the hostname where PgBackRest backups should be transmitted. If left empty and `backup_repo_type` is ssh, will default to the first node in the `backup` node group in the same zone. |
-| backup_repo_type | ssh | The type of PgBackRest backup repository to use. Using 'ssh' means backups are stored on a dedicated backup server as defined in the `backup` host group. Other options will be added soon. |
-| backup_repo_path | `$cluster_path/data/backrest` | Full path to storage location of PgBackRest repository. |
+| backup_repo_type | ssh | The type of PgBackRest backup repository to use. Using 'ssh' means backups are stored on a dedicated backup server as defined in the `backup` host group. Using 's3' will use a remote AWS S3 bucket and requires `backup_repo_params` to be set. Other options will be added as requested. |
+| backup_repo_path | `$cluster_path/data/backrest` | Full path to storage location of PgBackRest repository. If using S3 as a repo type, set this to something simple like `/backrest`. |
 | backup_repo_cipher_type | aes-256-cbc | Encryption algorithm to use for backup files stored in the PgBackRest repository. |
 | backup_repo_cipher | (random) | This should be specified and will define the encryption cipher used for backup files stored in the PgBackRest repository. If not defined, will be set to a 20-character deterministic random string based on the backup repository name. |
 | full_backup_count | 1 | Defines how many full backups to retain in the backup repository. |
 | diff_backup_count | 6 | Defines how many differential backups to retain in the backup repository. |
 | full_backup_schedule | `10 0 * * 0` | Defines a cron-style schedule for automating full PgBackRest backup operations. The default will run every Sunday at 10 minutes after midnight.
 | diff_backup_schedule | `10 0 * * 0` | Defines a cron-style schedule for automating differential PgBackRest backup operations. The default will run every Monday - Saturday at 10 minutes after midnight. |
+| backup_repo_params | See description | Parameters to remote backup repositories (S3 for now). Should be a dictionary with the following fields (defaults listed): `{ region: us-east-1, endpoint: s3.amazonaws.com, bucket: pgbackrest, access_key: '', secret_key: '' }`. |
 | exception_behaviour | transdiscard | Defines what Spock should do when it encounters an exception. Default is `transdiscard` to skip offending transaction. See [documentation](https://docs.pgedge.com/platform/exception#spockexception_behaviour). |
 
 Modifying other parameters will have no effect on the cluster.
