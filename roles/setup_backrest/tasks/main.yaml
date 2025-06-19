@@ -12,6 +12,7 @@
   - include_tasks: setup_server.yaml
     when:
     - backup_type == 'ssh'
+    - groups.backup is defined
     - inventory_hostname in groups.backup
 
   - include_tasks: config_postgres.yaml
@@ -29,8 +30,9 @@
 
   - include_tasks: first_backup.yaml
     when:
+    - groups.backup is defined
     - inventory_hostname in groups.backup
-    
+
   - include_tasks: first_backup.yaml
     when:
     - backup_type != 'ssh'
@@ -47,10 +49,11 @@
 
   - include_tasks: set_cron.yaml
     when:
+    - groups.backup is defined
     - inventory_hostname in groups.backup
 
   - include_tasks: set_cron.yaml
     when:
     - backup_type != 'ssh'
 
-  when: backup_server > ''
+  when: backup_server > '' or backup_type != 'ssh'

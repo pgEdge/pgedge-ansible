@@ -3,7 +3,7 @@
 - name: Make sure cron is actually installed before trying to use it...
   package:
     name:
-    - cron
+    - "{{ 'cronie' if ansible_facts.os_family == 'RedHat' else 'cron' }}"
     state: present
     lock_timeout: 300
   retries: 5

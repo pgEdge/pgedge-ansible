@@ -7,6 +7,8 @@ backup_repo_path: "{{ cluster_path }}/data/backrest"
 backup_repo_cipher: "{{ lookup('password', '/dev/null length=20', seed='pgedge' + cluster_name + '-' + zone | string) }}"
 backup_repo_cipher_type: aes-256-cbc
 
+backup_repo_params: {}
+
 full_backup_count: 1
 diff_backup_count: 6
 full_backup_schedule: "10 0 * * 0"

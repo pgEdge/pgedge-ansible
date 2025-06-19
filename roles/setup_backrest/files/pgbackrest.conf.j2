@@ -1,6 +1,6 @@
 [pgedge-{{ cluster_name }}-{{ zone }}]
 
-{% if inventory_hostname in groups.backup %}
+{% if groups.backup is defined and inventory_hostname in groups.backup %}
 # This is a backup server, so list all hosts in the zone as backup targets
 {% for item in nodes_in_zone %}
 pg{{ loop.index }}-host={{ hostvars[item].inventory_hostname }}
@@ -28,9 +28,18 @@ repo1-cipher-pass={{ backup_repo_cipher }}
 
 {% if backup_type == 'ssh' %}
 repo1-hardlink=y
-{%   if inventory_hostname not in groups.backup %}
+{%   if groups.backup is defined and inventory_hostname not in groups.backup %}
 repo1-type=posix
 repo1-host={{ backup_server }}
 repo1-host-user={{ ansible_user_id }}
 {%   endif %}
+{% endif %}
+
+{% if backup_type == 's3' %}
+repo1-type=s3
+repo1-s3-region={{ backup_params.region }}
+repo1-s3-endpoint={{ backup_params.endpoint }}
+repo1-s3-bucket={{ backup_params.bucket }}
+repo1-s3-key={{ backup_params.access_key }}
+repo1-s3-key-secret={{ backup_params.secret_key }}
 {% endif %}
