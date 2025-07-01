@@ -1,1 +1,3 @@
 ---
+
+haproxy_read_only: true

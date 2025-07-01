@@ -28,3 +28,18 @@ listen pg-cluster
 {%   set host_label = host_name | regex_replace('[\W-]', '_') %}
     server {{ host_label }} {{ host_name }}:5432 check port 8008
 {% endfor %}
+
+{% if haproxy_read_only %}
+listen pg-cluster-readonly
+    bind *:5433
+    mode tcp
+    option httpchk /replica
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+
+{% for host in nodes_in_zone %}
+{%   set host_name = hostvars[host].inventory_hostname %}
+{%   set host_label = host_name | regex_replace('[\W-]', '_') %}
+    server {{ host_label }} {{ host_name }}:5432 check port 8008
+{% endfor %}
+{% endif %}
