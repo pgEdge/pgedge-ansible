@@ -1,0 +1,119 @@
+# User's keys at .ssh will be used for communication between ansible and vm and between vms
+# number of vms can be set using 'count' variable
+# It creates vms, wait for vms to be ready, then configure it for passwordless sudo and ssh
+- name: Launch and configure EC2 instances with passwordless access
+  hosts: localhost
+  gather_facts: false
+  collections:
+    - amazon.aws
+
+  vars:
+    target_vm_user: rocky # user can use any user so its better to keep it variable
+    local_private_key: "~/.ssh/id_rsa" # The keys which would need to be connected from ansible machine to remote and between remote vms
+    local_public_key: "{{ local_private_key }}.pub"
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=30
+      -o LogLevel=ERROR
+
+  tasks:
+    # 1. Launch instances
+    - name: Launch EC2 instances for pgedge cluster
+      amazon.aws.ec2_instance:
+        key_name: "usman-unique-key" 
+        instance_type: "t2.micro"
+        image_id: "ami-0e9094ecc794a8068"
+        region: "ap-south-1"
+        security_group: "sg-0de1e97e81fdf1fa4"
+        network:
+          assign_public_ip: true
+        count: 3
+        state: present
+        wait: yes
+        tags:
+          Name: "usman_vm"
+      register: ec2_instances
+
+    # 2. Wait for SSH
+    - name: Wait for SSH access
+      wait_for:
+        host: "{{ item.public_ip_address }}"
+        port: 22
+        timeout: 300
+      loop: "{{ ec2_instances.instances }}"
+      when: item.public_ip_address is defined
+
+    # 3. Configure passwordless sudo
+    - name: Enable passwordless sudo
+      become: yes
+      ansible.builtin.lineinfile:
+        path: "/etc/sudoers"
+        regexp: "^%wheel"
+        line: "%wheel ALL=(ALL) NOPASSWD: ALL"
+        validate: "visudo -cf %s"
+      delegate_to: "{{ item.public_ip_address }}"
+      loop: "{{ ec2_instances.instances }}"
+      when: item.public_ip_address is defined
+
+    # 4. SSH setup tasks
+    - name: Create .ssh directory
+      ansible.builtin.file:
+        path: "/home/{{ target_vm_user }}/.ssh"
+        state: directory
+        mode: "0700"
+        owner: "{{ target_vm_user }}"
+        group: "{{ target_vm_user }}"
+      delegate_to: "{{ item.public_ip_address }}"
+      loop: "{{ ec2_instances.instances }}"
+      when: item.public_ip_address is defined
+
+    - name: Copy private key
+      ansible.builtin.copy:
+        src: "{{ local_private_key }}"
+        dest: "/home/{{ target_vm_user }}/.ssh/id_rsa"
+        owner: "{{ target_vm_user }}"
+        group: "{{ target_vm_user }}"
+        mode: "0600"
+      delegate_to: "{{ item.public_ip_address }}"
+      loop: "{{ ec2_instances.instances }}"
+      when: item.public_ip_address is defined
+
+    - name: Deploy public key
+      ansible.builtin.copy:
+        src: "{{ local_public_key }}"
+        dest: "/home/{{ target_vm_user }}/.ssh/id_rsa.pub"
+        mode: "0644"
+      delegate_to: "{{ item.public_ip_address }}"
+      loop: "{{ ec2_instances.instances }}"
+      when: item.public_ip_address is defined
+
+    - name: Authorize key
+      ansible.builtin.authorized_key:
+        user: "{{ target_vm_user }}"
+        state: present
+        key: "{{ lookup('file', local_public_key) }}"
+        manage_dir: false
+      delegate_to: "{{ item.public_ip_address }}"
+      loop: "{{ ec2_instances.instances }}"
+      when: item.public_ip_address is defined
+
+    # 5. Verification
+    - name: Verify  SSH between vms
+      ansible.builtin.command: >
+        ssh -o ConnectTimeout=5
+        -i /home/{{ target_vm_user }}/.ssh/id_rsa
+        {{ target_vm_user }}@{{ hostvars['localhost']['instance_public_ips'][0] }}
+        hostname
+      delegate_to: "{{ item.public_ip_address }}"
+      loop: "{{ ec2_instances.instances[1:] }}"
+      when:
+        - item.public_ip_address is defined
+        - instance_public_ips | length > 1
+      register: ssh_test
+      ignore_errors: yes
+
+    # 6. Final output.  # if we dynamically want to use the ips to the inventory file
+    - name: Capture public IPs
+      set_fact:
+        instance_public_ips: "{{ ec2_instances.instances | map(attribute='public_ip_address') | select('string') | list }}"
