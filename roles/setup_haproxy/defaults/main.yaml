@@ -1,3 +1,5 @@
 ---
 
-haproxy_read_only: true
+haproxy_extra_routes:
+  replica:
+    port: 5433

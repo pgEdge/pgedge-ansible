@@ -29,11 +29,13 @@ listen pg-cluster
     server {{ host_label }} {{ host_name }}:5432 check port 8008
 {% endfor %}
 
-{% if haproxy_read_only %}
-listen pg-cluster-readonly
-    bind *:5433
+{% for route in haproxy_extra_routes %}
+{%   set lag = haproxy_extra_routes[route].lag | default("") %}
+
+listen pg-cluster-{{ route }}
+    bind *:{{ haproxy_extra_routes[route].port }}
     mode tcp
-    option httpchk /replica
+    option httpchk /{{ route }}{{ "?lag=" + lag if lag }}
     http-check expect status 200
     default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
 
@@ -42,4 +44,4 @@ listen pg-cluster-readonly
 {%   set host_label = host_name | regex_replace('[\W-]', '_') %}
     server {{ host_label }} {{ host_name }}:5432 check port 8008
 {% endfor %}
-{% endif %}
+{% endfor %}
