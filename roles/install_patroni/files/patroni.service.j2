@@ -1,0 +1,29 @@
+[Unit]
+Description=Patroni service to orchestrate high availability of pgEdge nodes
+After=syslog.target network.target
+
+[Service]
+Type=simple
+
+User={{ ansible_user_id }}
+
+ExecStart={{ patroni_bin_dir }}/patroni {{ patroni_config_dir }}/patroni.yaml
+
+# Send HUP to reload from patroni.yaml
+
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# Only kill the patroni process, not it's children, so it will gracefully stop postgres
+
+KillMode=process
+
+# Give a reasonable amount of time for the server to start up/shut down
+
+TimeoutSec=30
+
+# Restart the service if it crashed
+
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

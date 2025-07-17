@@ -1,26 +1,14 @@
 ---
 
-- name: Include Packages Patroni needs to run or operate
-  package:
-    name:
-    - python3-psycopg2
-    state: present
-    lock_timeout: 300
-  retries: 5
-  delay: 20
-  register: result
-  until: result is success
-  become: true
+# This file is basically a fork to install pipx depending on OS.
+#
+# Why pipx? Because Debian systems have effectively made it impossible for
+# pip to add system software anymore if it isn't packaged. Patroni packaging
+# is extremely hit or miss, while the pypi resources are almost always recent,
+# and pipx will handle the build and install so the service user can launch it.
 
-- name: Include Packages Patroni needs to run or operate on Debian systems
-  package:
-    name:
-    - python3-venv
-    state: present
-    lock_timeout: 300
-  retries: 5
-  delay: 20
-  register: result
-  until: result is success
-  become: true
+- include_tasks: debian_packages.yaml
   when: ansible_facts.os_family == 'Debian'
+
+- include_tasks: rhel_packages.yaml
+  when: ansible_facts.os_family == 'RedHat'
