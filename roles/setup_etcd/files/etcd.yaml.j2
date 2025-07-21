@@ -6,7 +6,7 @@
 {%- endfor %}
 name: {{ ansible_hostname }}
 advertise-client-urls: http://{{ inventory_hostname }}:2379
-data-dir: /var/lib/etcd/postgresql
+data-dir: {{ etcd_data_dir }}/postgresql
 initial-advertise-peer-urls: http://{{ inventory_hostname }}:2380
 initial-cluster: {{ endpoints | join(',') }}
 initial-cluster-state: new

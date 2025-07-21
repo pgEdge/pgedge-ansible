@@ -2,18 +2,18 @@
 
 - name: Ensure etcd configuration directory exists
   file:
-    path: /etc/etcd
+    path: "{{ etcd_config_dir }}"
     state: directory
-    owner: etcd
-    group: etcd
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
   become: true
 
 - name: Create configuration file for etcd node
   template:
     src: files/etcd.yaml.j2
-    dest: /etc/etcd/etcd.yaml
-    owner: etcd
-    group: etcd
+    dest: "{{ etcd_config_dir }}/etcd.yaml"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
   become: true
 
 - name: Enable and start the etcd service

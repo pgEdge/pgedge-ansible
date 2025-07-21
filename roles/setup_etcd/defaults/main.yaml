@@ -1,1 +1,9 @@
 ---
+
+etcd_install_dir: "{{ cluster_path }}/etcd"
+
+etcd_user: etcd
+etcd_group: etcd
+etcd_install_dir: "/usr/local/etcd"
+etcd_config_dir: "/etc/etcd"
+etcd_data_dir: "/var/lib/etcd"

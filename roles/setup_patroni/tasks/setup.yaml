@@ -1,35 +1,10 @@
 ---
 
-- name: Ensure Patroni configuration directory exists owned by our user
-  file:
-    path: /etc/patroni
-    state: directory
-    owner: "{{ ansible_user_id }}"
-    group: "{{ ansible_user_id }}"
-  become: true
-
 - name: Create configuration file for Patroni node
   template:
     src: files/patroni.yaml.j2
-    dest: /etc/patroni/patroni.yaml
+    dest: "{{ patroni_config_dir }}/patroni.yaml"
     mode: 0600
-
-- name: Prepare systemd for service override
-  file: 
-    path: /etc/systemd/system/patroni.service.d
-    state: directory
-  become: true
-
-- name: Add a systemd service override for pgEdge modifications
-  copy:
-    content: |
-      [Service]
-      User={{ ansible_user_id }}
-      Group={{ ansible_user_id }}
-      ExecStart=
-      ExecStart=/usr/local/bin/patroni /etc/patroni/patroni.yaml
-    dest: /etc/systemd/system/patroni.service.d/override.conf
-  become: true
 
 - name: Enable and start the Patroni service
   systemd_service:
@@ -38,3 +13,14 @@
     enabled: true
     state: started
   become: true
+
+# Patroni should restart nodes with changes which require restart, but doesn't.
+# We use the patronictl tool because a direct Postgres restart won't change the
+# "Pending restart" flag in the Patroni cluster status.
+
+- name: Restart Postgres service to incorporate configuration changes
+  shell: |
+    cd {{ patroni_bin_dir }}
+    ./patronictl -c {{ patroni_config_dir }}/patroni.yaml \
+                 restart pgedge {{ ansible_hostname }} \
+                 --force

@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Ability to specify additional HAProxy listeners for specific Patroni node types. (EE-9)
+- Restart Postgres in setup_patroni role to activate config changes. (EE-13)
+
+### Changed
+
+- Switched to upstream etcd and Patroni releases. (EE-15)
+
 
 ## v0.1.0
 

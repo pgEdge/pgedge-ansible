@@ -4,3 +4,6 @@ replication_user: replicator
 replication_password: secret
 synchronous_mode: false
 synchronous_mode_strict: false
+
+patroni_bin_dir: "{{ ansible_facts['user_dir'] }}/.local/bin"
+patroni_config_dir: "/etc/patroni"

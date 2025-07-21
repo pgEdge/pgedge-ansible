@@ -1,0 +1,21 @@
+---
+
+# RHEL variants have a minimal pip install. This makes it easy to use for
+# installing pipx and nothing else.
+
+- name: Install pip to facilitate installation of pipx
+  package:
+    name:
+    - python3-pip
+    state: present
+    lock_timeout: 300
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Install pipx and make sure it's in the user's path
+  shell: |
+    python3 -m pip install --user pipx
+    python3 -m pipx ensurepath

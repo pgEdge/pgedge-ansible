@@ -1,11 +1,11 @@
 ---
 
-- name: Check for etcd software
+- name: Check for etcd binary
   stat:
-    path: "/usr/local/etcd"
-  register: etcd_software
+    path: "{{ etcd_install_dir }}/etcd"
+  register: etcd_binary
 
 - include_tasks: install.yaml
-  when: not etcd_software.stat.exists
+  when: not etcd_binary.stat.exists
 
 - include_tasks: environment.yaml

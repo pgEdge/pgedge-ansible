@@ -4,8 +4,8 @@
 
 - name: Check for Patroni software
   stat:
-    path: "/usr/local/patroni"
-  register: patroni_software
+    path: "{{ patroni_bin_dir }}/patroni"
+  register: patroni_bin
 
 - include_tasks: install.yaml
-  when: not patroni_software.stat.exists
+  when: not patroni_bin.stat.exists

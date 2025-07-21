@@ -1,15 +1,73 @@
 ---
 
-- name: Check for pre-existing etcd installation
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge um list | grep -q etcd | grep -q Installed | cat
-  register: etcd_download
+# Add the etcd data dir as the user's home. Should we ever "sudo" to this
+# user, the only thing relevant is the data directory. This also has the side
+# effect of creating the directory itself.
 
-- name: Download / install pgEdge etcd package to server
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge um install etcd
-  when: etcd_download.stdout == ''
-  args:
-    creates: /etc/systemd/system/etcd.service
+- name: Add the etcd service user
+  user:
+    name: "{{ etcd_user }}"
+    home: "{{ etcd_data_dir }}"
+    shell: "/bin/bash"
+    system: true
+  become: true
+
+- name: Create temp work space if it doesn't exist
+  file:
+    path: "{{ cluster_path }}/tmp"
+    state: directory
+    mode: 0700
+
+# It feels a bit strange installing binaries directly from github rather than
+# Hashicorp, but if they don't want to distribute their own binaries, that's
+# on them. We can at least enforce the checksum for the download. The URL
+# is a variable so users can supply their own repo URL for isolated networks.
+
+- name: Download latest etcd binary package
+  get_url:
+    url: "{{ etcd_base_url }}/{{ etcd_package }}.tar.gz"
+    dest: "{{ cluster_path }}/tmp/{{ etcd_package }}.tar.gz"
+    checksum: "{{ etcd_checksum }}"
+    mode: "0600"
+
+- name: Extract etcd archive
+  unarchive:
+    src: "{{ tmp_dir }}/{{ etcd_package }}.tar.gz"
+    dest: "{{ tmp_dir }}"
+    remote_src: true
+    creates: "{{ tmp_dir }}/{{ etcd_package }}"
+  vars:
+    tmp_dir: "{{ cluster_path }}/tmp"
+
+- name: Install etcd binaries to expected location
+  copy:
+    src: "{{ cluster_path }}/tmp/{{ etcd_package }}/"
+    dest: "{{ etcd_install_dir }}/"
+    mode: "0755"
+    remote_src: true
+  become: true
+
+# Some systems may have a system-wide umask set, in which case these binaries
+# may not be executable post-install. This step ensures non-root users can run
+# etcd services.
+
+- name: Make sure the etcd binaries are executable
+  file:
+    path: "{{ etcd_install_dir }}/{{ item }}"
+    mode: "0755"
+  become: true
+  loop:
+  - etcd
+  - etcdctl
+  - etcdutl
+
+# The service file is being installed here, but is not being enabled.
+# The setup_etcd role should do that.
+
+- name: Install the etcd Systemd service file
+  template:
+    src: files/etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+  become: true

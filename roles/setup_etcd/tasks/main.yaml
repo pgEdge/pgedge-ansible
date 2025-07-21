@@ -1,9 +1,10 @@
 ---
 
-- name: Check for etcd data directory
+- name: Check for etcd data directory for this cluster
   stat:
-    path: /var/lib/etcd/postgresql
+    path: "{{ etcd_data_dir }}/postgresql"
   register: etcd_data
+  become: true
 
 - include_tasks: setup.yaml
   when: not etcd_data.stat.exists
