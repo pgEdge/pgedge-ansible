@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+TBA
+
+## v0.2.0
+
 ### Added
 
 - Ability to specify additional HAProxy listeners for specific Patroni node types. (EE-9)
@@ -15,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Switched to upstream etcd and Patroni releases. (EE-15)
-
+- Set default Spock version to 5.0.
 
 ## v0.1.0
 

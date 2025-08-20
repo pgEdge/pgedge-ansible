@@ -44,7 +44,7 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | repo_prefix | None | If set, makes it possible to install specific custom or automated builds based on repository prefix. Consult a member of pgEdge staff for valid setting here. |
 | zone | 1 | Zone or region for a node. This helps organize HA clusters. It also doubles as the snowflake ID of a node. For non-HA clusters, just use one node per zone. |
 | pg_version | 16 | Postgres version to install. This is left at 16 to facilitate upgrade tests. |
-| spock_version | 4.0.9 | Version of the Spock extension to install. |
+| spock_version | 5.0.0 | Version of the Spock extension to install. |
 | db_names | demo | List of database names to use for the Spock cluster. At least one database name is expected to initialize the cluster. Any missing databases will be created and owned by `db_user`. |
 | db_user | admin | Database username. Must be something other than the OS username performing the installation. Note that the CLI will create a database user named after the OS user for its own purposes as part of the installation and setup process. |
 | db_password | secret | Password for the `db_user` user. |
