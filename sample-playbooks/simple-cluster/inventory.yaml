@@ -8,7 +8,6 @@
 
 pgedge:
   vars:
-    repo_name: upstream
     db_password: secret
   hosts:
     192.168.6.10:
