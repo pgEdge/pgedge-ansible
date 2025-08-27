@@ -4,8 +4,8 @@ cluster_name: demo
 repo_name: download
 repo_prefix: ""
 zone: 1
-pg_version: 16
-spock_version: "4.0.9"
+pg_version: 17
+spock_version: "5.0.0"
 db_names:
 - demo
 db_user: admin

@@ -7,7 +7,6 @@
 
 pgedge:
   vars:
-    repo_name: upstream
     db_password: secret
     is_ha_cluster: true
   hosts:
