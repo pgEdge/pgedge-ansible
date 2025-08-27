@@ -20,6 +20,7 @@ TBA
 
 - Switched to upstream etcd and Patroni releases. (EE-15)
 - Set default Spock version to 5.0.
+- Set default Postgres version to 17.
 
 ## v0.1.0
 
