@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-TBA
+### Fixed
+
+- Added redundant path environment spec for pipx-based executables. (EE-19)
+
 
 ## v0.2.0
 
