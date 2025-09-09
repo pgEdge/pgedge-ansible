@@ -1,6 +1,6 @@
-# pgEdge Platform Ansible Collection
+# pgEdge Distributed Postgres Ansible Collection
 
-Ansible is a common utility for deploying and configuring infrastructure and cluster resources. This is an ansible collection designed for managing pgEdge clusters in this same capacity. This collection provides a series of Ansible roles which will build a full pgEdge cluster when executed.
+Ansible is a common utility for deploying and configuring infrastructure and cluster resources. This is an ansible collection designed for managing pgEdge Distributed Postgres clusters in this same capacity. This collection provides a series of Ansible roles which will build a full pgEdge Distributed Postgres cluster when executed.
 
 Each of these will be described here, along with any variables necessary to modify behavior or configuration characteristics.
 
