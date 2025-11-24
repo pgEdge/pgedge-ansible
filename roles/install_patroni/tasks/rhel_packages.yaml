@@ -19,3 +19,5 @@
   shell: |
     python3 -m pip install --user pipx
     python3 -m pipx ensurepath
+  become: true
+  become_user: postgres

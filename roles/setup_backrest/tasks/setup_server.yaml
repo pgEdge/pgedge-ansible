@@ -1,11 +1,25 @@
 ---
 
+# Configuring a server for PgBackRest is slightly different than a client.
+# Servers need to know about all Postgres hosts in their zone so they can
+# connect to any of them. Since this is a dedicated server, it also runs as
+# a specified user rather than postgres.
+
+- include_tasks: config_backrest.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"
+
+# Now we need to allow client systems to connect via SSH for file transfers.
+# It's also good to set up a reciprocal relationship since the server may
+# reach into Postgres hosts as well.
+
 - name: Allow SSH access from all hosts in this zone
   authorized_key:
-    user: "{{ ansible_user_id }}"
+    user: "{{ backup_repo_user }}"
     key: "{{ lookup('file', 'host-keys/' + item) }}"
     state: present
   loop: "{{ nodes_in_zone }}"
+  become: true
 
 - name: Make sure backup targets are known SSH hosts
   known_hosts:
@@ -13,15 +27,29 @@
     state: present
     key: "{{ lookup('pipe', 'ssh-keyscan {{ item }} | grep -v ''^\\#''') }}"
     hash_host: false
+  become: true
+  become_user: "{{ backup_repo_user }}"
   loop: "{{ nodes_in_zone }}"
 
-# The PgEdge platform binary for PgBackRest currently relies on installed
-# Postgres libraries, which won't be on a dedicated server by now, so install
-# them manually.
+# Make sure that the backup user has an appropriate .pgpass entry. This is
+# likely only used to put the server in backup mode and invoke checkpoints,
+# but needs to exist.
 
-- name: Download / install pgEdge Postgres package to server
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge um install pg{{pg_version}}
-  args:
-    creates: "{{ pg_path }}"
+- name: Ensure backup user can connect to Postgres
+  lineinfile:
+    path: ~/.pgpass
+    line: "*:*:*:{{ backup_user }}:{{ backup_password }}"
+    create: true
+    mode: "0600"
+  become: true
+  become_user: "{{ backup_repo_user }}"
+
+# With configuration complete, attempt to take the initial bootstrap backup:
+
+- include_tasks: first_backup.yaml
+
+# If the bootstrap backup succeeds, it's safe to set up automated backups.
+
+- include_tasks: set_cron.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"

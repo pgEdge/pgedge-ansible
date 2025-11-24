@@ -1,0 +1,114 @@
+---
+
+# Don't let Postgres run while we're configuring it the first time. This will
+# only really matter on Debian family systems, but it's good to apply in
+# general.
+
+- name: Populate service facts to check for required services
+  ansible.builtin.service_facts:
+
+- name: Ensure Postgres isn't running during setup
+  service:
+    name: "{{ pg_service_name }}"
+    state: stopped
+    enabled: false
+  become: true
+  when:
+  - ansible_facts.services['patroni.service']['state'] | default('') != 'running'
+
+# Only bootstrap the Postgres instance on the Primary node, as Patroni will 
+# handle the replicas for us.
+
+- name: Ensure Postgres data directory is initialized and properly configured
+  include_tasks: prep_instance.yaml
+
+# Ensure all pg_hba.conf lines are listed for the replication_user that will
+# handle all physical replication duties, and _only_ include hosts in the zone
+# This prevents unintended replication streams.
+
+- name: Allow replication user access between nodes in the same zone
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: host
+    users: "{{ replication_user }}"
+    databases: replication
+    method: scram-sha-256
+    source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
+  loop: "{{ nodes_in_zone }}"
+  become: true
+  become_user: postgres
+
+# If the HA setup includes any proxy nodes, make sure those can also access
+# the node-to-node pgedge communication channels.
+
+- name: Allow pgedge node-to-node communication from user-specified proxy
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: host
+    users: "{{ pgedge_user }}"
+    databases: replication
+    method: scram-sha-256
+    source: "{{ proxy_node | ansible.utils.ipaddr('address') or lookup('dig', proxy_node) }}/32"
+  become: true
+  become_user: postgres
+  when: proxy_node
+
+- name: Allow pgedge node-to-node communication from in-zone proxies
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: host
+    users: "{{ pgedge_user }}"
+    databases: replication
+    method: scram-sha-256
+    source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
+  loop: "{{ proxies_in_zone }}"
+  become: true
+  become_user: postgres
+
+# At least the first time around, the Postgres instance must be started so we
+# can execute SQL queries and other operations where Postgres must be online.
+# Notably, do _not_ enable the service; Patroni must manage the service itself.
+# If Patroni is already running, assume this is the case and skip startup.
+
+- name: Ensure Postgres instance is started
+  service:
+    name: "{{ pg_service_name }}"
+    state: started
+    enabled: false
+  become: true
+  when:
+  - ansible_facts.services['patroni.service']['state'] | default('') != 'running'
+
+# Create the requested physical replication user explicitly on the primary.
+# This used to be a call to the platform CLI, but is now managed directly by
+# Postgres tools.
+
+- name: Create user for replication
+  community.postgresql.postgresql_user:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    name: "{{ replication_user }}"
+    password: "{{ replication_password }}"
+    role_attr_flags: REPLICATION
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+# Make sure that the pgedge node communication user has an appropriate .pgpass
+# entry so the nodes can communicate with each other. This is technically
+# redundant to the file Patroni uses, but it's a good safeguard for one-off
+# operations such as pg_basebackup.
+
+- name: Ensure pgedge communication user can connect to cluster
+  lineinfile:
+    path: ~/.pgpass
+    line: "*:*:*:{{ replication_user }}:{{ replication_password }}"
+    create: true
+    mode: "0600"
+  become: true
+  become_user: postgres
+
+# Include all other common steps for a standard Postgres node
+
+- name: Include common Postgres setup steps
+  include_tasks: common_setup.yaml

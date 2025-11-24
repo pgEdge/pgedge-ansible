@@ -1,13 +1,6 @@
 ---
 
-backup_type: "{{ backup_repo_type if backup_repo_type in ('ssh', 's3') else 'ssh' }}"
-
-default_backup_server: >-
-  {{ groups['backup'] | default(()) |
-  map('extract', hostvars) |
-  selectattr('zone', 'eq', zone) |
-  map(attribute='inventory_hostname') | list | first | default('') }}
-
+default_backup_server: "{{ backups_in_zone | first | default('') }}"
 backup_server: "{{ backup_host or default_backup_server }}"
 
 default_repo_params:

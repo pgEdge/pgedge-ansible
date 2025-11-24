@@ -1,0 +1,36 @@
+---
+
+# Only create the user on one node per pgEdge node group. If there are
+# replicas, they'll get the user creation anyway. The backup user is granted
+# REPLICATION rights and the ability to start a checkpoint as those are the
+# minimum elements necessary for PgBackRest.
+
+- name: Create Backup user for PgBackRest
+  community.postgresql.postgresql_user:
+    name: "{{ backup_user }}"
+    password: "{{ backup_password }}"
+    role_attr_flags: REPLICATION
+    login_unix_socket: /var/run/postgresql
+    login_port: "{{ pg_port }}"
+  become: true
+  become_user: postgres
+  when: inventory_hostname == first_node_in_zone
+
+- name: Allow backup user to invoke checkpoints
+  community.postgresql.postgresql_membership:
+    group: pg_checkpoint
+    target_roles:
+    - "{{ backup_user }}"
+    state: present
+    login_unix_socket: /var/run/postgresql
+    login_port: "{{ pg_port }}"
+  become: true
+  become_user: postgres
+  when: inventory_hostname == first_node_in_zone
+
+# We need to patch the pg_hba.conf file to include the backup user and host as
+# an allowed connection target. We only need to do this for a regular cluster,
+# as the Patroni config will handle it otherwise.
+
+- include_tasks: add_hba_rules.yaml
+  when: not is_ha_cluster

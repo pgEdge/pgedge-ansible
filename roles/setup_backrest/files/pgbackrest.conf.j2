@@ -4,21 +4,23 @@
 # This is a backup server, so list all hosts in the zone as backup targets
 {% for item in nodes_in_zone %}
 pg{{ loop.index }}-host={{ hostvars[item].inventory_hostname }}
-pg{{ loop.index }}-host-user={{ ansible_user_id }}
+pg{{ loop.index }}-host-user=postgres
+pg{{ loop.index }}-port={{ pg_port }}
 pg{{ loop.index }}-path={{ pg_data }}
-pg{{ loop.index }}-user={{ ansible_user_id }}
+pg{{ loop.index }}-user=postgres
 pg{{ loop.index }}-database=postgres
 {% endfor %}
 {% else %}
 # Nodes should only know about themselves. This prevents replicas from
 # reaching into the primary node to start a backup procedure.
+pg1-port={{ pg_port }}
 pg1-path={{ pg_data }}
-pg1-user={{ ansible_user_id }}
+pg1-user=postgres
 pg1-database=postgres
 {% endif %}
 
 [global]
-log-path={{ cluster_path }}/data/logs/backrest
+log-path=/var/log/pgbackrest
 start-fast=y
 repo1-path={{ backup_repo_path }}
 repo1-retention-full={{ full_backup_count }}
@@ -31,7 +33,7 @@ repo1-hardlink=y
 {%   if groups.backup is defined and inventory_hostname not in groups.backup %}
 repo1-type=posix
 repo1-host={{ backup_server }}
-repo1-host-user={{ ansible_user_id }}
+repo1-host-user={{ backup_repo_user }}
 {%   endif %}
 {% endif %}
 

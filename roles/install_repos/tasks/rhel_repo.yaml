@@ -1,0 +1,17 @@
+---
+
+- name: Install the pgEdge repo GPG Keys
+  rpm_key:
+    key: https://dnf.pgedge.com/keys/pgedge.pub
+    state: present
+  become: true
+
+- name: Install the pgEdge repo package
+  dnf:
+    name: https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true

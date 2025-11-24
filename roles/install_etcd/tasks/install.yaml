@@ -14,7 +14,7 @@
 
 - name: Create temp work space if it doesn't exist
   file:
-    path: "{{ cluster_path }}/tmp"
+    path: "~/tmp"
     state: directory
     mode: 0700
 
@@ -26,22 +26,20 @@
 - name: Download latest etcd binary package
   get_url:
     url: "{{ etcd_base_url }}/{{ etcd_package }}.tar.gz"
-    dest: "{{ cluster_path }}/tmp/{{ etcd_package }}.tar.gz"
+    dest: "~/tmp/{{ etcd_package }}.tar.gz"
     checksum: "{{ etcd_checksum }}"
     mode: "0600"
 
 - name: Extract etcd archive
   unarchive:
-    src: "{{ tmp_dir }}/{{ etcd_package }}.tar.gz"
-    dest: "{{ tmp_dir }}"
+    src: "~/tmp/{{ etcd_package }}.tar.gz"
+    dest: "~/tmp"
     remote_src: true
-    creates: "{{ tmp_dir }}/{{ etcd_package }}"
-  vars:
-    tmp_dir: "{{ cluster_path }}/tmp"
+    creates: "~/tmp/{{ etcd_package }}"
 
 - name: Install etcd binaries to expected location
   copy:
-    src: "{{ cluster_path }}/tmp/{{ etcd_package }}/"
+    src: "{{ ansible_user_dir }}/tmp/{{ etcd_package }}/"
     dest: "{{ etcd_install_dir }}/"
     mode: "0755"
     remote_src: true

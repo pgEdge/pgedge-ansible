@@ -1,0 +1,38 @@
+---
+
+# Modify the pg_hba.conf file to allow the backup user to access this host.
+# This task list should only be included in non-ha clusters, as Patroni will
+# handle the HBA rules in that case.
+
+- name: Allow backup user connections from user-specified backup host
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: host
+    users: "{{ backup_user }}"
+    databases: replication,postgres
+    method: scram-sha-256
+    source: "{{ backup_ip }}/32"
+  vars:
+    backup_ip: "{{ backup_host | ipaddr('address') or lookup('dig', backup_host) }}"
+  become: true
+  become_user: postgres
+  when: backup_host > ''
+
+- name: Allow backup user connections from backup hosts
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: host
+    users: "{{ backup_user }}"
+    databases: replication,postgres
+    method: scram-sha-256
+    source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
+  loop: "{{ backups_in_zone }}"
+  become: true
+  become_user: postgres
+
+- name: Reload the Postgres service to incorporate access changes
+  systemd_service:
+    name: "{{ pg_service_name }}"
+    state: reloaded
+    enabled: true
+  become: true

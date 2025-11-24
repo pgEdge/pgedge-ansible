@@ -1,23 +1,15 @@
 ---
 
-- name: Check for Postgres data directory
-  stat:
-    path: "{{ pg_path }}"
-  register: pg_installed
-
 - include_tasks: setup.yaml
-  when: not pg_installed.stat.exists
+  when:
+  - not is_ha_cluster
 
-- include_tasks: packages.yaml
-
-- include_tasks: environment.yaml
-
-- include_tasks: prep_primary.yaml
+- include_tasks: ha_setup.yaml
   when:
   - is_ha_cluster
   - inventory_hostname == first_node_in_zone
 
-- include_tasks: prep_replicas.yaml
+- include_tasks: replica_setup.yaml
   when:
   - is_ha_cluster
   - inventory_hostname != first_node_in_zone

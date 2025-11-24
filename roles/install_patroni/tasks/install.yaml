@@ -2,7 +2,11 @@
 
 - name: Install Patroni and any dependencies
   shell: |
+    [ -f ~/.bashrc ] && source ~/.bashrc
+    [ -f ~/.bash_profile ] && source ~/.bash_profile
     pipx install patroni[psycopg2-binary,etcd]
+  become: true
+  become_user: postgres
 
 # The service file is being installed here, but is not being enabled.
 # The setup_etcd role should do that.
@@ -11,14 +15,14 @@
   template:
     src: files/patroni.service.j2
     dest: /etc/systemd/system/patroni.service
-    owner: "{{ ansible_user_id }}"
+    owner: postgres
   become: true
 
-- name: Ensure Patroni configuration directory exists owned by our user
+- name: Ensure Patroni config directory exists owned by the postgres user
   file:
     path: "{{ patroni_config_dir }}"
     state: directory
-    owner: "{{ ansible_user_id }}"
-    group: "{{ ansible_user_id }}"
+    owner: postgres
+    group: postgres
     mode: 0700
   become: true

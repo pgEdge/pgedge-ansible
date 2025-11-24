@@ -1,11 +1,15 @@
 ---
 
-- name: Check for pgEdge software
-  stat:
-    path: "{{ cluster_path }}/pgedge"
-  register: edge_software
-
-- include_tasks: install.yaml
-  when: not edge_software.stat.exists
-
-- include_tasks: environment.yaml
+- name: Install standard pgEdge packages
+  package:
+    name:
+    - "pgedge-enterprise-all{{ separator }}{{ pg_version }}"
+    - pgedge-python3-psycopg2
+    state: latest
+  vars:
+    separator: "{{ '_' if ansible_facts.os_family == 'RedHat' else '-' }}"
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true

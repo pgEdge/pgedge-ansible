@@ -1,0 +1,14 @@
+---
+
+argument_specs:
+  main:
+    short_description: Connect pgEdge nodes together in a single cluster
+    description:
+    - Set up the cluster.
+    options:
+      proxy_node:
+        type: "str"
+        description: 
+        - In an HA cluster, the Proxy node to use for the current zone.
+        required: true
+#        default: The first node in the `haproxy` inventory group in the same zone as this node.

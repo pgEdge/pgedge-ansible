@@ -1,9 +1,5 @@
 ---
 
-backup_host: ''
-
-backup_repo_type: ssh
-backup_repo_path: "{{ cluster_path }}/data/backrest"
 backup_repo_cipher: "{{ lookup('password', '/dev/null length=20', seed='pgedge' + cluster_name + '-' + zone | string) }}"
 backup_repo_cipher_type: aes-256-cbc
 

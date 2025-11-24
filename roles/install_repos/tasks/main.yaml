@@ -1,0 +1,13 @@
+---
+
+- name: Include Debian install steps
+  include_tasks: debian_repo.yaml
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Include RedHat EPEL repo installation steps
+  include_tasks: rhel_epel.yaml
+  when: ansible_facts.os_family == 'RedHat'
+
+- name: Include RedHat pgEdge repo installation steps
+  include_tasks: rhel_repo.yaml
+  when: ansible_facts.os_family == 'RedHat'

@@ -1,10 +1,9 @@
 ---
 
-etcd_version: "3.6.2"
+etcd_version: "3.6.5"
 etcd_base_url: "https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}"
 etcd_checksum: "sha256:{{ etcd_base_url }}/SHA256SUMS"
 etcd_package: "etcd-v{{ etcd_version }}-linux-amd64"
-etcd_install_dir: "{{ cluster_path }}/etcd"
 
 etcd_user: etcd
 etcd_group: etcd

@@ -4,17 +4,23 @@
   file:
     path: /etc/pgbackrest
     state: directory
-    owner: "{{ ansible_user_id }}"
-    group: "{{ ansible_user_id }}"
+    owner: "{{ os_user }}"
+    group: "{{ os_user }}"
   become: true
 
 - name: Create configuration file for PgBackRest
   template:
     src: files/pgbackrest.conf.j2
     dest: /etc/pgbackrest/pgbackrest.conf
-    mode: 0600
+    mode: "0600"
+  become: true
+  become_user: "{{ os_user }}"
 
 - name: Create a log folder for PgBackRest
   file:
-    path: "{{ cluster_path }}/data/logs/backrest"
+    path: "/var/log/pgbackrest"
     state: directory
+    owner: "{{ os_user }}"
+    group: "{{ os_user }}"
+    mode: "0700"
+  become: true

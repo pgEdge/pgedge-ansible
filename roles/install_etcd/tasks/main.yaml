@@ -7,5 +7,3 @@
 
 - include_tasks: install.yaml
   when: not etcd_binary.stat.exists
-
-- include_tasks: environment.yaml

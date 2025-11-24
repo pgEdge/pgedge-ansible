@@ -1,0 +1,15 @@
+---
+
+# Most RHEL variants need to install the EPEL repo from a remote fetch.
+
+- name: Install EPEL repo package for enterprise Linux systems
+  dnf:
+    name: "https://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ os_version }}.noarch.rpm"
+    state: present
+  vars:
+    os_version: "{{ ansible_facts.distribution_major_version }}"
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true

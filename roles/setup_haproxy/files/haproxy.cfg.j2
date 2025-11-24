@@ -17,7 +17,7 @@ listen stats
     stats uri /
 
 listen pg-cluster
-    bind *:5432
+    bind *:{{ pg_port }}
     mode tcp
     option httpchk
     http-check expect status 200
@@ -26,7 +26,7 @@ listen pg-cluster
 {% for host in nodes_in_zone %}
 {%   set host_name = hostvars[host].inventory_hostname %}
 {%   set host_label = host_name | regex_replace('[\W-]', '_') %}
-    server {{ host_label }} {{ host_name }}:5432 check port 8008
+    server {{ host_label }} {{ host_name }}:{{ pg_port }} check port 8008
 {% endfor %}
 
 {% for route in haproxy_extra_routes %}
@@ -42,6 +42,6 @@ listen pg-cluster-{{ route }}
 {% for host in nodes_in_zone %}
 {%   set host_name = hostvars[host].inventory_hostname %}
 {%   set host_label = host_name | regex_replace('[\W-]', '_') %}
-    server {{ host_label }} {{ host_name }}:5432 check port 8008
+    server {{ host_label }} {{ host_name }}:{{ pg_port }} check port 8008
 {% endfor %}
 {% endfor %}

@@ -1,0 +1,18 @@
+---
+
+# Download the RHEL EPEL package from external resource.
+
+- name: Include EPEL package download task
+  include_tasks: rhel_epel_dl.yaml
+
+# Oracle Linux systems have their own command to enable the CRB:
+
+- name: Enable CRB on Oracle Linux systems
+  community.general.dnf_config_manager:
+    name: "ol{{ os_version }}_codeready_builder"
+    state: enabled
+  vars:
+    os_version: "{{ ansible_facts.distribution_major_version }}"
+  become: true
+  when:
+  - ansible_facts.distribution_major_version > 7
