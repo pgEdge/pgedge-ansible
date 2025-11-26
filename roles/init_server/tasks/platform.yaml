@@ -14,6 +14,6 @@
 
 - name: Reload SSH service for new IPC setting
   service:
-    name: ssh
+    name: "{{ 'sshd' if ansible_facts.os_family == 'RedHat' else 'ssh' }}"
     state: reloaded
   become: true
