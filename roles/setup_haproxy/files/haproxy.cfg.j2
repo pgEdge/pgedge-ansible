@@ -17,7 +17,7 @@ listen stats
     stats uri /
 
 listen pg-cluster
-    bind *:{{ pg_port }}
+    bind *:{{ proxy_port }}
     mode tcp
     option httpchk
     http-check expect status 200
