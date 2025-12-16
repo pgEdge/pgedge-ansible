@@ -9,7 +9,7 @@
   vars:
     ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
   register: patroni_status
-  retries: 6
+  retries: 30
   delay: 10
   until: patroni_status.stdout  == 'running'
   become: true
