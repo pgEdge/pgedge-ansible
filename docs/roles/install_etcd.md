@@ -6,16 +6,18 @@ The `install_etcd` role downloads and installs etcd distributed key-value store 
 
 ## Purpose
 
-- Download etcd binary from official [GitHub releases](https://github.com/etcd-io/etcd/releases)
-- Verify download integrity using checksums
-- Install etcd binaries to system directories
-- Create etcd system user and group
-- Install systemd service unit for etcd
-- Prepare etcd for cluster configuration
+This role performs the following tasks:
+
+- Downloads etcd binary from official [GitHub releases](https://github.com/etcd-io/etcd/releases).
+- Verifies download integrity using checksums.
+- Installs etcd binaries to system directories.
+- Creates etcd system user and group.
+- Installs systemd service unit for etcd.
+- Prepares etcd for cluster configuration.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
+- `role_config`: Provides shared configuration variables
 
 ## When to Use
 
@@ -30,7 +32,7 @@ Execute this role on **pgedge hosts** in high availability configurations before
 ```
 
 !!! important "HA Clusters Only"
-    This role is only required for high availability deployments where `is_ha_cluster: true`. Standalone PostgreSQL instances do not need etcd.
+    This role is only required for high availability deployments when you enable the `is_ha_cluster` parameter. Standalone PostgreSQL instances do not need etcd.
 
 ## Parameters
 
@@ -301,7 +303,7 @@ sudo systemctl daemon-reload
 
 ## Notes
 
-Ensure etcd version is compatible with your Patroni version. etcd 3.4+ is recommended for Patroni 2.0+.
+You should ensure etcd version is compatible with your Patroni version. etcd 3.4+ is recommended for Patroni 2.0+.
 
 ## See Also
 

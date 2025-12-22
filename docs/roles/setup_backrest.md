@@ -6,22 +6,24 @@ The `setup_backrest` role configures pgBackRest for PostgreSQL backup and recove
 
 ## Purpose
 
-- Configure pgBackRest on PostgreSQL nodes (clients)
-- Configure pgBackRest on dedicated backup servers
-- Set up SSH authentication for backup access
-- Create backup database user
-- Configure PostgreSQL archive command
-- Integrate with Patroni for HA clusters
-- Take initial bootstrap backup
-- Schedule automated full and differential backups
-- Support both SSH and S3 backup repositories
+This role performs the following tasks:
+
+- Configures pgBackRest on PostgreSQL nodes (clients).
+- Configures pgBackRest on dedicated backup servers.
+- Sets up SSH authentication for backup access.
+- Creates backup database user.
+- Configures PostgreSQL archive command.
+- Integrates with Patroni for HA clusters.
+- Takes initial bootstrap backup.
+- Schedules automated full and differential backups.
+- Supports both SSH and S3 backup repositories.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `install_backrest` - pgBackRest must be installed
-- `setup_postgres` - PostgreSQL must be configured
-- `init_server` - SSH keys must be generated
+- `role_config`: Provides shared configuration variables
+- `install_backrest`: You must install pgBackRest
+- `setup_postgres`: You must configure PostgreSQL
+- `init_server`: You must generate SSH keys
 
 ## When to Use
 
@@ -350,11 +352,9 @@ Platform differences are handled through variables and pgBackRest is cross-platf
 
 This role is designed for idempotency:
 
-- Configuration file is regenerated each run
-- SSH key distribution is idempotent
-- Backup user creation is idempotent
-- Initial backup is skipped if repository exists
-- Cron job creation is idempotent
+- Regenerates configuration files each run to incorporate changes.
+- The backup database user is only created if it doesn't exist.
+- Will not overwrite an existing pgBackRest stanza.
 
 ## Troubleshooting
 

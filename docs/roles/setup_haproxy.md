@@ -6,18 +6,20 @@ Unlike most of the other roles in this collection, the `setup_haproxy` role inst
 
 ## Purpose
 
-- Install HAProxy load balancer
-- Configure health checks using Patroni REST API
-- Route connections to current Patroni primary
-- Provide optional replica routing endpoints
-- Enable statistics dashboard
-- Ensure high availability for database connections
-- Handle automatic failover routing
+This role performs the following tasks:
+
+- Installs HAProxy load balancer.
+- Configures health checks using Patroni REST API.
+- Routes connections to current Patroni primary.
+- Provides optional replica routing endpoints.
+- Enables statistics dashboard.
+- Ensures high availability for database connections.
+- Handles automatic failover routing.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `setup_patroni` - Patroni REST API must be available for routing to occur
+- `role_config`: Provides shared configuration variables
+- `setup_patroni`: The Patroni REST API must be available for routing to occur
 
 ## When to Use
 
@@ -34,7 +36,7 @@ Execute this role on **haproxy hosts** in high availability configurations after
 ```
 
 !!! note "HA Clusters Only"
-    HAProxy is only useful for high availability deployments where `is_ha_cluster: true`. Standalone PostgreSQL instances don't need load balancing.
+    HAProxy is only useful for high availability deployments when you enable the `is_ha_cluster` parameter. Standalone PostgreSQL instances don't need load balancing.
 
 ## Parameters
 
@@ -187,10 +189,9 @@ HAProxy logs to syslog by default:
 
 This role is fully idempotent:
 
-- Package installation 
-- Configuration file is regenerated each run (safe)
-- Service restart ensures configuration applies
-- Safe to re-run for configuration updates
+- Delegates package installation to the operating system.
+- Regenerates configuration files each run to incorporate changes.
+- Always restarts HAProxy to ensure configuration changes apply.
 
 ## Troubleshooting
 
@@ -362,7 +363,7 @@ curl http://new-primary:8008/
 
 ## Notes
 
-Access the statistics dashboard to monitor:
+You can access the statistics dashboard to monitor:
 
 ```bash
 # From your browser

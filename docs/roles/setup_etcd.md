@@ -6,16 +6,18 @@ The `setup_etcd` role configures and starts etcd as a distributed consensus clus
 
 ## Purpose
 
-- Generate etcd cluster configuration file
-- Configure cluster membership for all nodes in each zone
-- Set appropriate network endpoints and URLs
-- Enable and start etcd service
-- Establish distributed key-value store for Patroni
+This role performs the following tasks:
+
+- Generates the etcd cluster configuration file.
+- Configures cluster membership for all nodes in each zone.
+- Sets appropriate network endpoints and URLs.
+- Enables and starts etcd service.
+- Establishes distributed key-value store for Patroni.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `install_etcd` - etcd binaries and service must be installed
+- `role_config`: Provides shared configuration variables
+- `install_etcd`: You must install etcd binaries and service
 
 ## When to Use
 
@@ -32,7 +34,7 @@ Execute this role on **pgedge hosts** in high availability configurations after 
 ```
 
 !!! important "HA Clusters Only"
-    This role is only required for high availability deployments where `is_ha_cluster: true`. Standalone PostgreSQL instances do not need etcd.
+    This role is only required for high availability deployments when you enable the `is_ha_cluster` parameter. Standalone PostgreSQL instances do not need etcd.
 
 ## Parameters
 
@@ -225,10 +227,9 @@ Each zone will have its own independent etcd cluster.
 
 This role is designed for idempotency:
 
-- Checks for existing cluster data before configuration
-- Skips setup if `{{ etcd_data_dir }}/postgresql` exists
-- Configuration file updates are safe but may require service restart
-- Service enable/start operations are idempotent
+- Will not overwrite an existing cluster.
+- Regenerates configuration files each run to incorporate changes.
+- Always leaves Etcd in an enabled and running state.
 
 !!! warning "Configuration Changes"
     Changing etcd cluster membership after initial setup requires special procedures. Adding or removing nodes should be done using etcdctl, not by re-running this role.
@@ -389,7 +390,7 @@ curl http://127.0.0.1:2379/health
 
 ## Notes
 
-Monitor etcd cluster health:
+You can monitor etcd cluster health:
 
 ```bash
 # Check cluster health

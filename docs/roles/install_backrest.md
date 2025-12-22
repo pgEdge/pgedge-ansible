@@ -6,16 +6,18 @@ The `install_backrest` role installs pgBackRest, a modern backup and restore sol
 
 ## Purpose
 
-- Install pgBackRest from pgEdge repositories
-- Install cron service for backup scheduling
-- Prepare system for PostgreSQL backup and recovery operations
-- Enable both full and incremental backup capabilities
+This role performs the following tasks:
+
+- Installs pgBackRest from pgEdge repositories.
+- Installs the cron service for backup scheduling.
+- Prepares the system for PostgreSQL backup and recovery operations.
+- Enables both full and incremental backup capabilities.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `init_server` - All servers must be initialized
-- `install_repos` - Must configure repositories first
+- `role_config`: Provides shared configuration variables
+- `init_server`: You must initialize all servers
+- `install_repos`: You must configure repositories first
 
 ## When to Use
 
@@ -150,12 +152,12 @@ This role installs system packages which create:
 
 ## Idempotency
 
-This role is fully idempotent:
+This role is fully idempotent and supports the following behaviors:
 
-- Package installation is idempotent (no changes if already installed)
-- Will update to latest package version if available
-- Safe to re-run multiple times
-- No configuration changes are made (handled by `setup_backrest`)
+- The role makes no changes if the packages are already installed.
+- The role updates to the latest package version if available.
+- You can safely re-run this role multiple times.
+- The role makes no configuration changes (the `setup_backrest` role handles those).
 
 ## Troubleshooting
 
@@ -306,7 +308,7 @@ ls -la /usr/bin/pgbackrest
 
 ## Notes
 
-After installation, verify pgBackRest is installed correctly:
+You should verify pgBackRest is installed correctly after installation:
 
 ```bash
 pgbackrest version

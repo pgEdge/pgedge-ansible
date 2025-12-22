@@ -6,18 +6,20 @@ The `setup_postgres` role initializes and configures Postgres instances for pgEd
 
 ## Purpose
 
-- Initialize Postgres data directory if necessary
-- Generate SSL certificates for encrypted connections
-- Configure Postgres for logical replication and Spock
-- Set up `pg_hba.conf` for authentication
-- Create database users (admin, replication, pgedge)
-- Create and configure databases
-- Install Spock and Snowflake extensions
+This role performs the following tasks:
+
+- Initializes the Postgres data directory if necessary.
+- Generates SSL certificates for encrypted connections.
+- Configures Postgres for logical replication and Spock.
+- Sets up `pg_hba.conf` for authentication.
+- Creates database users (admin, replication, pgedge).
+- Creates and configures databases.
+- Installs Spock and Snowflake extensions.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `install_pgedge` - pgEdge packages including Postgres must be installed
+- `role_config`: Provides shared configuration variables
+- `install_pgedge`: You must install pgEdge packages including Postgres
 
 ## When to Use
 
@@ -99,7 +101,7 @@ Configures Postgres with the following settings:
 * Sets the Snowflake zone to the current server zone
 
 !!! note "Shared Preload Libraries"
-    The role modifies the `shared_preload_libraries` parameter. Changes to this setting requires Postgres restart to take effect.
+    The role modifies the `shared_preload_libraries` parameter. If this is a pre-existing instance, you must restart Postgres for changes to this setting to take effect.
 
 #### 4. pg_hba.conf Configuration
 
@@ -279,12 +281,10 @@ These steps only occur on replica nodes:
 
 This role is designed for idempotency:
 
-- Data directory initialization is skipped if it already exists with a valid data root
-- SSL certificates are not regenerated if they exist
-- Configuration blocks are noted with obvious header and footer
-- User creation is idempotent
-- Database creation is idempotent
-- Extension installation is idempotent
+- The Postgres data directory is only initialized if it is missing.
+- Existing SSL certificates are not overwritten.
+- Users and databases are only created if they do not exist.
+- Extensions are only installed if they are absent.
 
 However, re-running may update:
 

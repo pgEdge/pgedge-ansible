@@ -6,20 +6,22 @@ The `install_repos` role configures official pgEdge package repositories on targ
 
 ## Purpose
 
-- Install prerequisite packages for repository management
-- Add pgEdge package repositories for the target OS
-- Configure EPEL repository on RHEL-based systems
-- Import and verify GPG keys for package signing
-- Update package cache to make pgEdge packages available
+This role performs the following tasks:
+
+- Installs prerequisite packages for repository management.
+- Adds pgEdge package repositories for the target OS.
+- Configures the EPEL repository on RHEL-based systems.
+- Imports and verifies GPG keys for package signing.
+- Updates the package cache to make pgEdge packages available.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `init_server` - Systems should be prepared prior to installing repositories
+- `role_config`: Provides shared configuration variables
+- `init_server`: Systems should be prepared prior to installing repositories
 
 ## When to Use
 
-Execute this role on **all hosts** where pgEdge PostgreSQL packages will be installed. This should be run before any package installation roles:
+Execute this role on **all hosts** where you will install pgEdge PostgreSQL packages. You should run this role before any package installation roles:
 
 ```yaml
 - hosts: pgedge
@@ -31,7 +33,7 @@ Execute this role on **all hosts** where pgEdge PostgreSQL packages will be inst
 
 ## Parameters
 
-This role uses no custom parameters. All repository configuration is handled automatically based on the detected operating system.
+This role uses no custom parameters. The role handles all repository configuration automatically based on the detected operating system.
 
 ## Tasks Performed
 
@@ -47,9 +49,9 @@ This role uses no custom parameters. All repository configuration is handled aut
 
 **pgEdge Repository Configuration:**
 
-- Downloads and installs the pgEdge repository definition package
-- Updates APT package cache to include pgEdge packages
-- Configures automatic repository sources in `/etc/apt/sources.list.d/`
+- Downloads and installs the pgEdge repository definition package.
+- Updates the APT package cache to include pgEdge packages.
+- Configures automatic repository sources in `/etc/apt/sources.list.d/`.
 
 #### RHEL-Family Systems
 
@@ -64,9 +66,9 @@ The role detects the specific RHEL variant and installs EPEL accordingly:
 
 **pgEdge Repository Installation:**
 
-- Imports pgEdge GPG key
-- Downloads and installs the pgEdge repository definition package
-- Configures YUM/DNF repository in `/etc/yum.repos.d/`
+- Imports the pgEdge GPG key.
+- Downloads and installs the pgEdge repository definition package.
+- Configures the YUM/DNF repository in `/etc/yum.repos.d/`.
 
 ### 2. Package Cache Update
 
@@ -117,10 +119,7 @@ After repository installation:
 
 This role is fully idempotent and safe to re-run:
 
-- Repository packages will not be reinstalled if already present
-- GPG keys are only imported once
-- Package cache updates are always safe
-- No configuration is overwritten unnecessarily
+- Delegates package installation to the operating system.
 
 ## Troubleshooting
 
@@ -207,7 +206,7 @@ sudo tail -f /var/log/dnf.log
 ## Notes
 
 !!! important "Execution Order"
-    This role must be executed before any `install_*` roles that install pgEdge packages. It establishes the package sources needed for all subsequent installations.
+    You must execute this role before any `install_*` roles that install pgEdge packages. The role establishes the package sources needed for all subsequent installations.
 
 !!! warning "EPEL Dependencies"
     EPEL is required on RHEL-based systems for several PostgreSQL dependencies. The role handles EPEL installation automatically but may require subscription access on RHEL systems.

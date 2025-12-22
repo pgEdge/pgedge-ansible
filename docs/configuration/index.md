@@ -4,14 +4,14 @@ This page provides a complete reference for configuring your pgEdge cluster depl
 
 ## Configuration Overview
 
-Configuration in the pgEdge Ansible Collection is managed through:
+The pgEdge Ansible Collection provides the following methods for managing configuration:
 
-1. **Inventory files** - Define your hosts and host groups
-2. **Group variables** - Set variables for all hosts in a group
-3. **Host variables** - Set variables for individual hosts
-4. **Role defaults** - Default values defined in each role
+1. Inventory files: Define your hosts and host groups
+2. Group variables: Set variables for all hosts in a group
+3. Host variables: Set variables for individual hosts
+4. Role defaults: Default values defined in each role
 
-Variables can be set at multiple levels, with the following precedence (highest to lowest):
+You can set variables at multiple levels, with the following precedence (highest to lowest):
 
 1. Host variables in inventory
 2. Group variables in inventory
@@ -21,7 +21,7 @@ Variables can be set at multiple levels, with the following precedence (highest 
 
 ## Variable Precedence Example
 
-Variables can be overridden at different levels:
+You can override variables at different levels:
 
 ```yaml
 # Inventory file

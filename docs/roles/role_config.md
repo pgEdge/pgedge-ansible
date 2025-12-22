@@ -2,19 +2,21 @@
 
 ## Overview
 
-The `role_config` role is the foundational configuration role for the entire pgEdge Ansible Collection. It defines shared variables and computed values used by all other roles, providing a central location for configuration management. It is not intended to be called directly, but only to ensure certain variables are coordinated properly across all other roles.
+The `role_config` role is the foundational configuration role for the entire pgEdge Ansible Collection. The role defines shared variables and computed values that all other roles use, providing a central location for configuration management. You should not call this role directly; the role only ensures that the collection coordinates variables properly across all other roles.
 
 ## Purpose
 
-- Define default values for all configurable parameters
-- Compute derived variables based on user configuration
-- Validate configuration settings
-- Provide OS-specific path mappings
-- Filter and organize inventory hosts by zone
+This role performs the following tasks:
+
+- Defines default values for all configurable parameters.
+- Computes derived variables based on user configuration.
+- Validates configuration settings.
+- Provides OS-specific path mappings.
+- Filters and organizes inventory hosts by zone.
 
 ## Role Dependencies
 
-- **None** - This is the base role that all other roles depend on
+- None: This is the base role that all other roles depend on
 
 ## When to Use
 
@@ -22,7 +24,7 @@ The `role_config` role is automatically included as a dependency by all other ro
 
 ## Computed Variables
 
-Some variables are computed for use in other roles for convenience by this role.
+This role computes some variables for convenient use in other roles.
 
 ### Node Filtering
 
@@ -83,7 +85,7 @@ pgedge:
     Never commit passwords to version control. Use Ansible Vault or environment variables for sensitive values.
 
 !!! info "Zone-Based Filtering"
-    The `nodes_in_zone`, `proxies_in_zone`, and `backups_in_zone` variables are heavily used by other roles to determine which hosts to interact with during configuration.
+    Other roles heavily use the `nodes_in_zone`, `proxies_in_zone`, and `backups_in_zone` variables to determine which hosts to interact with during configuration.
 
 ## See Also
 

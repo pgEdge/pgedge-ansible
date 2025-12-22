@@ -6,18 +6,20 @@ The `install_patroni` role installs Patroni, a high availability solution for Po
 
 ## Purpose
 
-- Install pipx for isolated Python application management
-- Install Patroni with required dependencies via pipx
-- Configure Patroni as postgres OS user
-- Install systemd service unit for Patroni
-- Create Patroni configuration directory
-- Prepare system for HA PostgreSQL cluster management
+This role performs the following tasks:
+
+- Installs pipx for isolated Python application management.
+- Installs Patroni with required dependencies via pipx.
+- Configures Patroni as postgres OS user.
+- Installs systemd service unit for Patroni.
+- Creates Patroni configuration directory.
+- Prepares the system for HA PostgreSQL cluster management.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `init_server` - Must create postgres user first
-- `install_pgedge` - PostgreSQL must be installed
+- `role_config`: Provides shared configuration variables
+- `init_server`: You must create the postgres user first
+- `install_pgedge`: You must install PostgreSQL
 
 ## When to Use
 
@@ -34,7 +36,7 @@ Execute this role on **pgedge hosts** in high availability configurations after 
 ```
 
 !!! important "HA Clusters Only"
-    Patroni is only required for high availability deployments where `is_ha_cluster: true`. Standalone PostgreSQL instances do not need Patroni.
+    Patroni is only required for high availability deployments when you enable the `is_ha_cluster` parameter. Standalone PostgreSQL instances do not need Patroni.
 
 ## Parameters
 
@@ -315,7 +317,7 @@ sudo -u postgres pipx install patroni[psycopg2-binary,etcd]
 
 ## Notes
 
-After installation, verify Patroni is installed correctly:
+You should verify Patroni is installed correctly after installation:
 
 ```bash
 sudo -i -u postgres patroni --version

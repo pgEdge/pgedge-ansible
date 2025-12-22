@@ -6,20 +6,22 @@ The `setup_pgedge` role configures Spock logical replication to initialize a mul
 
 ## Purpose
 
-- Configure password authentication for `pgedge_user`
-- Create Spock node metadata on each instance
-- Establish Spock subscriptions between all nodes or zone leaders
-- Configure multi-master logical replication topology
-- Support both direct node-to-node and proxy-based subscriptions
-- Verify subscription synchronization
-- Enable distributed PostgreSQL deployment
+This role performs the following tasks:
+
+- Configures password authentication for `pgedge_user`.
+- Creates Spock node metadata on each instance.
+- Establishes Spock subscriptions between all nodes or zone leaders.
+- Configures multi-master logical replication topology.
+- Supports both direct node-to-node and proxy-based subscriptions.
+- Verifies subscription synchronization.
+- Enables distributed PostgreSQL deployment.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `setup_postgres` - PostgreSQL and Spock extension must be installed and configured
-- `setup_patroni` - For Patroni management used in HA clusters (Optional)
-- `setup_haproxy` - For HAProxy communication routing in HA clusters (Optional)
+- `role_config`: Provides shared configuration variables
+- `setup_postgres`: You must install and configure PostgreSQL and Spock extension
+- `setup_patroni`: For Patroni management used in HA clusters (optional)
+- `setup_haproxy`: For HAProxy communication routing in HA clusters (optional)
 
 !!! information "Role Order"
     When deploying an HA cluster, this role **must** be executed after `setup_patroni` and `setup_haproxy`. Patroni determines which cluster node is the primary writable node in a particular zone, and HAProxy ensures this node receives all Spock-related inter-node communication.
@@ -274,10 +276,10 @@ Uses specific proxy for replication connections instead of HAProxy.
 
 This role is designed for idempotency:
 
-- `.pgpass` creation is idempotent (`lineinfile` module)
-- Spock node creation checks for existence before creating
-- Subscription creation checks for existence before creating
-- Safe to re-run to add new nodes or databases
+- `.pgpass` creation is idempotent (`lineinfile` module).
+- Spock node creation checks for existence before creating the node.
+- Subscription creation checks for existence before creating the subscription.
+- This role is safe to re-run to add new nodes or databases.
 
 !!! warning "Subscription Changes"
     Adding new nodes or databases requires re-running this role on all nodes to establish new subscriptions.
@@ -406,7 +408,7 @@ psql "host=haproxy-host port=5432 user=pgedge dbname=postgres"
 
 ## Notes
 
-Monitor Spock replication health:
+You can monitor Spock replication health:
 
 ```bash
 # Check node status

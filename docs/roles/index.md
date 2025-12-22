@@ -8,32 +8,32 @@ The roles are organized into four functional categories:
 
 ### Configuration Foundation
 
-- **[role_config](role_config.md)** - Central configuration role providing shared variables
+- [role_config](role_config.md): Central configuration role providing shared variables
 
 ### Server Preparation
 
-- **[init_server](init_server.md)** - Initializes servers with required packages and configuration
-- **[install_repos](install_repos.md)** - Configures pgEdge package repositories
+- [init_server](init_server.md): Initializes servers with required packages and configuration
+- [install_repos](install_repos.md): Configures pgEdge package repositories
 
 ### Software Installation
 
-- **[install_pgedge](install_pgedge.md)** - Installs PostgreSQL with pgEdge enhancements
-- **[install_backrest](install_backrest.md)** - Installs pgBackRest backup software
-- **[install_etcd](install_etcd.md)** - Installs etcd distributed key-value store (HA only)
-- **[install_patroni](install_patroni.md)** - Installs Patroni HA management system (HA only)
+- [install_pgedge](install_pgedge.md): Installs PostgreSQL with pgEdge enhancements
+- [install_backrest](install_backrest.md): Installs pgBackRest backup software
+- [install_etcd](install_etcd.md): Installs etcd distributed key-value store (HA only)
+- [install_patroni](install_patroni.md): Installs Patroni HA management system (HA only)
 
 ### Service Configuration
 
-- **[setup_postgres](setup_postgres.md)** - Initializes and configures PostgreSQL instances
-- **[setup_etcd](setup_etcd.md)** - Configures and starts etcd clusters (HA only)
-- **[setup_patroni](setup_patroni.md)** - Configures and starts Patroni (HA only)
-- **[setup_haproxy](setup_haproxy.md)** - Installs and configures HAProxy load balancers (HA only)
-- **[setup_pgedge](setup_pgedge.md)** - Establishes Spock replication between nodes
-- **[setup_backrest](setup_backrest.md)** - Configures backups and automation
+- [setup_postgres](setup_postgres.md): Initializes and configures PostgreSQL instances
+- [setup_etcd](setup_etcd.md): Configures and starts etcd clusters (HA only)
+- [setup_patroni](setup_patroni.md): Configures and starts Patroni (HA only)
+- [setup_haproxy](setup_haproxy.md): Installs and configures HAProxy load balancers (HA only)
+- [setup_pgedge](setup_pgedge.md): Establishes Spock replication between nodes
+- [setup_backrest](setup_backrest.md): Configures backups and automation
 
 ## Execution Order
 
-Roles must be executed in a specific order to ensure proper dependencies. The recommended execution order differs between simple and HA clusters.
+You must execute roles in a specific order to ensure proper dependencies. The recommended execution order differs between simple and HA clusters.
 
 ### Simple Cluster Execution Order
 
@@ -166,7 +166,7 @@ Some roles should only execute under specific conditions:
       when: is_ha_cluster | default(false) | bool
 ```
 
-While many roles contain conditionals to control execution of sub-components, playbooks should only execute roles on intended targets. In other words, it's easier to build a playbook that simply omits the HA-related roles for non-HA clusters than enforce conditionals. The included sample playbooks demonstrate this principle.
+While many roles contain conditionals to control execution of sub-components, playbooks should only execute roles on their intended targets. You can build playbooks more easily by omitting HA-related roles for non-HA clusters rather than enforcing conditionals. The included sample playbooks demonstrate this principle.
 
 ### Role Variables
 
@@ -196,7 +196,7 @@ pgedge:
 
 ### Idempotency
 
-All roles are designed to be idempotent - running them multiple times produces the same result. However, some roles (particularly setup roles) may encounter issues if run after a partial failure.
+The collection designs all roles to be idempotent - running them multiple times produces the same result. However, some roles (particularly setup roles) may encounter issues if you run them after a partial failure.
 
 !!! warning "Re-running After Failures"
     The collection is in early development and not fully re-entrant after errors. Manual cleanup may be required before re-running failed playbooks.

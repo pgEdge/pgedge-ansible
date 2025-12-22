@@ -4,48 +4,52 @@ Welcome to the documentation for the pgEdge Distributed Postgres Ansible Collect
 
 ## What This Collection Provides
 
-This Ansible collection automates the entire deployment lifecycle of pgEdge clusters, including:
+This collection automates the entire deployment lifecycle of pgEdge clusters. The lifecycle automation includes the following features:
 
-- **Server initialization** - Prepares servers with required packages and configurations
-- **PostgreSQL installation** - Deploys PostgreSQL with pgEdge enhancements
-- **High availability** - Optional setup with Patroni, etcd, and HAProxy
-- **Distributed replication** - Configures Spock-based multi-master replication
-- **Backup management** - Integrates pgBackRest for enterprise-grade backups
+- Server initialization prepares systems with the required packages and configurations.
+- PostgreSQL installation deploys the database with pgEdge enhancements.
+- High availability setup provides optional Patroni, etcd, and HAProxy integration.
+- Distributed replication configures Spock-based multi-master replication.
+- Backup management integrates pgBackRest for enterprise-grade backups.
 
 ## Key Features
 
-- **Flexible deployment options**: Deploy simple multi-node clusters or complex high-availability configurations
-- **Multi-platform support**: Works with Debian, RedHat, and related distributions
-- **Comprehensive configuration**: Extensive parameters for customizing your cluster
-- **Production-ready**: Includes backup automation, monitoring endpoints, and failover capabilities
-- **Idempotent operations**: Safe to re-run playbooks for configuration updates
+This collection offers several key capabilities for deployment. The collection includes the following features:
+
+- Support for flexible deployment options enables both simple and complex configurations.
+- Multi-platform compatibility works with Debian, RedHat, and related Linux distributions.
+- Extensive parameters provide customization for your cluster configuration.
+- Backup automation, monitoring endpoints, and failover capabilities ensure production readiness.
+- Idempotent operations allow safe re-running of playbooks for configuration updates.
 
 ## Supported Cluster Topologies
 
-The collection supports multiple cluster architectures:
+This collection supports multiple cluster architectures for different deployment needs. The following topologies are available:
 
-- **Simple clusters**: Direct node-to-node replication for straightforward deployments
-- **High-availability clusters**: Patroni-managed PostgreSQL with automatic failover within zones
-- **Hybrid clusters**: Mix of simple and HA nodes for testing or gradual migration
-- **Multi-zone clusters**: Geographic distribution with zone-aware replication
+- Simple clusters provide direct node-to-node replication for straightforward deployments.
+- High-availability clusters use Patroni-managed PostgreSQL with automatic failover within zones.
+- Hybrid clusters combine simple and HA nodes for testing or gradual migration.
+- Multi-zone clusters enable geographic distribution with zone-aware replication capabilities.
 
 ## Quick Start
 
 To get started with the pgEdge Ansible Collection:
 
-1. [Install the collection](installation.md) on your Ansible control node
-2. Review the [architecture patterns](architecture.md) to choose your deployment model
-3. Configure your [inventory and variables](configuration.md)
-4. Explore the [roles documentation](roles/index.md) to understand each component
-5. Run your playbook to deploy your cluster
+1. Install the collection on your Ansible control node by following the [installation guide](installation.md).
+2. Review the [architecture patterns](architecture.md) to choose your deployment model.
+3. Configure your [inventory and variables](configuration.md) according to your requirements.
+4. Explore the [roles documentation](roles/index.md) to understand each component.
+5. Run your playbook to deploy your cluster.
 
 ## Documentation Structure
 
-- **[Installation](installation.md)** - Prerequisites and installation steps
-- **[Architecture](architecture.md)** - Cluster design patterns and topologies
-- **[Configuration](configuration.md)** - Complete variable reference
-- **[Roles](roles/index.md)** - Detailed documentation for each Ansible role
-- **[Usage Examples](usage.md)** - Sample playbooks and deployment scenarios
+The documentation is organized into the following sections:
+
+- The [Installation](installation.md) section covers prerequisites and installation steps.
+- The [Architecture](architecture.md) section describes cluster design patterns and topologies.
+- The [Configuration](configuration.md) section provides a complete variable reference.
+- The [Roles](roles/index.md) section contains detailed documentation for each Ansible role.
+- The [Usage Examples](usage.md) section demonstrates sample playbooks and deployment scenarios.
 
 ## Getting Help
 

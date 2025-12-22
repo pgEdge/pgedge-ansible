@@ -6,21 +6,23 @@ The `setup_patroni` role configures and starts Patroni for high availability Pos
 
 ## Purpose
 
-- Generate Patroni configuration file with cluster settings
-- Configure etcd connection for distributed consensus
-- Set up PostgreSQL parameters managed by Patroni
-- Configure authentication for replication and superuser access
-- Manage pg_hba.conf rules through Patroni
-- Disable native PostgreSQL service in favor of Patroni
-- Orchestrate primary-first startup sequence
-- Establish high availability cluster
+This role performs the following tasks:
+
+- Generates Patroni configuration file with cluster settings.
+- Configures etcd connection for distributed consensus.
+- Sets up PostgreSQL parameters managed by Patroni.
+- Configures authentication for replication and superuser access.
+- Manages `pg_hba.conf` rules through Patroni.
+- Disables native PostgreSQL service in favor of Patroni.
+- Orchestrates primary-first startup sequence.
+- Establishes a highly availabile cluster.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
-- `install_patroni` - Patroni binaries must be installed
-- `setup_etcd` - etcd cluster must be running
-- `setup_postgres` - PostgreSQL must be initialized
+- `role_config`: Provides shared configuration variables
+- `install_patroni`: You must install Patroni binaries
+- `setup_etcd`: The etcd cluster must be running
+- `setup_postgres`: You must initialize PostgreSQL
 
 ## When to Use
 
@@ -38,7 +40,7 @@ Execute this role on **all pgedge hosts** in high availability configurations af
 ```
 
 !!! note "HA Clusters Only"
-    This role is only required for high availability deployments where `is_ha_cluster: true`. Standalone PostgreSQL instances do not use Patroni.
+    This role is only required for high availability deployments when you enable the `is_ha_cluster` parameter. Standalone PostgreSQL instances do not use Patroni.
 
 ## Parameters
 
@@ -295,10 +297,9 @@ Platform differences are handled through variables:
 
 This role has limited idempotency:
 
-- Configuration file is regenerated each run (safe)
-- Service disable/enable operations are idempotent
-- Service start may be skipped if already running
-- Restart is always performed to ensure configuration applies
+- Regenerates configuration files each run to incorporate changes.
+- Only modifies services which aren't already in their intended state.
+- Always restarts Patroni and/or Postgres to ensure configuration changes apply.
 
 !!! warning "Configuration Updates"
     Changes to Patroni configuration require service restart. The role performs this automatically via patronictl.
@@ -476,7 +477,7 @@ sudo systemctl restart patroni
 
 ## Notes
 
-Use `patronictl` for cluster operations:
+You can use `patronictl` for cluster operations:
 
 ```bash
 # List cluster status

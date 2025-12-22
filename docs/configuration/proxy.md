@@ -1,12 +1,12 @@
 # Proxy Configuration
 
-Some cluster parameters are specific to the proxy layer. This is not explicitly linked to HAProxy, which is only a convenient default provided by this collection.
+Some cluster parameters are specific to the proxy layer. These parameters are not explicitly linked to HAProxy, which serves as a convenient default for this collection.
 
 ## proxy_port
 
-- **Type:** Integer
-- **Default:** `5432`
-- **Description:** Port for HAProxy to listen on. Can differ from `pg_port` to run HAProxy on the same host as PostgreSQL.
+- Type: Integer
+- Default: `5432`
+- Description: This parameter specifies the port for HAProxy to listen on. You can set this parameter to differ from the `pg_port` parameter to run HAProxy on the same host as PostgreSQL.
 
 ```yaml
 proxy_port: 5432
@@ -14,10 +14,10 @@ proxy_port: 5432
 
 ## proxy_node
 
-- **Type:** String
-- **Default:** None
-- **Scope:** Host variable
-- **Description:** Explicitly specify the proxy endpoint to use for Spock subscriptions in HA clusters. If not set, uses the first HAProxy node in the same zone.
+- Type: String
+- Default: None
+- Scope: Host variable
+- Description: This parameter explicitly specifies the proxy endpoint to use for Spock subscriptions in HA clusters. The collection uses the first HAProxy node in the same zone when you do not set this parameter.
 
 ```yaml
 hosts:
@@ -27,18 +27,20 @@ hosts:
 ```
 
 !!! note "Proxy Override"
-    This parameter is primarily to _override_ or act in place of nodes in the `haproxy` inventory group. This setting is provided to use external proxies or load balancers. Be aware that such proxies will need to have HTTP check capabilities to interact with the Patroni REST service for proper node routing.
+    This parameter primarily overrides or acts in place of nodes in the `haproxy` inventory group. You can use this setting to specify external proxies or load balancers. Such proxies will need HTTP check capabilities to interact with the Patroni REST service for proper node routing.
 
 ## haproxy_extra_routes
 
-- **Type:** Dictionary
-- **Default:**
+- Type: Dictionary
+- Default:
+
     ```yaml
     haproxy_extra_routes:
       replica:
         port: 5433
     ```
-- **Description:** Additional HAProxy routes for the [Patroni REST interface](https://patroni.readthedocs.io/en/latest/rest_api.html). Each route requires a `port`; optionally specify `lag` for maximum replication lag. The key for the route will be used for the type of check being performed.
+
+- Description: This parameter provides additional HAProxy routes for the [Patroni REST interface](https://patroni.readthedocs.io/en/latest/rest_api.html). Each route requires a `port` value; you can optionally specify a `lag` value for maximum replication lag. The collection uses the key for the route as the type of check being performed.
 
 ```yaml
 haproxy_extra_routes:

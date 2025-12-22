@@ -6,11 +6,11 @@ This guide covers the prerequisites and steps required to install the pgEdge Ans
 
 ### Ansible Control Node Requirements
 
-The machine where you run Ansible playbooks must have:
+The machine where you run Ansible playbooks must meet the following requirements:
 
-- **Ansible** version 2.12 or later
-- **Python** 3.6 or later
-- **Git** (for cloning the repository)
+- Ansible version 2.12 or later
+- Python 3.6 or later
+- Git (for cloning the repository)
 - Network connectivity to all target hosts
 - SSH access to all target hosts
 
@@ -26,21 +26,23 @@ Each server in your pgEdge cluster must meet these requirements:
 
 #### Supported Operating Systems
 
-The pgEdge Ansible Collection has been verified on:
+The pgEdge Ansible Collection has been verified on the following operating systems:
 
-- **Debian 12 (Bookworm)**
-- **Rocky Linux 9**
+- Debian 12 (Bookworm)
+- Rocky Linux 9
 
 The collection may also work with other Debian or RHEL variants, but compatibility has not been validated.
 
 #### System Requirements
 
-- **Architecture**: x86_64 (amd64)
-- **RAM**: Minimum 2GB, recommended 4GB or more
-- **Disk Space**: Minimum 20GB available
-- **Network**: All nodes must be able to communicate with each other
-- **SSH**: SSH server running and accessible
-- **User Access**: A user account with sudo/root privileges
+Each server in your pgEdge cluster must meet the following requirements:
+
+- Architecture: x86_64 (amd64)
+- RAM: Minimum 2GB, recommended 4GB or more
+- Disk Space: Minimum 20GB available
+- Network: All nodes must be able to communicate with each other
+- SSH: SSH server running and accessible
+- User Access: A user account with sudo/root privileges
 
 #### Network Requirements
 
@@ -71,7 +73,7 @@ cd pgedge-ansible
 make install
 ```
 
-The `make install` command will:
+The `make install` command performs the following steps:
 
 1. Read the version from the `VERSION` file
 2. Generate a `galaxy.yml` file from the template

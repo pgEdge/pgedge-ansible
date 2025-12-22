@@ -10,23 +10,23 @@ The pgEdge Ansible Collection supports multiple cluster topologies, from simple 
 
 ### Zones
 
-A **zone** represents a logical grouping of nodes, typically corresponding to a data center, availability zone, or geographic region. Zones serve multiple purposes:
+A **zone** represents a logical grouping of nodes, typically corresponding to a data center, availability zone, or geographic region. Zones serve the following purposes:
 
-- **Logical organization**: Group related nodes together
-- **Snowflake IDs**: Each zone number becomes the snowflake sequence ID for nodes in that zone
-- **HA boundaries**: In HA clusters, Patroni/etcd clusters are formed within each zone
-- **Replication topology**: Subscriptions are established between zones
+- Logical organization to group related nodes together
+- Snowflake IDs where each zone number becomes the sequence ID for nodes in that zone
+- HA boundaries where Patroni/etcd clusters are formed within each zone
+- Replication topology where subscriptions are established between zones
 
 !!! tip "Zone Assignment"
     In simple clusters, use one node per zone. In HA clusters, assign multiple nodes to the same zone to form a Patroni cluster.
 
 ### Node Groups
 
-The collection recognizes three inventory groups:
+The collection recognizes the following inventory groups:
 
-- **pgedge**: PostgreSQL nodes that participate in distributed replication
-- **haproxy**: Load balancer nodes for HA clusters (optional)
-- **backup**: Dedicated backup servers for pgBackRest (optional)
+- pgedge: PostgreSQL nodes that participate in distributed replication
+- haproxy: Load balancer nodes for HA clusters (optional)
+- backup: Dedicated backup servers for pgBackRest (optional)
 
 ## Architecture Patterns
 
@@ -184,12 +184,12 @@ The collection uses a layered replication approach to maximize availability and 
 
 The collection currently supports a regional backup strategy, where a backup server will target nodes in the same region. Alternatively, backups may be transmitted to a remote S3 store.
 
-**Backup Options:**
+Backup options include the following:
 
-- **SSH mode**: Dedicated backup servers per zone
-- **S3 mode**: Cloud object storage (AWS S3 or compatible)
-- **Per-zone backups**: Each zone maintains its own backup repository
-- **Automated scheduling**: Cron-based full and differential backups
+- SSH mode: Dedicated backup servers per zone
+- S3 mode: Cloud object storage (AWS S3 or compatible)
+- Per-zone backups: Each zone maintains its own backup repository
+- Automated scheduling: Cron-based full and differential backups
 
 ## Design Considerations
 
@@ -244,12 +244,12 @@ Consider network latency and bandwidth:
 
 ## Best Practices
 
-1. **Start Simple**: Begin with a simple cluster and migrate to HA when needed
-2. **Zone Planning**: Align zones with physical infrastructure boundaries
-3. **Network Testing**: Verify latency and bandwidth between zones before deployment
-4. **Backup Strategy**: Always configure backups, preferably to separate infrastructure
-5. **Monitoring**: Implement monitoring for replication lag and cluster health
-6. **Documentation**: Document your specific topology and connection details
+1. Start simple by beginning with a simple cluster and migrating to HA when needed.
+2. Plan zones by aligning them with physical infrastructure boundaries.
+3. Test network latency and bandwidth between zones before deployment.
+4. Configure backups, preferably to separate infrastructure, for all deployments.
+5. Implement monitoring for replication lag and cluster health.
+6. Document your specific topology and connection details for reference.
 
 ## Next Steps
 

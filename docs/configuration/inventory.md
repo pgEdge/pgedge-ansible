@@ -2,7 +2,7 @@
 
 ## Basic Inventory Format
 
-Inventories are typically written in YAML format:
+You typically write inventories in YAML format:
 
 ```yaml
 pgedge:
@@ -21,11 +21,11 @@ pgedge:
 
 ## Host Groups
 
-The collection recognizes these inventory groups:
+The collection recognizes the following inventory groups:
 
 ### pgedge (Required)
 
-PostgreSQL nodes that participate in distributed replication.
+This group contains PostgreSQL nodes that participate in distributed replication.
 
 ```yaml
 pgedge:
@@ -38,7 +38,7 @@ pgedge:
 
 ### haproxy (Optional - HA Only)
 
-Load balancer nodes for high-availability clusters. Only relevant when `is_ha_cluster: true`.
+This group contains load balancer nodes for high-availability clusters. The group is only relevant when you enable the `is_ha_cluster` parameter.
 
 ```yaml
 haproxy:
@@ -51,7 +51,7 @@ haproxy:
 
 ### backup (Optional)
 
-Dedicated backup servers when using SSH backup mode.
+This group contains dedicated backup servers when using SSH backup mode.
 
 ```yaml
 backup:

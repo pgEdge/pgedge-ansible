@@ -33,8 +33,8 @@ Ensure you have:
 
 The repository includes sample playbooks in the `sample-playbooks/` directory:
 
-- **simple-cluster** - Standard three-node cluster
-- **ultra-ha** - Ultra-HA cluster with multiple zones
+- simple-cluster: Standard three-node cluster
+- ultra-ha: Ultra-HA cluster with multiple zones
 
 These serve as templates for your own deployments.
 
@@ -565,16 +565,16 @@ If an entire zone fails:
 
 ## Best Practices
 
-1. **Use Ansible Vault** for all passwords
-2. **Test in staging** before production
-3. **Document your inventory** with comments
-4. **Version control** your playbooks and inventory
-5. **Regular backups** - test restore procedures
-6. **Monitor replication lag** between zones
-7. **Plan capacity** for expected workload
-8. **Use tags** for partial playbook runs
-9. **Keep detailed notes** of any manual changes
-10. **Review logs** after deployment
+- Use Ansible Vault for all passwords and sensitive data.
+- Test your configuration in a staging environment before deploying to production.
+- Document your inventory files with clear comments explaining each setting.
+- Store your playbooks and inventory files in version control systems.
+- Implement regular backups and test your restore procedures periodically.
+- Monitor replication lag between zones to ensure data synchronization.
+- Plan capacity according to your expected workload and growth.
+- Use tags to enable partial playbook runs for specific components.
+- Keep detailed notes documenting any manual changes to the cluster.
+- Review deployment logs after each playbook run to catch issues.
 
 ## Troubleshooting Tips
 

@@ -6,17 +6,19 @@ The `init_server` role performs initial server preparation, installing required 
 
 ## Purpose
 
-- Install required system packages
-- Configure SELinux settings
-- Set up core dump handling for debugging
-- Manage `/etc/hosts` entries for all cluster nodes
-- Create Postgres system user and group
-- Create backup system user (for SSH backup mode)
-- Generate and distribute SSH keys
+This role performs the following tasks:
+
+- Installs required system packages on all hosts.
+- Configures SELinux settings according to deployment needs.
+- Establishes core dump handling for debugging purposes.
+- Manages `/etc/hosts` entries for all cluster nodes.
+- Creates the Postgres system user and group.
+- Creates a backup system user for SSH backup mode.
+- Generates and distributes SSH keys among nodes.
 
 ## Role Dependencies
 
-- `role_config` - Provides shared configuration variables
+- `role_config`: Provides shared configuration variables
 
 ## When to Use
 
@@ -56,7 +58,7 @@ This role uses the following configuration parameters:
 
 ### 1. Package Installation
 
-Installs required system packages:
+The role installs the following required system packages:
 
 **Common packages (all systems):**
 
@@ -78,13 +80,13 @@ Installs required system packages:
 ### 2. SELinux Configuration
 
 - Checks current SELinux status
-- Disables SELinux if `disable_selinux: true`
+- Disables SELinux when you enable the `disable_selinux` parameter
 - Reboots the system if necessary
 - Waits for the system to come back online
 
 ### 3. Core Dump Configuration
 
-When `debug_pgedge: true`:
+When you enable the `debug_pgedge` parameter:
 
 - Configures `systemd-coredump` settings
 - Sets kernel parameters for core file generation
@@ -93,7 +95,7 @@ When `debug_pgedge: true`:
 
 ### 4. Host File Management
 
-When `manage_host_file: true`:
+When you enable the `manage_host_file` parameter:
 
 - Collects facts about all hosts in the cluster
 - Adds entries to `/etc/hosts` for each host
