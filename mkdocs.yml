@@ -56,7 +56,7 @@ theme:
 extra:
   generator: false
 
-copyright: Copyright &copy; 2024 - 2025 pgEdge, Inc
+copyright: Copyright &copy; 2024 - 2026 pgEdge, Inc
 
 repo_url: https://github.com/pgEdge/pgedge-ansible
 repo_name: pgEdge/pgedge-ansible
