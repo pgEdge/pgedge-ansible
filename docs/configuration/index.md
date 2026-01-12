@@ -90,6 +90,9 @@ The collection validates certain variables:
 
 ## Next Steps
 
+- Review [sample playbooks](usage.md) for complete configuration examples.
+- Understand [role-specific parameters](roles/index.md) for advanced customization.
+- Learn about [architecture patterns](architecture.md) to inform your configuration choices.
 - Review [sample playbooks](usage.md) for complete configuration examples
 - Understand [role-specific parameters](roles/index.md) for advanced customization
 - Learn about [architecture patterns](architecture.md) to inform your configuration choices
