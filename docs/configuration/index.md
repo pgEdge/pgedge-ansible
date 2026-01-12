@@ -23,6 +23,11 @@ You can set variables at multiple levels, with the following precedence (highest
 4. Variables in `host_vars/` directory
 5. Role defaults
 
+1. Host variables in inventory files.
+2. Group variables in inventory files.
+3. Variables in the `group_vars/` directory.
+4. Variables in the `host_vars/` directory.
+5. Role default settings.
 ## Variable Precedence Example
 
 You can override variables at different levels:
