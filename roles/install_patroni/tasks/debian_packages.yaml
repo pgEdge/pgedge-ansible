@@ -19,3 +19,5 @@
 - name: Make sure pipx is in the user's path
   shell: |
     pipx ensurepath
+  become: true
+  become_user: postgres

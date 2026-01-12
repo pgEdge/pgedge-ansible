@@ -1,8 +1,0 @@
----
-
-- name: Add PgBackRest utilities to the user path
-  copy:
-    content: |
-      export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:{{ pg_path }}/lib
-      export PATH=${PATH}:{{ cluster_path }}/backrest/bin
-    dest: "{{ ansible_facts['user_dir'] }}/.bashrc.d/backrest_env.sh"

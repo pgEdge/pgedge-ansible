@@ -1,0 +1,54 @@
+---
+
+# First step is to configure PgBackRest itself. If backups run from the client,
+# they should always execute as the postgres user so we can use a local peer
+# connection.
+
+- include_tasks: config_backrest.yaml
+  vars:
+    os_user: postgres
+
+# Now we need to allow backup servers to connect via SSH for file transfers,
+# and are in our known_hosts to avoid SSH prompts. Only do this if in SSH mode.
+
+- include_tasks: setup_ssh_access.yaml
+  when:
+  - backup_server > ''
+  - backup_type == 'ssh'
+
+# The next step is to bind PgBackRest to the Postgres configuration via
+# the archive and recovery commands. HA vs non-HA clusters have different
+# requirements here.
+
+- include_tasks: config_postgres.yaml
+  when: not is_ha_cluster
+
+- include_tasks: config_postgres_ha.yaml
+  when: is_ha_cluster
+
+# Prior to running the first backup, we need to ensure the backup user exists
+# and has appropriate access.
+
+- include_tasks: add_backup_user.yaml
+
+# If backup mode isn't ssh, the clients themselves have to handle the backup
+# and transmit it to the repo location. If that's the case, take an initial
+# bootstrap backup.
+
+- include_tasks: first_backup.yaml
+  when:
+  - backup_type != 'ssh'
+  - inventory_hostname == first_node_in_zone
+
+# If the bootstrap backup succeeds, it's safe to set up automated backups.
+# Standby servers will simply fail to execute the cron jobs.
+#
+# Note: This doesn't account for clusters which want to backup from standby
+# nodes, but we'll consider that when / if requested since it greatly
+# complicates scheduling. A potential solution would be to _force_ a backup
+# server and use a secondary synchronization (cloud) repository.
+
+- include_tasks: set_cron.yaml
+  vars:
+    os_user: postgres
+  when: backup_type != 'ssh'

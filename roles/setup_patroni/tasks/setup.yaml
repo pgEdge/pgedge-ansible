@@ -5,6 +5,19 @@
     src: files/patroni.yaml.j2
     dest: "{{ patroni_config_dir }}/patroni.yaml"
     mode: 0600
+    owner: postgres
+    group: postgres
+  become: true
+
+- name: Ensure the Postgres service is disabled in favor of Patroni
+  systemd_service:
+    name: "{{ pg_service_name }}"
+    enabled: false
+  become: true
+
+# If this is a replica, __DO NOT__ let it start before the primary establishes
+# the cluster. Patroni will adopt the ID of the first node to join it and
+# we need the intended primary to do this for controlled setup.
 
 - name: Enable and start the Patroni service
   systemd_service:
@@ -13,6 +26,19 @@
     enabled: true
     state: started
   become: true
+  when: inventory_hostname == first_node_in_zone
+
+- include_tasks: wait_for_primary.yaml
+  when: inventory_hostname != first_node_in_zone
+
+- name: Enable and start the Patroni service
+  systemd_service:
+    daemon_reload: true
+    name: patroni
+    enabled: true
+    state: started
+  become: true
+  when: inventory_hostname != first_node_in_zone
 
 # Patroni should restart nodes with changes which require restart, but doesn't.
 # We use the patronictl tool because a direct Postgres restart won't change the
@@ -20,7 +46,10 @@
 
 - name: Restart Postgres service to incorporate configuration changes
   shell: |
-    cd {{ patroni_bin_dir }}
-    ./patronictl -c {{ patroni_config_dir }}/patroni.yaml \
-                 restart pgedge {{ ansible_hostname }} \
-                 --force
+    {{ ctl }} restart -r any --force pgedge {{ ansible_hostname }}
+  args:
+    chdir: "{{ patroni_bin_dir }}"
+  vars:
+    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
+  become: true
+  become_user: postgres
