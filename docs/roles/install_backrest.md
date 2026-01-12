@@ -161,6 +161,8 @@ This role is fully idempotent and supports the following behaviors:
 
 ## Troubleshooting
 
+The following Troubleshooting section details some problems and solutions you might encounter when installing and configuring pgbackrest.
+
 ### Package Not Found
 
 **Symptom:** pgbackrest package not found in repositories
