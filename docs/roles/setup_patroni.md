@@ -6,16 +6,16 @@ The `setup_patroni` role configures and starts Patroni for high availability Pos
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Generates Patroni configuration file with cluster settings.
-- Configures etcd connection for distributed consensus.
-- Sets up PostgreSQL parameters managed by Patroni.
-- Configures authentication for replication and superuser access.
-- Manages `pg_hba.conf` rules through Patroni.
-- Disables native PostgreSQL service in favor of Patroni.
-- Orchestrates primary-first startup sequence.
-- Establishes a highly availabile cluster.
+- generates the Patroni configuration file with cluster settings.
+- configures etcd connection for distributed consensus.
+- sets up PostgreSQL parameters managed by Patroni.
+- configures authentication for replication and superuser access.
+- manages `pg_hba.conf` rules through Patroni.
+- disables the native PostgreSQL service in favor of Patroni.
+- orchestrates the primary-first startup sequence.
+- establishes a highly available cluster.
 
 ## Role Dependencies
 
@@ -295,185 +295,15 @@ Platform differences are handled through variables:
 
 ## Idempotency
 
-This role has limited idempotency:
+This role has limited idempotency and may cause issues in multiple executions. Subsequent executions will:
 
-- Regenerates configuration files each run to incorporate changes.
-- Only modifies services which aren't already in their intended state.
-- Always restarts Patroni and/or Postgres to ensure configuration changes apply.
+- regenerate configuration files each run to incorporate changes.
+- disable the Postgres system service in favor of Patroni.
+- enable the Patroni system service to manage Postgres.
+- always restart Patroni and/or Postgres to ensure configuration changes apply.
 
 !!! warning "Configuration Updates"
     Changes to Patroni configuration require service restart. The role performs this automatically via patronictl.
-
-## Troubleshooting
-
-### Patroni Service Fails to Start
-
-**Symptom:** Patroni service won't start
-
-**Solution:**
-
-- Check Patroni logs:
-
-```bash
-sudo journalctl -u patroni -n 50 -f
-```
-
-- Verify configuration syntax:
-
-```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patroni --validate-config /etc/patroni/patroni.yaml
-```
-
-- Check etcd connectivity:
-
-```bash
-curl http://localhost:2379/health
-```
-
-### etcd Connection Fails
-
-**Symptom:** Patroni can't connect to etcd
-
-**Solution:**
-
-- Verify etcd is running:
-
-```bash
-sudo systemctl status etcd
-```
-
-- Test etcd connectivity:
-
-```bash
-curl http://localhost:2379/v3/cluster/member/list
-```
-
-- Check firewall allows port 2379
-- Verify etcd hostname resolution
-
-### Cluster Formation Fails
-
-**Symptom:** Patroni starts but cluster doesn't form
-
-**Solution:**
-
-- Check etcd keys:
-
-```bash
-/usr/local/etcd/etcdctl get --prefix /db/pgedge/
-```
-
-- Verify all nodes see each other in etcd
-- Check for split-brain scenarios
-- Review Patroni logs on all nodes
-- Ensure primary started first
-
-### "Pending Restart" Status Persists
-
-**Symptom:** Patroni shows "Pending restart" after configuration changes
-
-**Solution:**
-
-- Restart using patronictl:
-
-```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patronictl -c /etc/patroni/patroni.yaml restart pgedge <hostname>
-```
-
-- Or restart all nodes:
-
-```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patronictl -c /etc/patroni/patroni.yaml restart pgedge
-```
-
-### Replication Not Working
-
-**Symptom:** Replicas not streaming from primary
-
-**Solution:**
-
-- Check Patroni cluster status:
-
-```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patronictl -c /etc/patroni/patroni.yaml list
-```
-
-- Verify replication user credentials
-- Check pg_hba.conf allows replication connections
-- Verify network connectivity between nodes
-- Check PostgreSQL logs for replication errors
-
-### Synchronous Replication Blocks Writes
-
-**Symptom:** Writes hang when synchronous_mode_strict is enabled
-
-**Solution:**
-
-- Check replica status:
-
-```bash
-sudo -u postgres psql -c "SELECT * FROM pg_stat_replication;"
-```
-
-- Verify at least one synchronous replica is available
-- Temporarily disable strict mode if needed:
-
-```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patronictl -c /etc/patroni/patroni.yaml edit-config
-```
-
-### REST API Not Accessible
-
-**Symptom:** Cannot access Patroni REST API on port 8008
-
-**Solution:**
-
-- Verify Patroni is listening:
-
-```bash
-sudo netstat -tlnp | grep 8008
-```
-
-- Check firewall rules:
-
-```bash
-# RHEL
-sudo firewall-cmd --list-all
-
-# Debian
-sudo ufw status
-```
-
-- Test local access:
-
-```bash
-curl http://localhost:8008/
-```
-
-### PostgreSQL Still Managed by systemd
-
-**Symptom:** PostgreSQL service starts independently of Patroni
-
-**Solution:**
-
-- Verify PostgreSQL service is disabled:
-
-```bash
-sudo systemctl is-enabled postgresql  # or postgresql-17
-```
-
-- Manually disable:
-
-```bash
-sudo systemctl disable postgresql
-sudo systemctl stop postgresql
-```
-
-- Restart Patroni:
-
-```bash
-sudo systemctl restart patroni
-```
 
 ## Notes
 
@@ -489,12 +319,3 @@ patronictl -c /etc/patroni/patroni.yaml switchover
 # Reinitialize a replica
 patronictl -c /etc/patroni/patroni.yaml reinit pgedge <hostname>
 ```
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - Patroni configuration variables
-- [Architecture](../architecture.md) - Understanding HA cluster topology
-- [install_patroni](install_patroni.md) - Required prerequisite for Patroni binaries
-- [setup_etcd](setup_etcd.md) - Required prerequisite for etcd cluster
-- [setup_postgres](setup_postgres.md) - PostgreSQL initialization before Patroni
-- [setup_haproxy](setup_haproxy.md) - HAProxy uses Patroni REST API for health checks

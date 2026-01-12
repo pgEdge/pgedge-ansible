@@ -1,6 +1,6 @@
 # PostgreSQL Configuration
 
-Parameters in this category include any settings which affect how the Postgres service itself operates. This can include software versions, installation directories, listening ports, and so on.
+Parameters in this category include any settings that affect how the Postgres service itself operates. This can include software versions, installation directories, listening ports, and so on.
 
 ## pg_version
 
@@ -26,7 +26,7 @@ pg_port: 5432
 
 - Type: String
 - Default: OS-dependent
-- Description: This parameter specifies the home directory of the `postgres` OS user. The value primarily determines defaults for other variables.
+- Description: This parameter specifies the home directory of the `postgres` OS user. The value primarily determines defaults for other dependent variables.
 
     - RHEL: `/var/lib/pgsql`
     - Debian: `/var/lib/postgresql`

@@ -1,6 +1,6 @@
 # etcd Configuration
 
-The `install_etcd` and `setup_etcd` roles generally use the following settings. In most cases, the defaults are sufficient to build a fully operational DCS layer for Patroni.
+The `install_etcd` and `setup_etcd` are the principal owners for the parameters described in this page. In most cases, the defaults are sufficient to build a fully operational DCS layer for Patroni.
 
 ## etcd_version
 
@@ -35,7 +35,7 @@ etcd_base_url: "https://my-mirror.local/etcd/v{{ etcd_version }}"
 - Description: This parameter specifies the etcd package filename (architecture-specific).
 
 ```yaml
-etcd_package: etcd-v{{ etcd_version }}-linux-arm64`
+etcd_package: etcd-v{{ etcd_version }}-linux-arm64
 ```
 
 ## etcd_user
@@ -75,7 +75,7 @@ etcd_install_dir: /opt/etcd
 - Description: This parameter specifies the directory for etcd configuration files.
 
 ```yaml
-etcd_install_dir: /usr/local/etc/etcd
+etcd_config_dir: /usr/local/etc/etcd
 ```
 
 ## etcd_data_dir

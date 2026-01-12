@@ -6,17 +6,17 @@ The `setup_backrest` role configures pgBackRest for PostgreSQL backup and recove
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Configures pgBackRest on PostgreSQL nodes (clients).
-- Configures pgBackRest on dedicated backup servers.
-- Sets up SSH authentication for backup access.
-- Creates backup database user.
-- Configures PostgreSQL archive command.
-- Integrates with Patroni for HA clusters.
-- Takes initial bootstrap backup.
-- Schedules automated full and differential backups.
-- Supports both SSH and S3 backup repositories.
+- configures pgBackRest on PostgreSQL nodes (clients).
+- configures pgBackRest on dedicated backup servers.
+- sets up SSH authentication for backup access.
+- creates backup database user.
+- configures PostgreSQL archive command.
+- integrates with Patroni for HA clusters.
+- takes initial bootstrap backup.
+- schedules automated full and differential backups.
+- supports both SSH and S3 backup repositories.
 
 ## Role Dependencies
 
@@ -350,201 +350,11 @@ Platform differences are handled through variables and pgBackRest is cross-platf
 
 ## Idempotency
 
-This role is designed for idempotency:
-
-- Regenerates configuration files each run to incorporate changes.
-- The backup database user is only created if it doesn't exist.
-- Will not overwrite an existing pgBackRest stanza.
-
-## Troubleshooting
-
-### Initial Backup Fails
-
-**Symptom:** stanza-create or initial backup fails
-
-**Solution:**
-
-- Verify PostgreSQL is running
-- Check pgBackRest configuration:
-
-```bash
-sudo -u postgres pgbackrest info
-```
-
-- Test backup command manually:
-
-```bash
-sudo -u postgres pgbackrest --stanza=pgedge-demo-1 check
-sudo -u postgres pgbackrest --stanza=pgedge-demo-1 backup --type=full
-```
-
-- Check logs:
-
-```bash
-sudo tail -f /var/log/pgbackrest/*
-```
-
-### SSH Connection Fails
-
-**Symptom:** Cannot connect to backup server via SSH
-
-**Solution:**
-
-- Test SSH connectivity:
-
-```bash
-sudo -u postgres ssh backup-server
-```
-
-- Verify SSH keys:
-
-```bash
-sudo -u postgres ls -la ~/.ssh/
-```
-
-- Check authorized_keys on backup server
-- Verify firewall allows SSH (port 22)
-
-### S3 Connection Fails
-
-**Symptom:** Cannot connect to S3 repository
-
-**Solution:**
-
-- Verify S3 credentials are correct
-- Test S3 access:
-
-```bash
-aws s3 ls s3://bucket-name --region us-west-2
-```
-
-- Check network connectivity to S3 endpoint
-- Verify bucket exists and is accessible
-- Check IAM permissions for backup operations
-
-### Archive Command Fails
-
-**Symptom:** WAL archiving errors in PostgreSQL logs
-
-**Solution:**
-
-- Check PostgreSQL logs:
-
-```bash
-sudo tail -f /var/lib/pgsql/17/data/log/postgresql-*.log
-```
-
-- Test archive command manually:
-
-```bash
-sudo -u postgres pgbackrest --stanza=pgedge-demo-1 archive-push /path/to/wal/file
-```
-
-- Verify backup repository is accessible
-- Check pgBackRest configuration
-- Ensure initial backup completed successfully
-
-### Backup User Cannot Connect
-
-**Symptom:** Backup user authentication fails
-
-**Solution:**
-
-- Verify backup user exists:
-
-```bash
-sudo -u postgres psql -c "\du backrest"
-```
-
-- Check pg_hba.conf allows connections:
-
-```bash
-sudo -u postgres grep backrest /var/lib/pgsql/17/data/pg_hba.conf
-```
-
-- Test connection manually:
-
-```bash
-psql -h localhost -U backrest -d postgres
-```
-
-- Verify `.pgpass` file has correct password
-
-### Cron Jobs Not Running
-
-**Symptom:** Automated backups not executing
-
-**Solution:**
-
-- Check crontab:
-
-```bash
-sudo -u postgres crontab -l
-```
-
-- Verify cron service is running:
-
-```bash
-sudo systemctl status cron  # Debian
-sudo systemctl status crond  # RHEL
-```
-
-- Check cron logs:
-
-```bash
-sudo grep pgbackrest /var/log/cron
-sudo tail -f /var/log/pgbackrest/*
-```
-
-- Test backup command manually
-
-### Repository Full
-
-**Symptom:** Backups fail due to insufficient space
-
-**Solution:**
-
-- Check repository disk space:
-
-```bash
-df -h /home/backrest
-```
-
-- Review retention settings (increase retention may fill disk)
-- Manually expire old backups:
-
-```bash
-sudo -u postgres pgbackrest --stanza=pgedge-demo-1 expire
-```
-
-- Consider increasing disk space or reducing retention
-
-### Backup Encryption Issues
-
-**Symptom:** Cannot restore encrypted backup
-
-**Solution:**
-
-- Verify cipher passphrase is correct in configuration
-- Ensure cipher passphrase is consistent across all nodes
-- Check `backup_repo_cipher` variable matches original
-- Note: Losing encryption key makes backups unrecoverable
-
-### Standby Backup Fails
-
-**Symptom:** Backups fail when run from replica
-
-**Solution:**
-
-- pgBackRest should run from primary in HA clusters
-- Verify `inventory_hostname == first_node_in_zone` logic
-- Check Patroni cluster status:
-
-```bash
-sudo -u postgres patronictl -c /etc/patroni/patroni.yaml list
-```
-
-- Ensure cron jobs only run on primary node
+This role is idempotent and safe to re-run. Subsequent executions will:
+
+- regenerate configuration files each run to incorporate changes.
+- only create the backup database user if it doesn't exist.
+- not overwrite an existing pgBackRest stanza.
 
 ## Notes
 
@@ -578,10 +388,3 @@ sudo -u postgres patronictl -c /etc/patroni/patroni.yaml list
 
 !!! note "Backup User Permissions"
     The backup user needs REPLICATION privilege to backup from standby servers and to use pg_start_backup/pg_stop_backup functions.
-
-## See Also
-
-- [install_backrest](install_backrest.md) - Required prerequisite for pgBackRest installation
-- [setup_postgres](setup_postgres.md) - PostgreSQL setup before backup configuration
-- [init_server](init_server.md) - Generates SSH keys used for backup authentication
-- [Configuration Reference](../configuration.md) - Backup configuration variables

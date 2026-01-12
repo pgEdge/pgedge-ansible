@@ -6,13 +6,13 @@ The `install_repos` role configures official pgEdge package repositories on targ
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Installs prerequisite packages for repository management.
-- Adds pgEdge package repositories for the target OS.
-- Configures the EPEL repository on RHEL-based systems.
-- Imports and verifies GPG keys for package signing.
-- Updates the package cache to make pgEdge packages available.
+- installs prerequisite packages for repository management.
+- adds pgEdge package repositories for the target OS.
+- configures the EPEL repository on RHEL-based systems.
+- imports and verifies GPG keys for package signing.
+- updates the package cache to make pgEdge packages available.
 
 ## Role Dependencies
 
@@ -117,91 +117,9 @@ After repository installation:
 
 ## Idempotency
 
-This role is fully idempotent and safe to re-run:
+This role is idempotent and safe to re-run. Subsequent executions will:
 
-- Delegates package installation to the operating system.
-
-## Troubleshooting
-
-### Repository Package Download Fails
-
-**Symptom:** Failed to download repository package from pgEdge URLs
-
-**Solution:**
-
-- Verify internet connectivity from target hosts
-- Check firewall rules allow HTTPS (443) outbound
-- Verify DNS resolution for `apt.pgedge.com` or `dnf.pgedge.com`
-- Check proxy settings if using HTTP proxy
-
-```bash
-# Test connectivity
-curl -I https://apt.pgedge.com/repodeb/pgedge-release_latest_all.deb
-curl -I https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
-```
-
-### GPG Key Import Fails
-
-**Symptom:** GPG key verification errors during repository installation
-
-**Solution:**
-
-- Verify GPG key URL is accessible
-- Check system time is correct (affects key validity)
-- Manually import the key:
-
-```bash
-# Debian/Ubuntu
-curl https://apt.pgedge.com/keys/pgedge.pub | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/pgedge.gpg
-
-# RHEL/Rocky
-sudo rpm --import https://dnf.pgedge.com/keys/pgedge.pub
-```
-
-### Package Cache Not Updated
-
-**Symptom:** pgEdge packages not found after repository installation
-
-**Solution:**
-
-- Manually update package cache:
-
-```bash
-# Debian/Ubuntu
-sudo apt update
-
-# RHEL/Rocky
-sudo dnf makecache
-```
-
-- Verify repository is enabled:
-
-```bash
-# Debian/Ubuntu
-apt-cache policy | grep pgedge
-
-# RHEL/Rocky
-dnf repolist | grep pgedge
-```
-
-### Retry Logic Exhausted
-
-**Symptom:** Installation fails after 5 retries
-
-**Solution:**
-
-- This role includes retry logic with 20-second delays
-- Check for intermittent network issues
-- Verify repository servers are accessible
-- Check system logs for more details:
-
-```bash
-# Debian/Ubuntu
-sudo tail -f /var/log/apt/term.log
-
-# RHEL/Rocky
-sudo tail -f /var/log/dnf.log
-```
+- delegate package installation to the operating system.
 
 ## Notes
 
@@ -213,10 +131,3 @@ sudo tail -f /var/log/dnf.log
 
 !!! note "Network Requirements"
     This role requires outbound HTTPS access to pgEdge repository servers. Ensure firewall rules and proxy settings allow this connectivity.
-
-## See Also
-
-- [install_pgedge](install_pgedge.md) - Installs pgEdge PostgreSQL packages
-- [install_patroni](install_patroni.md) - Installs Patroni for high availability
-- [install_backrest](install_backrest.md) - Installs pgBackRest for backups
-- [Configuration Reference](../configuration.md) - Repository configuration variables

@@ -6,20 +6,20 @@ The `install_patroni` role installs Patroni, a high availability solution for Po
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Installs pipx for isolated Python application management.
-- Installs Patroni with required dependencies via pipx.
-- Configures Patroni as postgres OS user.
-- Installs systemd service unit for Patroni.
-- Creates Patroni configuration directory.
-- Prepares the system for HA PostgreSQL cluster management.
+- installs pipx for isolated Python application management.
+- installs Patroni with required dependencies via pipx.
+- configures Patroni as postgres OS user.
+- installs systemd service unit for Patroni.
+- creates Patroni configuration directory.
+- prepares the system for HA PostgreSQL cluster management.
 
 ## Role Dependencies
 
-- `role_config`: Provides shared configuration variables
-- `init_server`: You must create the postgres user first
-- `install_pgedge`: You must install PostgreSQL
+- `role_config`: Provides shared configuration variables.
+- `init_server`: You must create the postgres user first.
+- `install_pgedge`: You must install PostgreSQL.
 
 ## When to Use
 
@@ -162,158 +162,12 @@ This role uses the following configuration parameters:
 
 ## Idempotency
 
-This role is fully idempotent:
+This role is idempotent and safe to re-run. Subsequent executions will:
 
-- Checks for existing Patroni binary before installation
-- Skips pipx installation if already present
-- System packages are maintained by the operating system once installed
-- Service file is updated if template changes
-- Safe to re-run multiple times
-
-## Troubleshooting
-
-### pipx Installation Fails
-
-**Symptom:** Failed to install pipx on RHEL systems
-
-**Solution:**
-
-- Verify Python 3 and pip are installed:
-
-```bash
-python3 --version
-pip3 --version
-```
-
-- Manually install pipx as the postgres user:
-
-```bash
-sudo -u postgres python3 -m pip install --user pipx
-sudo -u postgres python3 -m pipx ensurepath
-```
-
-- Verify pipx is in PATH:
-
-```bash
-pipx --version
-```
-
-### Patroni Installation Fails
-
-**Symptom:** pipx install patroni command fails
-
-**Solution:**
-
-- Check postgres user's environment:
-
-```bash
-sudo -u postgres pipx list
-```
-
-- Verify pipx environment is initialized:
-
-```bash
-sudo -u postgres pipx ensurepath
-```
-
-- Check for compilation errors (missing development packages):
-
-```bash
-# Debian/Ubuntu
-sudo apt install python3-dev libpq-dev
-
-# RHEL/Rocky
-sudo dnf install python3-devel postgresql-devel
-```
-
-### Binary Not Found After Installation
-
-**Symptom:** patroni command not found
-
-**Solution:**
-
-- Verify installation location:
-
-```bash
-sudo -i -u postgres ls -la .local/bin/
-```
-
-- Check PATH includes `patroni_bin_dir`:
-
-```bash
-sudo -i -u postgres printenv | grep PATH
-```
-
-- Manually add to PATH to `.profile`, `.bash_profile`, or `.bashrc` files:
-
-```bash
-export PATH="$PATH:/var/lib/pgsql/.local/bin"
-```
-
-### Permission Denied on Config Directory
-
-**Symptom:** Cannot write to `/etc/patroni`
-
-**Solution:**
-
-- Verify directory ownership:
-
-```bash
-sudo ls -la /etc/patroni
-```
-
-- Fix permissions:
-
-```bash
-sudo chown postgres:postgres /etc/patroni
-sudo chmod 700 /etc/patroni
-```
-
-### Service File Not Loaded
-
-**Symptom:** systemd doesn't recognize patroni service
-
-**Solution:**
-
-- Verify service file exists:
-
-```bash
-ls -la /etc/systemd/system/patroni.service
-```
-
-- Reload systemd daemon:
-
-```bash
-sudo systemctl daemon-reload
-```
-
-- Check service status:
-
-```bash
-sudo systemctl status patroni
-```
-
-### psycopg2 Build Fails
-
-**Symptom:** Failed to build psycopg2-binary during installation
-
-**Solution:**
-
-- Install required development packages:
-
-```bash
-# Debian/Ubuntu
-sudo apt install gcc python3-dev libpq-dev
-
-# RHEL/Rocky
-sudo dnf install gcc python3-devel postgresql-devel
-```
-
-- Retry Patroni installation:
-
-```bash
-sudo -u postgres pipx install patroni[psycopg2-binary,etcd]
-```
+- check for existing Patroni binary before installation.
+- skip pipx installation if already present.
+- defer packages maintenance by the operating system once installed.
+- update the service file if the template changes.
 
 ## Notes
 
@@ -323,11 +177,3 @@ You should verify Patroni is installed correctly after installation:
 sudo -i -u postgres patroni --version
 sudo -i -u postgres patronictl version
 ```
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - Patroni configuration variables
-- [Architecture](../architecture.md) - Understanding HA cluster topology
-- [setup_patroni](setup_patroni.md) - Configures and starts Patroni cluster
-- [install_etcd](install_etcd.md) - Installs etcd required by Patroni
-- [install_pgedge](install_pgedge.md) - Installs PostgreSQL managed by Patroni

@@ -79,46 +79,51 @@ The role installs the following required system packages:
 
 ### 2. SELinux Configuration
 
-- Checks current SELinux status
-- Disables SELinux when you enable the `disable_selinux` parameter
-- Reboots the system if necessary
-- Waits for the system to come back online
+The role performs the following SELinux configuration tasks:
+
+- checks the current SELinux status.
+- disables SELinux when you enable the `disable_selinux` parameter.
+- reboots the system if necessary.
+- waits for the system to come back online.
 
 ### 3. Core Dump Configuration
 
-When you enable the `debug_pgedge` parameter:
+When you enable the `debug_pgedge` parameter, the role:
 
-- Configures `systemd-coredump` settings
-- Sets kernel parameters for core file generation
-- Ensures unlimited core dump sizes
-- Configures core file naming patterns
+- configures `systemd-coredump` settings.
+- sets kernel parameters for core file generation.
+- ensures unlimited core dump sizes.
+- configures core file naming patterns.
 
 ### 4. Host File Management
 
-When you enable the `manage_host_file` parameter:
+When you enable the `manage_host_file` parameter, the role:
 
-- Collects facts about all hosts in the cluster
-- Adds entries to `/etc/hosts` for each host
-- Maps hostnames to IP addresses
-- Ensures all nodes can resolve each other
+- collects facts about all hosts in the cluster.
+- adds entries to `/etc/hosts` for each host.
+- maps hostnames to IP addresses.
+- ensures all nodes can resolve each other.
 
 ### 5. User Creation
 
 **Postgres User:**
 
-- Creates `postgres` user and group
-- Sets up home directory
-- Generates ed25519 SSH key pair
-- Configures SSH authorized keys and known hosts
-- Stores SSH public keys on Ansible controller
+The role performs the following tasks for the postgres user:
+
+- creates the `postgres` user and group.
+- sets up the home directory.
+- generates an ed25519 SSH key pair.
+- configures SSH authorized keys and known hosts.
+- stores SSH public keys on the Ansible controller.
 
 **Backup User (SSH mode only):**
 
-- Creates backup user (default: `backrest`)
-- Sets up home directory
-- Generates ed25519 SSH key pair
-- Configures SSH authorized keys and known hosts
-- Applies to hosts in the `backup` group
+The role performs the following tasks for the backup user for hosts in the `backup` group:
+
+- creates the backup user (default: `backrest`).
+- sets up the home directory.
+- generates an ed25519 SSH key pair.
+- configures SSH authorized keys and known hosts.
 
 ## Files Generated
 
@@ -214,57 +219,10 @@ When Core dumps are enabled:
 
 This role is idempotent and safe to re-run. Subsequent executions will:
 
-- Skip package installation if packages are present
-- Not regenerate SSH keys if they exist
-- Update `/etc/hosts` if new nodes are added
-- Not reboot if SELinux is already in the desired state
-
-## Troubleshooting
-
-### Package Installation Failures
-
-**Symptom:** Package installation fails with repository errors
-
-**Solution:**
-
-- Verify internet connectivity
-- Check repository configuration
-- Update package cache manually:
-    - Debian: `apt update`
-    - RHEL: `dnf makecache`
-
-### SELinux Reboot Issues
-
-**Symptom:** System doesn't come back online after SELinux configuration
-
-**Solution:**
-
-- Verify SSH connectivity is maintained through reboots
-- Check firewall rules allow SSH
-- Increase wait timeout in Ansible configuration
-- Manually check system status after reboot
-
-### SSH Key Problems
-
-**Symptom:** SSH keys not properly generated or distributed
-
-**Solution:**
-
-- Verify `postgres` user exists
-- Check permissions on `.ssh` directory (700)
-- Check permissions on SSH keys (600 for private, 644 for public)
-- Ensure Ansible has write access to `host-keys` directory
-
-### Host File Issues
-
-**Symptom:** Nodes cannot resolve each other's hostnames
-
-**Solution:**
-
-- Verify `/etc/hosts` contains all cluster nodes
-- Check that `manage_host_file: true`
-- Ensure inventory contains correct hostnames/IPs
-- Test resolution: `ping hostname`
+- skip package installation if packages are present.
+- not regenerate SSH keys if they exist.
+- update `/etc/hosts` if new nodes are added.
+- not reboot if SELinux is already in the desired state.
 
 ## Notes
 
@@ -273,8 +231,3 @@ This role is idempotent and safe to re-run. Subsequent executions will:
 
 !!! warning "Reboots"
     This role may trigger system reboots when changing SELinux settings. Ensure your Ansible SSH connection can survive reboots.
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - System configuration variables
-- [Architecture](../architecture.md) - Understanding cluster topology

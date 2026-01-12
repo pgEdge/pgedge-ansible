@@ -6,12 +6,12 @@ The `install_backrest` role installs pgBackRest, a modern backup and restore sol
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Installs pgBackRest from pgEdge repositories.
-- Installs the cron service for backup scheduling.
-- Prepares the system for PostgreSQL backup and recovery operations.
-- Enables both full and incremental backup capabilities.
+- installs pgBackRest from pgEdge repositories.
+- installs the cron service for backup scheduling.
+- prepares the system for PostgreSQL backup and recovery operations.
+- enables both full and incremental backup capabilities.
 
 ## Role Dependencies
 
@@ -56,26 +56,24 @@ Installs the following packages:
 
 **pgBackRest Package:**
 
-- `pgedge-pgbackrest` - pgBackRest backup utility
-- Includes all backup and restore tools
-- Provides both CLI and configuration management
+This role focuses on installing the `pgedge-pgbackrest` system package for the pgBackRest backup utility. This package includes all standard backup and restore tools and provides both CLI utilities and configuration management.
 
 **Cron Service:**
 
+The `setup_backrest` role requires cron to configure backup schedules. Cron packaging is not always standardized across Linux variants. As a result, we use different packages for the main Linux families:
+
 - RHEL/Rocky: `cronie` - Vixie cron implementation
 - Debian/Ubuntu: `cron` - Standard cron daemon
-- Required for automated backup scheduling
-- Enables `setup_backrest` to configure backup schedules
 
 ### 2. Retry Logic
 
-The role includes robust retry logic:
+The role includes robust retry logic, and will:
 
-- Attempts installation up to 5 times
-- Waits 20 seconds between retries
-- Handles transient network or repository issues
-- Includes lock timeout of 300 seconds for package manager
-- Updates package cache before installation
+- attempt installation up to 5 times.
+- wait 20 seconds between retries.
+- handle transient network or repository issues.
+- include lock timeout of 300 seconds for package manager.
+- update package cache before installation.
 
 ## Files Generated
 
@@ -152,161 +150,11 @@ This role installs system packages which create:
 
 ## Idempotency
 
-This role is fully idempotent and supports the following behaviors:
+This role is idempotent and safe to re-run. Subsequent executions will:
 
-- The role makes no changes if the packages are already installed.
-- The role updates to the latest package version if available.
-- You can safely re-run this role multiple times.
-- The role makes no configuration changes (the `setup_backrest` role handles those).
-
-## Troubleshooting
-
-The following Troubleshooting section details some problems and solutions you might encounter when installing and configuring pgbackrest.
-
-### Package Not Found
-
-**Symptom:** pgbackrest package not found in repositories
-
-**Solution:**
-
-- Verify `install_repos` role completed successfully
-- Update package cache:
-
-```bash
-# Debian/Ubuntu
-sudo apt update
-apt-cache search pgbackrest
-
-# RHEL/Rocky
-sudo dnf makecache
-dnf search pgbackrest
-```
-
-- Verify pgEdge repository is enabled:
-
-```bash
-# Debian/Ubuntu
-cat /etc/apt/sources.list.d/pgedge.sources
-
-# RHEL/Rocky
-cat /etc/yum.repos.d/pgedge.repo
-```
-
-### Cron Package Conflicts
-
-**Symptom:** Cron installation fails due to conflicts
-
-**Solution:**
-
-- Check for existing cron installations:
-
-```bash
-# Debian/Ubuntu
-dpkg -l '*cron*'
-
-# RHEL/Rocky
-rpm -qa | grep cron
-```
-
-- Remove conflicting packages if safe:
-
-```bash
-# RHEL only (if anacron conflicts)
-sudo dnf remove cronie-anacron
-sudo dnf install cronie
-```
-
-### Lock Timeout on Debian
-
-**Symptom:** Package manager lock timeout
-
-**Solution:**
-
-- Wait for other package operations to complete
-- Check for hung package manager processes:
-
-```bash
-ps aux | grep -E 'apt|dpkg'
-```
-
-- The role uses a 300-second timeout which should be sufficient for most systems
-
-### Installation Fails After Retries
-
-**Symptom:** Installation fails after 5 attempts
-
-**Solution:**
-
-- Check network connectivity to pgEdge repositories
-- Verify repository GPG keys are installed
-- Check system logs:
-
-```bash
-# Debian/Ubuntu
-sudo tail -f /var/log/apt/term.log
-
-# RHEL/Rocky
-sudo tail -f /var/log/dnf.log
-```
-
-- Manually attempt installation:
-
-```bash
-# Debian/Ubuntu
-sudo apt install pgedge-pgbackrest
-
-# RHEL/Rocky
-sudo dnf install pgedge-pgbackrest
-```
-
-### Cron Service Not Starting
-
-**Symptom:** Cron package installed but service not running
-
-**Solution:**
-
-- Check cron service status:
-
-```bash
-# Debian/Ubuntu
-sudo systemctl status cron
-
-# RHEL/Rocky
-sudo systemctl status crond
-```
-
-- Start and enable cron service:
-
-```bash
-# Debian/Ubuntu
-sudo systemctl enable --now cron
-
-# RHEL/Rocky
-sudo systemctl enable --now crond
-```
-
-### pgBackRest Binary Not Found
-
-**Symptom:** `pgbackrest` command not found after installation
-
-**Solution:**
-
-- Verify package installation:
-
-```bash
-# Debian/Ubuntu
-dpkg -L pgedge-pgbackrest | grep bin
-
-# RHEL/Rocky
-rpm -ql pgedge-pgbackrest | grep bin
-```
-
-- Check if binary is in PATH:
-
-```bash
-which pgbackrest
-ls -la /usr/bin/pgbackrest
-```
+- make no changes if the packages are already installed.
+- update to the latest package version if available.
+- make no configuration changes (the `setup_backrest` role handles those).
 
 ## Notes
 
@@ -315,9 +163,3 @@ You should verify pgBackRest is installed correctly after installation:
 ```bash
 pgbackrest version
 ```
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - Backup configuration variables
-- [install_repos](install_repos.md) - Required prerequisite for repository configuration
-- [setup_backrest](setup_backrest.md) - Configures backups and schedules

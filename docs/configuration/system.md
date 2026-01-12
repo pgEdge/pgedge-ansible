@@ -1,6 +1,6 @@
 # System Configuration
 
-The following settings affect the base operating system. We have tested these settings on Debian and RedHat variant Linux systems, so they should work on Ubuntu, Fedora, Rocky, and similar systems.
+The following settings affect the base operating system. Our current testing environment includes Debian and RedHat variant Linux systems, so these options should work on Ubuntu, Fedora, Rocky, and similar distributions.
 
 ## debug_pgedge
 
@@ -16,7 +16,7 @@ debug_pgedge: false
 
 - Type: Boolean
 - Default: `true`
-- Description: This parameter disables SELinux when you enable the parameter. A reboot may be required.
+- Description: Enabling this parameter disables SELinux. A reboot may be required.
 
 ```yaml
 disable_selinux: false

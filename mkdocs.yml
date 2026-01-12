@@ -97,4 +97,5 @@ nav:
       - setup_pgedge: roles/setup_pgedge.md
       - setup_backrest: roles/setup_backrest.md
   - Usage Examples: usage.md
+  - Troubleshooting: troubleshooting.md
   - Release Notes: release_notes.md

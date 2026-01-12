@@ -8,26 +8,17 @@ The pgEdge Ansible Collection provides the following methods for managing config
 
 - Inventory files: Define your hosts and host groups
 - Group variables: Set variables for all hosts in a group
--  Host variables: Set variables for individual hosts
--  Role defaults: Default values defined in each role
-1. Inventory files: Define your hosts and host groups
-2. Group variables: Set variables for all hosts in a group
-3. Host variables: Set variables for individual hosts
-4. Role defaults: Default values defined in each role
+- Host variables: Set variables for individual hosts
+- Role defaults: Default values defined in each role
 
 You can set variables at multiple levels, with the following precedence (highest to lowest):
-
-1. Host variables in inventory
-2. Group variables in inventory
-3. Variables in `group_vars/` directory
-4. Variables in `host_vars/` directory
-5. Role defaults
 
 1. Host variables in inventory files.
 2. Group variables in inventory files.
 3. Variables in the `group_vars/` directory.
 4. Variables in the `host_vars/` directory.
 5. Role default settings.
+
 ## Variable Precedence Example
 
 You can override variables at different levels:
@@ -93,6 +84,3 @@ The collection validates certain variables:
 - Review [sample playbooks](usage.md) for complete configuration examples.
 - Understand [role-specific parameters](roles/index.md) for advanced customization.
 - Learn about [architecture patterns](architecture.md) to inform your configuration choices.
-- Review [sample playbooks](usage.md) for complete configuration examples
-- Understand [role-specific parameters](roles/index.md) for advanced customization
-- Learn about [architecture patterns](architecture.md) to inform your configuration choices

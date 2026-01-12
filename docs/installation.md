@@ -200,37 +200,3 @@ To clean up build artifacts in the repository:
 ```bash
 make clean
 ```
-
-## Troubleshooting
-
-### Collection Not Found
-
-If Ansible cannot find the collection after installation:
-
-1. Check the installation path:
-   ```bash
-   ansible-galaxy collection list
-   ```
-
-2. Verify the collections path in your `ansible.cfg`:
-   ```ini
-   [defaults]
-   collections_paths = ~/.ansible/collections:/usr/share/ansible/collections
-   ```
-
-### Build Failures
-
-If `make install` fails:
-
-- Ensure you have `ansible-galaxy` command available
-- Check that you have write permissions to the collections directory
-- Verify the `VERSION` file exists in the repository root
-
-### SSH Connection Issues
-
-If Ansible cannot connect to hosts:
-
-- Verify SSH access manually: `ssh user@host`
-- Check SSH key permissions: `chmod 600 ~/.ssh/id_rsa`
-- Ensure the remote user has appropriate sudo privileges
-- Review your inventory file for correct hostnames and connection parameters

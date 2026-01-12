@@ -6,7 +6,7 @@ The `install_etcd` role downloads and installs etcd distributed key-value store 
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
 - Downloads etcd binary from official [GitHub releases](https://github.com/etcd-io/etcd/releases).
 - Verifies download integrity using checksums.
@@ -172,143 +172,13 @@ This role is platform-agnostic as it installs pre-compiled binaries directly fro
 
 ## Idempotency
 
-This role is fully idempotent:
+This role is idempotent and safe to re-run. Subsequent executions will:
 
-- Checks for existing etcd binary before installation
-- Skips download and installation if etcd is already present
-- User creation is idempotent (no error if user exists)
-- Service file is updated if template changes
-- Safe to re-run multiple times
-
-## Troubleshooting
-
-### Download Fails from GitHub
-
-**Symptom:** Failed to download etcd tarball from GitHub
-
-**Solution:**
-
-- Verify internet connectivity and GitHub access
-- Check firewall allows HTTPS to github.com
-- Test manual download:
-
-```bash
-curl -LO https://github.com/etcd-io/etcd/releases/download/v3.6.5/etcd-v3.6.5-linux-amd64.tar.gz
-```
-
-- Use alternative mirror or local repository:
-
-```yaml
-etcd_base_url: "https://your-mirror.com/etcd/v{{ etcd_version }}"
-```
-
-### Checksum Verification Fails
-
-**Symptom:** Download fails with checksum mismatch error
-
-**Solution:**
-
-- Verify etcd_version is correct
-- Check for corrupted partial downloads
-- Clear temporary files and retry:
-
-```bash
-rm -rf ~/tmp/etcd-*
-```
-
-- Manually verify checksum:
-
-```bash
-wget https://github.com/etcd-io/etcd/releases/download/v3.6.5/SHA256SUMS
-sha256sum ~/tmp/etcd-v3.6.5-linux-amd64.tar.gz
-```
-
-### Binary Not Executable
-
-**Symptom:** etcd binary exists but won't execute
-
-**Solution:**
-
-- Check file permissions:
-
-```bash
-ls -la /usr/local/etcd/
-```
-
-- Manually fix permissions:
-
-```bash
-sudo chmod 755 /usr/local/etcd/etcd
-sudo chmod 755 /usr/local/etcd/etcdctl
-sudo chmod 755 /usr/local/etcd/etcdutl
-```
-
-### User Creation Fails
-
-**Symptom:** Failed to create etcd system user
-
-**Solution:**
-
-- Check if user already exists:
-
-```bash
-id etcd
-```
-
-- Verify sufficient permissions to create users
-- Check for conflicts with existing users/groups
-
-### Architecture Mismatch
-
-**Symptom:** Binary won't run, "cannot execute binary file" error
-
-**Solution:**
-
-- Verify system architecture:
-
-```bash
-uname -m
-```
-
-- This role currently supports `x86_64` (amd64) only
-- For ARM systems, customize `etcd_package` variable:
-
-```yaml
-etcd_package: "etcd-v{{ etcd_version }}-linux-arm64"
-```
-
-### Service File Installation Fails
-
-**Symptom:** systemd service file not created
-
-**Solution:**
-
-- Verify systemd is installed and running:
-
-```bash
-systemctl --version
-```
-
-- Check directory permissions:
-
-```bash
-ls -la /etc/systemd/system/
-```
-
-- Manually reload systemd after fixes:
-
-```bash
-sudo systemctl daemon-reload
-```
+- check for existing etcd binary before installation.
+- skip download and installation if etcd is already present.
+- defer user management to the operating system.
+- update the service file if the template changes.
 
 ## Notes
 
 You should ensure etcd version is compatible with your Patroni version. etcd 3.4+ is recommended for Patroni 2.0+.
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - etcd configuration variables
-- [Architecture](../architecture.md) - Understanding HA cluster topology
-- [setup_etcd](setup_etcd.md) - Configures and starts etcd cluster
-- [install_patroni](install_patroni.md) - Installs Patroni which uses etcd
-- [setup_patroni](setup_patroni.md) - Configures Patroni with etcd endpoints

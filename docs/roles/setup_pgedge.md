@@ -6,15 +6,15 @@ The `setup_pgedge` role configures Spock logical replication to initialize a mul
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Configures password authentication for `pgedge_user`.
-- Creates Spock node metadata on each instance.
-- Establishes Spock subscriptions between all nodes or zone leaders.
-- Configures multi-master logical replication topology.
-- Supports both direct node-to-node and proxy-based subscriptions.
-- Verifies subscription synchronization.
-- Enables distributed PostgreSQL deployment.
+- configures password authentication for `pgedge_user`.
+- creates Spock node metadata on each instance.
+- establishes Spock subscriptions between all nodes or zone leaders.
+- configures multi-master logical replication topology.
+- supports both direct node-to-node and proxy-based subscriptions.
+- verifies subscription synchronization.
+- enables distributed PostgreSQL deployment.
 
 ## Role Dependencies
 
@@ -274,137 +274,14 @@ Uses specific proxy for replication connections instead of HAProxy.
 
 ## Idempotency
 
-This role is designed for idempotency:
+This role is idempotent and safe to re-run. Subsequent executions will:
 
-- `.pgpass` creation is idempotent (`lineinfile` module).
-- Spock node creation checks for existence before creating the node.
-- Subscription creation checks for existence before creating the subscription.
-- This role is safe to re-run to add new nodes or databases.
+- only modify specific lines in the `.pgpass` file.
+- check if spock nodes exist before creation.
+- check if subscriptions exist before creation.
 
 !!! warning "Subscription Changes"
     Adding new nodes or databases requires re-running this role on all nodes to establish new subscriptions.
-
-## Troubleshooting
-
-### Spock Node Creation Fails
-
-**Symptom:** Failed to create Spock node
-
-**Solution:**
-
-- Verify Spock extension is installed:
-
-```bash
-sudo -u postgres psql -d dbname -c "\dx spock"
-```
-
-- Check PostgreSQL is running and accessible
-- Verify `pgedge_user` exists and has permissions
-- Review PostgreSQL logs for errors
-
-### Subscription Creation Fails
-
-**Symptom:** Failed to create Spock subscription
-
-**Solution:**
-
-- Verify remote node is accessible:
-
-```bash
-sudo -u postgres psql "host=remote-node user=pgedge dbname=demo port=5432"
-```
-
-- Ensure `pg_hba.conf` allows connections from current node
-- Verify `pgedge_user` credentials are correct
-- Check network connectivity and firewall rules
-- Review `.pgpass` file has correct password
-
-### Proxy Connectivity Fails
-
-**Symptom:** Cannot connect through HAProxy
-
-**Solution:**
-
-- Verify HAProxy is running:
-
-```bash
-sudo systemctl status haproxy
-```
-
-- Test HAProxy connectivity:
-
-```bash
-psql "host=haproxy-host port=5432 user=pgedge dbname=postgres"
-```
-
-- Check HAProxy configuration and health checks
-- Verify Patroni is running on backend nodes
-- Review HAProxy logs for errors
-
-### Subscriptions Not Syncing
-
-**Symptom:** `sub_wait_for_sync()` times out or hangs
-
-**Solution:**
-
-- Check subscription status:
-    ```bash
-    sudo -u postgres psql -d dbname -c "SELECT * FROM spock.subscription;"
-    ```
-- Ensure `status` column shows `replicating`
-- Review PostgreSQL logs for replication errors
-- Verify network stability between nodes
-- Check for table conflicts or constraint violations
-
-### Replication Lag Increasing
-
-**Symptom:** Growing lag between nodes
-
-**Solution:**
-
-- Check replication status:
-    ```bash
-    sudo -u postgres psql -d dbname -c "SELECT * FROM spock.sub_show_status();"
-    ```
-- Look for Spock worker exceptions:
-    ```bash
-    sudo -u postgres psql -d dbname -c "SELECT * FROM spock.exception_status;"
-    ```
-- Verify network bandwidth between nodes
-- Check for long-running transactions
-- Review conflict resolution settings
-- Consider optimizing table designs or indexes
-
-### Subscription Shows "Disabled" State
-
-**Symptom:** Subscription marked as disabled
-
-**Solution:**
-
-- Look for Spock worker exceptions:
-    ```bash
-    sudo -u postgres psql -d dbname -c "SELECT * FROM spock.exception_status;"
-    ```
-- Check for schema mismatches between nodes
-- Verify Spock extension versions match
-- Review PostgreSQL logs for error details
-- Try to re-enable subscription after addressing errors:
-    ```bash
-    sudo -u postgres psql -d dbname -c "SELECT * FROM spock.sub_enable('sub_n1_n2');"
-    ```
-
-### Can't Add New Node to Cluster
-
-**Symptom:** New node won't join existing cluster
-
-**Solution:**
-
-- Verify existing cluster is healthy
-- Ensure new node has Spock extension installed
-- Check network connectivity to all existing nodes
-- Run `setup_pgedge` role on all nodes (not just new one)
-- Verify zone configuration is correct
-- Check for subscription naming conflicts
 
 ## Notes
 
@@ -423,12 +300,3 @@ sudo -u postgres psql -d dbname -c "SELECT * FROM spock.sub_show_status();"
 # Check replication lag
 sudo -u postgres psql -d dbname -c "SELECT * FROM spock.lag_tracker;"
 ```
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - Complete variable documentation
-- [Architecture](../architecture.md) - Understanding multi-master topology
-- [role_config](role_config.md) - Configuration variables reference
-- [setup_postgres](setup_postgres.md) - Required prerequisite for PostgreSQL and Spock setup
-- [setup_haproxy](setup_haproxy.md) - HAProxy configuration for HA clusters
-- [setup_patroni](setup_patroni.md) - Patroni configuration for HA clusters

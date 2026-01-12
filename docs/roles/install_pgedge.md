@@ -45,9 +45,9 @@ Installs Postgres server and client binaries, along with supplementary packages.
 
 **pgEdge software and extensions:**
 
-- lolor extension for Large Object (LOB) support in logical replication
-- Snowflake extension for unique ID generation
-- Spock extension for bidirectional logical replication
+- The lolor extension provides Large Object (LOB) support in logical replication.
+- The Snowflake extension provides unique ID generation.
+- The Spock extension provides bidirectional logical replication.
 
 **Community and other popular tools:**
 
@@ -65,9 +65,9 @@ Installs Postgres server and client binaries, along with supplementary packages.
 
 The role includes robust retry logic:
 
-- Attempts installation up to 5 times
-- Waits 20 seconds between retries
-- Handles transient network or repository issues
+- attempts installation up to 5 times.
+- waits 20 seconds between retries.
+- handles transient network or repository issues.
 - Ensures successful installation before proceeding
 
 ### 3. Version Pinning
@@ -139,142 +139,12 @@ This role does not modify any files during execution aside from those the packag
 
 ## Idempotency
 
-This role is fully idempotent:
+This role is idempotent and safe to re-run. Subsequent executions will:
 
-- Re-running will update packages to latest versions if available
-- If packages are already at latest version, no changes are made
-- Safe to include in repeated playbook runs
-- Will not disrupt running Postgres instances
-
-## Troubleshooting
-
-### Package Not Found
-
-**Symptom:** Package installation fails with "package not found" error
-
-**Solution:**
-
-- Verify `install_repos` role completed successfully
-- Check package cache is updated:
-
-```bash
-# Debian/Ubuntu
-sudo apt update
-apt-cache search pgedge-enterprise
-
-# RHEL/Rocky
-sudo dnf makecache
-dnf search pgedge-enterprise
-```
-
-- Verify correct repository is configured:
-
-```bash
-# Debian/Ubuntu
-cat /etc/apt/sources.list.d/pgedge.sources
-
-# RHEL/Rocky
-cat /etc/yum.repos.d/pgedge.repo
-```
-
-### Version Mismatch
-
-**Symptom:** Wrong Postgres version installed
-
-**Solution:**
-
-- Verify `pg_version` variable is set correctly
-- Check available package versions:
-
-```bash
-# Debian/Ubuntu
-apt-cache policy pgedge-enterprise-all-17
-
-# RHEL/Rocky
-dnf list pgedge-enterprise-all_17
-```
-
-- Ensure version-specific package exists in repository
-
-### Dependency Conflicts
-
-**Symptom:** Package installation fails due to dependency conflicts
-
-**Solution:**
-
-- Check for conflicting Postgres installations:
-
-```bash
-# List installed Postgres packages
-dpkg -l | grep postgres  # Debian/Ubuntu
-rpm -qa | grep postgres  # RHEL/Rocky
-```
-
-- Remove conflicting packages if safe:
-
-```bash
-# Debian/Ubuntu
-sudo apt remove [conflicting packages]
-
-# RHEL/Rocky
-sudo dnf remove [conflicting packages]
-```
-
-### Network Timeouts
-
-**Symptom:** Package downloads timeout or fail intermittently
-
-**Solution:**
-
-- The role includes 5 retries with 20-second delays
-- For persistent issues, check network connectivity
-- Verify repository servers are accessible
-- Consider using a local package mirror
-
-### Lock Timeout on Debian
-
-**Symptom:** "Could not get lock" error on Debian/Ubuntu
-
-**Solution:**
-
-- Check for hung apt processes:
-
-```bash
-ps aux | grep apt
-```
-
-- Wait for other package operations to complete
-
-### psycopg2 Installation Fails
-
-**Symptom:** Python psycopg2 package fails to install
-
-**Solution:**
-
-- Verify Python 3 is installed:
-
-```bash
-python3 --version
-```
-
-- Install development headers if needed:
-
-```bash
-# Debian/Ubuntu
-sudo apt install python3-dev libpq-dev
-
-# RHEL/Rocky
-sudo dnf install python3-devel postgresql-devel
-```
+- update packages to latest versions if available.
+- not disrupt running Postgres instances.
 
 ## Notes
 
 !!! note "Automatic Updates"
     This role uses `state: latest` to ensure packages are updated to the newest version. This is intentional to maintain security and stability. Package updates will restart the Postgres service.
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - Complete variable documentation
-- [role_config](role_config.md) - Postgres version and configuration variables
-- [install_repos](install_repos.md) - Required prerequisite for repository configuration
-- [setup_postgres](setup_postgres.md) - Configures Postgres instances after installation

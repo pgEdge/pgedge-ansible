@@ -6,15 +6,15 @@ Unlike most of the other roles in this collection, the `setup_haproxy` role inst
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Installs HAProxy load balancer.
-- Configures health checks using Patroni REST API.
-- Routes connections to current Patroni primary.
-- Provides optional replica routing endpoints.
-- Enables statistics dashboard.
-- Ensures high availability for database connections.
-- Handles automatic failover routing.
+- installs the HAProxy load balancer.
+- configures health checks using the Patroni REST API.
+- routes connections to the current Patroni primary.
+- provides optional replica routing endpoints.
+- enables the statistics dashboard.
+- ensures high availability for database connections.
+- handles automatic failover routing.
 
 ## Role Dependencies
 
@@ -187,179 +187,11 @@ HAProxy logs to syslog by default:
 
 ## Idempotency
 
-This role is fully idempotent:
+This role is idempotent and safe to re-run. Subsequent executions will:
 
-- Delegates package installation to the operating system.
-- Regenerates configuration files each run to incorporate changes.
-- Always restarts HAProxy to ensure configuration changes apply.
-
-## Troubleshooting
-
-### HAProxy Service Fails to Start
-
-**Symptom:** HAProxy service won't start
-
-**Solution:**
-
-- Check HAProxy logs:
-
-```bash
-# View logs
-sudo journalctl -u haproxy -n 50 --no-pager
-
-# Or on Debian
-sudo tail -f /var/log/haproxy.log
-```
-
-- Validate configuration:
-
-```bash
-haproxy -c -f /etc/haproxy/haproxy.cfg
-```
-
-- Check for port conflicts:
-
-```bash
-sudo netstat -tlnp | grep -E '5432|5433|7000'
-```
-
-### Health Checks Failing
-
-**Symptom:** All backends marked as DOWN
-
-**Solution:**
-
-- Verify Patroni is running on PostgreSQL nodes:
-
-```bash
-sudo systemctl status patroni
-```
-
-- Test Patroni REST API manually:
-
-```bash
-curl http://pg-node:8008/
-curl http://pg-node:8008/replica
-```
-
-- Check network connectivity:
-
-```bash
-telnet pg-node 8008
-```
-
-- Verify firewall allows port 8008:
-
-```bash
-# RHEL
-sudo firewall-cmd --list-all
-
-# Debian
-sudo ufw status
-```
-
-### Cannot Connect Through HAProxy
-
-**Symptom:** Database connections to HAProxy fail
-
-**Solution:**
-
-- Check HAProxy statistics:
-
-```bash
-curl http://haproxy-host:7000/
-```
-
-- Verify at least one backend is UP
-- Test direct connection to backend:
-
-```bash
-psql -h pg-node -p 5432 -U admin
-```
-
-- Check HAProxy is listening:
-
-```bash
-sudo netstat -tlnp | grep haproxy
-```
-
-### Connections Route to Wrong Node
-
-**Symptom:** HAProxy routes to replica instead of primary
-
-**Solution:**
-
-- Check Patroni cluster status:
-
-```bash
-sudo -i -u postgres patronictl -c /etc/patroni/patroni.yaml list
-```
-
-- Verify health check path:
-
-```bash
-# Primary should return 200
-curl -I http://primary:8008/
-
-# Replicas should return 503
-curl -I http://replica:8008/
-```
-
-- Review HAProxy statistics dashboard (port 7000)
-
-### Statistics Page Not Accessible
-
-**Symptom:** Cannot access statistics on port 7000
-
-**Solution:**
-
-- Verify HAProxy is running
-- Check firewall allows port 7000
-- Test local access:
-
-```bash
-curl http://localhost:7000/
-```
-
-- Check bind address in configuration
-
-### High Connection Latency
-
-**Symptom:** Slow connection establishment through HAProxy
-
-**Solution:**
-
-- Check health check interval (may be too frequent)
-- Verify network latency to backends:
-
-```bash
-ping pg-node
-```
-
-- Review HAProxy timeout settings
-- Check backend server load
-- Consider increasing `maxconn` limit
-
-### Failover Not Working
-
-**Symptom:** HAProxy doesn't route to new primary after failover
-
-**Solution:**
-
-- Verify health checks are working
-- Check fall/rise parameters (may be too slow)
-- Monitor Patroni failover:
-
-```bash
-sudo -i -u postgres patronictl -c /etc/patroni/patroni.yaml list
-```
-
-- Watch HAProxy logs during failover
-- Verify new primary responds to health checks:
-
-```bash
-curl http://new-primary:8008/
-```
+- delegate package installation to the operating system.
+- regenerate configuration files each run to incorporate changes.
+- always restart HAProxy to ensure configuration changes apply.
 
 ## Notes
 
@@ -372,9 +204,3 @@ http://<haproxy-host>:7000/
 # Or via curl
 curl http://<haproxy-host>:7000/ | less
 ```
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - HAProxy configuration variables
-- [Architecture](../architecture.md) - Understanding HA cluster topology
-- [setup_patroni](setup_patroni.md) - Provides REST API for health checks

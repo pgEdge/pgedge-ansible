@@ -6,13 +6,13 @@ The `setup_etcd` role configures and starts etcd as a distributed consensus clus
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Generates the etcd cluster configuration file.
-- Configures cluster membership for all nodes in each zone.
-- Sets appropriate network endpoints and URLs.
-- Enables and starts etcd service.
-- Establishes distributed key-value store for Patroni.
+- generates the etcd cluster configuration file.
+- configures cluster membership for all nodes in each zone.
+- sets appropriate network endpoints and URLs.
+- enables and starts etcd service.
+- establishes distributed key-value store for Patroni.
 
 ## Role Dependencies
 
@@ -225,168 +225,14 @@ Each zone will have its own independent etcd cluster.
 
 ## Idempotency
 
-This role is designed for idempotency:
+This role is idempotent and safe to re-run. Subsequent executions will:
 
-- Will not overwrite an existing cluster.
-- Regenerates configuration files each run to incorporate changes.
-- Always leaves Etcd in an enabled and running state.
+- not overwrite an existing cluster.
+- Regenerate configuration files each run to incorporate changes.
+- leave Etcd in an enabled and running state.
 
 !!! warning "Configuration Changes"
     Changing etcd cluster membership after initial setup requires special procedures. Adding or removing nodes should be done using etcdctl, not by re-running this role.
-
-## Troubleshooting
-
-### Service Fails to Start
-
-**Symptom:** etcd service won't start
-
-**Solution:**
-
-- Check etcd logs:
-
-```bash
-sudo journalctl -u etcd -n 50 --no-pager
-```
-
-- Check for port conflicts:
-
-```bash
-sudo netstat -tlnp | grep -E '2379|2380'
-```
-
-### Cluster Formation Fails
-
-**Symptom:** etcd nodes can't form cluster
-
-**Solution:**
-
-- Verify all nodes are listed in initial-cluster
-- Check network connectivity between nodes:
-
-```bash
-curl http://other-node:2379/health
-```
-
-- Ensure firewall allows etcd ports (2379, 2380):
-
-```bash
-# RHEL
-sudo firewall-cmd --add-port=2379/tcp --permanent
-sudo firewall-cmd --add-port=2380/tcp --permanent
-sudo firewall-cmd --reload
-
-# Debian
-sudo ufw allow 2379/tcp
-sudo ufw allow 2380/tcp
-```
-
-- Verify hostnames resolve correctly:
-
-```bash
-ping hostname1
-ping hostname2
-```
-
-### "cluster ID mismatch" Error
-
-**Symptom:** etcd fails with cluster ID mismatch
-
-**Solution:**
-
-- This occurs when data directories have conflicting cluster state
-- Remove existing data and reconfigure:
-
-```bash
-sudo systemctl stop etcd
-sudo rm -rf /var/lib/etcd/postgresql
-sudo systemctl start etcd
-```
-
-- Ensure all nodes start fresh or all have consistent state
-
-### "member already exists" Error
-
-**Symptom:** Node fails to join with "member already exists"
-
-**Solution:**
-
-- Check existing cluster members:
-
-```bash
-/usr/local/etcd/etcdctl member list
-```
-
-- Remove the old member:
-
-```bash
-/usr/local/etcd/etcdctl member remove <member-id>
-```
-
-- Clear data directory and restart:
-
-```bash
-sudo systemctl stop etcd
-sudo rm -rf /var/lib/etcd/postgresql
-sudo systemctl start etcd
-```
-
-### Slow Performance or Timeouts
-
-**Symptom:** etcd operations are slow or timing out
-
-**Solution:**
-
-- Manually compact the cluster history and defrag storage:
-
-```bash
-/usr/local/etcd/etcdctl compact 5
-/usr/local/etcd/etcdctl defrag
-```
-
-- Check network latency between nodes:
-
-```bash
-ping -c 10 other-node
-```
-
-- Verify disk I/O performance (etcd is disk-sensitive):
-
-```bash
-sudo iostat -dmx
-```
-
-- Consider using SSD for etcd data directory
-- Increase timeout values in configuration:
-
-```yaml
-dial-timeout: 30s
-read-timeout: 30s
-write-timeout: 30s
-```
-
-### Cannot Connect to Cluster
-
-**Symptom:** etcdctl commands fail to connect
-
-**Solution:**
-
-- Verify etcd is running:
-
-```bash
-sudo systemctl status etcd
-```
-
-- Check listening addresses:
-
-```bash
-sudo netstat -tlnp | grep etcd
-```
-
-- Test local connection:
-
-```bash
-curl http://127.0.0.1:2379/health
-```
 
 ## Notes
 
@@ -402,10 +248,3 @@ You can monitor etcd cluster health:
 # List cluster members
 /usr/local/etcd/etcdctl member list
 ```
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - etcd configuration variables
-- [Architecture](../architecture.md) - Understanding HA cluster topology and zones
-- [install_etcd](install_etcd.md) - Required prerequisite for etcd binaries
-- [setup_patroni](setup_patroni.md) - Configures Patroni to use etcd cluster

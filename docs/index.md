@@ -50,6 +50,7 @@ The documentation is organized into the following sections:
 - The [Configuration](configuration.md) section provides a complete variable reference.
 - The [Roles](roles/index.md) section contains detailed documentation for each Ansible role.
 - The [Usage Examples](usage.md) section demonstrates sample playbooks and deployment scenarios.
+- The [Troubleshooting](troubleshooting.md) section provides solutions to common issues.
 
 ## Getting Help
 

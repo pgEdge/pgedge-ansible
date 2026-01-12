@@ -230,50 +230,9 @@ Use `-v`, `-vv`, or `-vvv` flags for increased verbosity:
 ansible-playbook playbook.yml -vv
 ```
 
-## Troubleshooting Roles
-
-### Check Mode
-
-Test role execution without making changes:
-
-```bash
-ansible-playbook playbook.yml --check
-```
-
-!!! note "Check Mode Limitations"
-    Some tasks may fail in check mode if they depend on changes from previous tasks.
-
-### Debugging Individual Roles
-
-Run a specific role in isolation:
-
-```bash
-ansible-playbook playbook.yml --tags role_name
-```
-
-### Common Issues
-
-**Package installation failures:**
-
-- Check internet connectivity
-- Verify repository configuration
-
-**Service start failures:**
-
-- Check service logs: `journalctl -u service-name`
-- Verify port availability
-- Review configuration files
-
-**Role dependencies not met:**
-
-- Ensure roles execute in proper order
-- Verify prerequisite roles completed successfully
-
 ## Next Steps
 
 - Review individual role documentation for detailed information.
 - Examine [sample playbooks](../usage.md) for complete examples.
 - Understand [configuration variables](../configuration.md) that affect role behavior.
-- Review individual role documentation for detailed information
-- Examine [sample playbooks](../usage.md) for complete examples
-- Understand [configuration variables](../configuration.md) that affect role behavior
+- Consult the [troubleshooting guide](../troubleshooting.md) for solutions to common issues.

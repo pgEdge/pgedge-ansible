@@ -1,6 +1,6 @@
 # Proxy Configuration
 
-Some cluster parameters are specific to the proxy layer. These parameters are not explicitly linked to HAProxy, which serves as a convenient default for this collection.
+Some cluster parameters control proxy layer behavior. These parameters are not explicitly linked to HAProxy, which serves as a convenient default for this collection.
 
 ## proxy_port
 
@@ -27,7 +27,7 @@ hosts:
 ```
 
 !!! note "Proxy Override"
-    This parameter primarily overrides or acts in place of nodes in the `haproxy` inventory group. You can use this setting to specify external proxies or load balancers. Such proxies will need HTTP check capabilities to interact with the Patroni REST service for proper node routing.
+    This parameter primarily overrides or acts in place of nodes in the `haproxy` inventory group. You can use this setting to specify external proxies or load balancers; such proxies will need HTTP check capabilities to interact with the Patroni REST service for proper node routing.
 
 ## haproxy_extra_routes
 

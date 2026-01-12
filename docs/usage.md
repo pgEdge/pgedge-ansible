@@ -576,38 +576,13 @@ If an entire zone fails:
 - Keep detailed notes documenting any manual changes to the cluster.
 - Review deployment logs after each playbook run to catch issues.
 
-## Troubleshooting Tips
-
-### Playbook Failures
-
-```bash
-# Run with increased verbosity
-ansible-playbook playbook.yaml -vvv
-
-# Check mode (dry run)
-ansible-playbook playbook.yaml --check
-```
-
-### Connection Issues
-
-```bash
-# Test connectivity
-ansible all -i inventory.yaml -m ping
-
-# Check SSH access
-ansible all -i inventory.yaml -m shell -a "hostname"
-```
-
-### Role-Specific Issues
-
-See the troubleshooting sections in individual [role documentation](roles/index.md).
-
 ## Next Steps
 
-- Review [roles documentation](roles/index.md) for detailed information on each component
-- Understand [configuration options](configuration.md) for customization
-- Study [architecture patterns](architecture.md) for design considerations
-- Join the pgEdge community for support and discussion
+- Review [roles documentation](roles/index.md) for detailed information on each component.
+- Understand [configuration options](configuration.md) for customization.
+- Study [architecture patterns](architecture.md) for design considerations.
+- Consult the [troubleshooting guide](troubleshooting.md) for solutions to common issues.
+- Join the pgEdge community for support and discussion.
 
 ## Additional Resources
 

@@ -1,6 +1,6 @@
 # Cluster Configuration
 
-The collection uses cluster-wide configuration variables across multiple roles for various purposes.
+The collection uses cluster-wide configuration variables across multiple roles.
 
 ## Basic Operation
 

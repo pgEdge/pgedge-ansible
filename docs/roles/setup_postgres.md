@@ -6,15 +6,15 @@ The `setup_postgres` role initializes and configures Postgres instances for pgEd
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
-- Initializes the Postgres data directory if necessary.
-- Generates SSL certificates for encrypted connections.
-- Configures Postgres for logical replication and Spock.
-- Sets up `pg_hba.conf` for authentication.
-- Creates database users (admin, replication, pgedge).
-- Creates and configures databases.
-- Installs Spock and Snowflake extensions.
+- initializes the Postgres data directory if necessary.
+- generates SSL certificates for encrypted connections.
+- configures Postgres for logical replication and Spock.
+- sets up `pg_hba.conf` for authentication.
+- creates database users (admin, replication, pgedge).
+- creates and configures databases.
+- installs Spock and Snowflake extensions.
 
 ## Role Dependencies
 
@@ -78,45 +78,49 @@ When `is_ha_cluster: false`:
 
 #### 2. SSL Certificate Generation
 
-- Generates self-signed SSL certificate and private key
-- Stores in `{{ pg_data }}/server.crt` and `{{ pg_data }}/server.key`
-- Sets secure permissions (600 on key, 644 on certificate)
-- Configures Postgres to use SSL certificates
+The role performs the following SSL certificate tasks:
+
+- generates a self-signed SSL certificate and private key.
+- stores files in `{{ pg_data }}/server.crt` and `{{ pg_data }}/server.key`.
+- sets secure permissions (600 on key, 644 on certificate).
+- configures Postgres to use SSL certificates.
 
 #### 3. Postgres Configuration
 
-Configures Postgres with the following settings:
+The role configures Postgres with the following settings:
 
-* Sets the port to `pg_port`
-* Will listen to all available IPV4 addresses
-* Enables archive mode for later configuration of archive command
-* Increases replication slots and WAL senders to 16
-* Enables hot standby feedback to avoid query cancellation on replicas
-* Enables commit timestamps for Spock conflict resolution
-* Adds spock, snowflake, and `pg_stat_statements` to preload libraries
-* Sets Spock conflict resolution to `last_update_wins`
-* Enables Spock DDL replication
-* Sets the default Spock exception behavior to discard the current transaction
-* Configures Spock to automatically add new tables to replication sets
-* Sets the Snowflake zone to the current server zone
+* sets the port to `pg_port`.
+* will listen to all available IPV4 addresses.
+* enables archive mode for later configuration of archive command.
+* increases replication slots and WAL senders to 16.
+* enables hot standby feedback to avoid query cancellation on replicas.
+* enables commit timestamps for Spock conflict resolution.
+* adds spock, snowflake, and `pg_stat_statements` to preload libraries.
+* sets Spock conflict resolution to `last_update_wins`.
+* enables Spock DDL replication.
+* sets the default Spock exception behavior to discard the current transaction.
+* configures Spock to automatically add new tables to replication sets.
+* sets the Snowflake zone to the current server zone.
 
 !!! note "Shared Preload Libraries"
     The role modifies the `shared_preload_libraries` parameter. If this is a pre-existing instance, you must restart Postgres for changes to this setting to take effect.
 
 #### 4. pg_hba.conf Configuration
 
-Sets up authentication rules:
+The role sets up authentication rules:
 
-- Local peer access for `postgres` user
-- Localhost connections via SCRAM-SHA-256
-- Network access for `pgedge_user` and `db_user` from all cluster nodes
-- Optional custom rules via `custom_hba_rules` variable
+- local peer access for the `postgres` user.
+- localhost connections via SCRAM-SHA-256.
+- network access for `pgedge_user` and `db_user` from all cluster nodes.
+- optional custom rules via the `custom_hba_rules` variable.
 
 #### 5. Service Startup
 
-- Starts Postgres service
-- Enables service for automatic startup
-- Waits for service to be ready
+The role performs the following service startup tasks:
+
+- starts the Postgres service.
+- enables the service for automatic startup.
+- waits for the service to be ready.
 
 #### 6. User Creation
 
@@ -127,9 +131,11 @@ Creates database users:
 
 #### 7. Database and Extension Setup
 
-- Creates all databases specified in `db_names`
-- Installs Spock extension in all databases
-- Installs Snowflake extension in all databases
+The role performs the following database setup tasks:
+
+- creates all databases specified in `db_names`.
+- installs the Spock extension in all databases.
+- installs the Snowflake extension in all databases.
 
 ### High Availability Postgres Setup
 
@@ -139,11 +145,11 @@ Performs all standalone setup tasks plus:
 
 #### 1. Service Management
 
-These steps only occur on the primary node:
+These steps only occur on the primary node, where the role:
 
-- Stops the Postgres service
-- Disables automatic startup (Patroni manages the service)
-- Restarts Postgres temporarily for initial configuration
+- stops the Postgres service.
+- disables automatic startup (Patroni manages the service).
+- restarts Postgres temporarily for initial configuration.
 
 !!! note "Postgres Service Management"
     If the Patroni service is running, this role assumes the bootstrapping process has already been executed, and it will not be repeated. This means Postgres will not be stopped.
@@ -279,7 +285,7 @@ These steps only occur on replica nodes:
 
 ## Idempotency
 
-This role is designed for idempotency:
+This role is idempotent and safe to re-run.
 
 - The Postgres data directory is only initialized if it is missing.
 - Existing SSL certificates are not overwritten.
@@ -288,162 +294,12 @@ This role is designed for idempotency:
 
 However, re-running may update:
 
-- Configuration blocks in `postgresql.conf`
-- `pg_hba.conf` rules
-- User passwords if changed
-- Service state
-
-## Troubleshooting
-
-### initdb Fails on RHEL
-
-**Symptom:** `postgresql-{{ pg_version }}-setup initdb` command fails
-
-**Solution:**
-
-- Verify Postgres packages are installed
-- Check data directory permissions:
-
-```bash
-ls -la /var/lib/pgsql/17
-```
-
-- Manually initialize:
-
-```bash
-sudo /usr/pgsql-17/bin/postgresql-17-setup initdb
-```
-
-### SSL Certificate Generation Fails
-
-**Symptom:** Cannot create SSL certificates
-
-**Solution:**
-
-- Verify OpenSSL is installed:
-
-```bash
-openssl version
-```
-
-- Check data directory permissions
-- Manually generate certificates:
-
-```bash
-sudo -u postgres openssl req -new -x509 -days 365 -nodes \
-  -text -out /var/lib/pgsql/17/data/server.crt \
-  -keyout /var/lib/pgsql/17/data/server.key \
-  -subj "/CN=$(hostname)"
-```
-
-### Service Won't Start
-
-**Symptom:** Postgres service fails to start
-
-**Solution:**
-
-- Check Postgres logs:
-
-```bash
-# Systemd
-sudo journalctl -u postgresql-17 -f --no-pager
-
-# Debian
-sudo tail -f /var/log/postgresql/postgresql-17-main.log
-
-# RHEL
-sudo tail -f /var/lib/pgsql/17/data/log/postgresql-*.log
-```
-
-- Verify configuration syntax:
-
-```bash
-sudo -u postgres /usr/pgsql-17/bin/postgres -D /var/lib/pgsql/17/data -C config_file
-```
-
-- Check for port conflicts:
-
-```bash
-netstat -tnlp | grep 5432
-```
-
-### Extension Installation Fails
-
-**Symptom:** Spock or Snowflake extension fails to install
-
-**Solution:**
-
-- Verify extensions are included in pgEdge packages:
-
-```bash
-# Check for extension files
-ls -la /usr/pgsql-17/share/extension/spock*
-ls -la /usr/pgsql-17/share/extension/snowflake*
-```
-
-- Check `shared_preload_libraries` is set correctly
-- Restart Postgres after configuration changes
-- Manually test extension creation:
-
-```bash
-sudo -u postgres psql -c "CREATE EXTENSION spock CASCADE;"
-```
-
-### Connection Refused
-
-**Symptom:** Cannot connect to Postgres after setup
-
-**Solution:**
-
-- Verify Postgres is listening on correct port:
-
-```bash
-sudo netstat -tnlp | grep postgres
-```
-
-- Check `listen_addresses` is set to '0.0.0.0'
-- Verify firewall allows connections:
-
-```bash
-sudo firewall-cmd --list-all  # RHEL
-sudo ufw status               # Debian
-```
-
-- Check `pg_hba.conf` for appropriate rules:
-
-```bash
-sudo -u postgres cat /var/lib/pgsql/17/data/pg_hba.conf
-```
-
-### User Creation Fails
-
-**Symptom:** Database user creation fails
-
-**Solution:**
-
-- Verify Postgres is running
-- Check connection via Unix socket:
-
-```bash
-sudo -u postgres psql -c "SELECT version();"
-```
-
-- Verify `python3-psycopg2` is installed
-- Check for existing users:
-
-```bash
-sudo -u postgres psql -c "\du"
-```
+- configuration blocks in `postgresql.conf`.
+- `pg_hba.conf` rules.
+- user passwords if they are changed.
+- state of the Postgres service.
 
 ## Notes
 
 !!! tip "Configuration Management"
     Postgres configuration is managed via the Ansible `blockinfile` module. Manual changes outside the managed block are preserved.
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - Complete variable documentation
-- [role_config](role_config.md) - Configuration variables reference
-- [install_pgedge](install_pgedge.md) - Required prerequisite for Postgres installation
-- [setup_pgedge](setup_pgedge.md) - Configures Spock replication
-- [setup_patroni](setup_patroni.md) - Configures HA cluster management

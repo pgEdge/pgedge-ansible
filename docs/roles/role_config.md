@@ -6,7 +6,7 @@ The `role_config` role is the foundational configuration role for the entire pgE
 
 ## Purpose
 
-This role performs the following tasks:
+The role performs the following tasks:
 
 - Defines default values for all configurable parameters.
 - Computes derived variables based on user configuration.
@@ -86,7 +86,3 @@ pgedge:
 
 !!! info "Zone-Based Filtering"
     Other roles heavily use the `nodes_in_zone`, `proxies_in_zone`, and `backups_in_zone` variables to determine which hosts to interact with during configuration.
-
-## See Also
-
-- [Configuration Reference](../configuration.md) - Complete variable documentation
