@@ -6,6 +6,10 @@ This page provides a complete reference for configuring your pgEdge cluster depl
 
 The pgEdge Ansible Collection provides the following methods for managing configuration:
 
+- Inventory files: Define your hosts and host groups
+- Group variables: Set variables for all hosts in a group
+-  Host variables: Set variables for individual hosts
+-  Role defaults: Default values defined in each role
 1. Inventory files: Define your hosts and host groups
 2. Group variables: Set variables for all hosts in a group
 3. Host variables: Set variables for individual hosts
