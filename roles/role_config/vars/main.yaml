@@ -1,6 +1,6 @@
 ---
 
-cluster_path: "{{ ansible_facts['user_dir'] }}/pgedge"
+cluster_path: "{{ install_base }}/pgedge"
 pg_path: "{{ cluster_path }}/pg{{ pg_version }}"
 pg_data: "{{ cluster_path }}/data/pg{{ pg_version }}"
 

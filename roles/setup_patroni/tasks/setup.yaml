@@ -22,5 +22,5 @@
   shell: |
     cd {{ patroni_bin_dir }}
     ./patronictl -c {{ patroni_config_dir }}/patroni.yaml \
-                 restart pgedge {{ ansible_hostname }} \
+                 restart -r any pgedge {{ ansible_hostname }} \
                  --force

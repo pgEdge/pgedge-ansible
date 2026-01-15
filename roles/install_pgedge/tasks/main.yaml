@@ -1,5 +1,13 @@
 ---
 
+- name: Make sure the install base location is writable by the install user
+  file:
+    path: "{{ cluster_path }}"
+    state: directory
+    mode: "0700"
+    owner: "{{ ansible_user_id }}"
+  become: true
+
 - name: Check for pgEdge software
   stat:
     path: "{{ cluster_path }}/pgedge"
