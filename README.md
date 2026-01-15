@@ -42,6 +42,7 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | cluster_name | demo | Canonical name for the cluster, primarily used for descriptive items and generated values. |
 | repo_name | download | Can be one of `download`, `upstream`, or `devel`. This will control which pgEdge repository is used for software installation. |
 | repo_prefix | None | If set, makes it possible to install specific custom or automated builds based on repository prefix. Consult a member of pgEdge staff for valid setting here. |
+| install_base | Ansible user home | Where the CLI should install the pgedge CLI package and related utilities. This will also be where Postgres binaries, data directory, logs, and other resources will be stored. This should be the location of the primary data mount for this server. |
 | zone | 1 | Zone or region for a node. This helps organize HA clusters. It also doubles as the snowflake ID of a node. For non-HA clusters, just use one node per zone. |
 | pg_version | 17 | Postgres version to install. Default to the most recent version. |
 | spock_version | 5.0.0 | Version of the Spock extension to install. |

@@ -13,3 +13,5 @@ db_password: secret
 
 is_ha_cluster: false
 exception_behaviour: "transdiscard"
+
+install_base: "{{ ansible_user_dir }}"
