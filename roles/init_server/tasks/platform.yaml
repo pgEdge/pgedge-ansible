@@ -15,5 +15,5 @@
 - name: Reload systemd login service for new IPC setting
   systemd:
     name: systemd-logind
-    state: reloaded
+    state: restarted
   become: true

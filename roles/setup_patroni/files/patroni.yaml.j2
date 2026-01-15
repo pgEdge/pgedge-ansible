@@ -111,7 +111,7 @@ postgresql:
 {% set host_ip = backup_host | ansible.utils.ipaddr('address') or lookup('dig', backup_host) %}
   - host postgres,replication {{ backup_user }} {{ host_ip }}/32 scram-sha-256
 {% endif %}
-{% for host in groups['backup'] %}
+{% for host in groups['backup'] | default([]) %}
 {%   set host_ip = hostvars[host].ansible_default_ipv4.address %}
   - host postgres,replication {{ backup_user }} {{ host_ip }}/32 scram-sha-256
 {% endfor %}

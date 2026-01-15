@@ -12,8 +12,9 @@
     state: stopped
     enabled: false
   when:
-  - cluster_name != main
+  - cluster_name != 'main'
   - pg_port == 5432
+  become: true
 
 # If the user supplied a cluster name other than "main", which is the Debian
 # default, create a new cluster rather than risk breaking an existing one.
@@ -22,9 +23,10 @@
   command:
     argv:
     - pg_createcluster
+    - -d
+    - "{{ pg_data }}"
     - "{{ pg_version }}"
     - "{{ cluster_name }}"
-    - "-d {{ pg_data }}"
   args:
     creates: "{{ pg_data }}/PG_VERSION"
   become: true
