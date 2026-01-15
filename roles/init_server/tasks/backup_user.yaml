@@ -1,0 +1,24 @@
+---
+
+- name: Ensure the database repo OS group exists on the server
+  group:
+    name: "{{ backup_repo_user }}"
+  become: true
+  when: backup_repo_user != ansible_user_id
+
+- name: Ensure the database repo OS user exists on the server
+  user:
+    name: "{{ backup_repo_user }}"
+    group: "{{ backup_repo_user }}"
+    comment: pgEdge PgBackRest Repo User
+    home: "{{ backup_repo_path }}"
+    shell: /bin/bash
+  become: true
+  when: backup_repo_user != ansible_user_id
+
+# With the user created, Set up the SSH keys for it.
+
+- include_tasks: ssh.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"
+    os_home: "{{ backup_repo_path }}"

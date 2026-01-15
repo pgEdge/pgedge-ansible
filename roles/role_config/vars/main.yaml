@@ -1,14 +1,22 @@
 ---
 
-cluster_path: "{{ ansible_facts['user_dir'] }}/pgedge"
-pg_path: "{{ cluster_path }}/pg{{ pg_version }}"
-pg_data: "{{ cluster_path }}/data/pg{{ pg_version }}"
+nodes_in_zone: >-
+  {{ groups['pgedge'] |
+  map('extract', hostvars) |
+  selectattr('zone', 'eq', zone) |
+  map(attribute='inventory_hostname') }}
 
-nodes_in_zone: |
-    {{ groups['pgedge'] |
-    map('extract', hostvars) |
-    selectattr('zone', 'eq', zone) |
-    map(attribute='inventory_hostname') }}
+proxies_in_zone: >-
+  {{ groups['haproxy'] | default([]) |
+  map('extract', hostvars) |
+  selectattr('zone', 'eq', zone) |
+  map(attribute='inventory_hostname') | list }}
+
+backups_in_zone: >-
+  {{ groups['backup'] | default([]) |
+  map('extract', hostvars) |
+  selectattr('zone', 'eq', zone) |
+  map(attribute='inventory_hostname') | list }}
 
 first_node_in_zone: "{{ nodes_in_zone | first }}"
 
@@ -16,3 +24,17 @@ spock_exception_behaviour: >-
   {{ exception_behaviour if exception_behaviour in (
        'discard', 'transdiscard', 'sub_disable'
      ) else 'transdiscard' }}
+
+backup_type: "{{ backup_repo_type if backup_repo_type in ('ssh', 's3') else 'ssh' }}"
+
+pg_service_name: >-
+  {{ 
+    'pgedge-postgres-' + pg_version|string if ansible_facts.os_family == 'RedHat' else
+    'postgresql@' + pg_version|string + '-' + cluster_name if ansible_facts.os_family == 'Debian'
+  }}
+
+pg_config_dir: >-
+  {{ 
+    '/etc/postgresql/' + pg_version|string + '/' + cluster_name if ansible_facts.os_family == 'Debian'
+    else pg_data
+  }}

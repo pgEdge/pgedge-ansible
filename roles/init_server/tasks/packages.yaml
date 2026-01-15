@@ -3,9 +3,12 @@
 - name: Include all the packages which should be installed everywhere
   package:
     name:
+    - acl
+    - jq
     - nano
     - less
     - rsync
+    - python3-cryptography # Needed for Ansible openssl commands
     - "{{ 'kernel-modules-extra' if ansible_facts.os_family == 'RedHat' else 'systemd-coredump' }}"
     state: present
     lock_timeout: 300

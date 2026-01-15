@@ -1,42 +1,53 @@
 ---
 
 - name: Set up Spock to manage node metadata
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge spock node-create edge{{ zone }}  \
-      'host={{ inventory_hostname }} user={{ ansible_user_id }} dbname={{ item }}' \
-      {{ item }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: |-
+      DO $$
+      BEGIN
+        PERFORM FROM spock.node WHERE node_name = %(node_name)s;
+        IF NOT FOUND THEN
+          PERFORM spock.node_create (
+            node_name := %(node_name)s, dsn := %(dsn)s
+          );
+        END IF;
+      END; $$ LANGUAGE plpgsql;
+    named_args:
+      node_name: "edge{{ zone }}"
+      dsn: "host={{ inventory_hostname }} user={{ pgedge_user }} dbname={{ item }} port={{ pg_port }}"
   loop: "{{ db_names }}"
-
-- name: Set Spock to handle transaction exceptions
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge db guc-set spock.exception_behaviour {{ spock_exception_behaviour }}
-
-- name: Set the snowflake ID for this spock node
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge db guc-set snowflake.node {{ zone }}
-
-- name: Set Spock to copy DDL
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge db guc-set spock.enable_ddl_replication on
-    ./pgedge db guc-set spock.allow_ddl_from_functions on
-    ./pgedge db guc-set spock.include_ddl_repset on
+  become: true
+  become_user: postgres
 
 # Loop through every other known pgEdge node and subscribe to it.
 # This is technically a nested loop, since we need to subscribe to each DB on
 # every node.
 
 - name: Subscribe to other pgEdge nodes and databases in the cluster, by zone
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge spock sub-create sub_n{{ zone }}_n{{ remote_zone }}  \
-      'host={{ item.0 }} user={{ ansible_user_id }} dbname={{ item.1 }}' \
-      {{ item.1 }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item.1 }}"
+    login_unix_socket: /var/run/postgresql
+    query: |-
+      DO $$
+      BEGIN
+        PERFORM FROM spock.subscription WHERE sub_name = %(sub_name)s;
+        IF NOT FOUND THEN
+          PERFORM spock.sub_create (
+            subscription_name := %(sub_name)s, provider_dsn := %(dsn)s
+          );
+        END IF;
+      END; $$ LANGUAGE plpgsql;
+    named_args:
+      sub_name: "sub_n{{ zone }}_n{{ remote_zone }}"
+      dsn: "host={{ item.0 }} user={{ pgedge_user }} dbname={{ item.1 }} port={{ pg_port }}"
   vars:
     remote_zone: "{{ hostvars[item.0]['zone'] }}"
   loop: >-
     {{ groups['pgedge'] | reject('equalto', inventory_hostname) | 
     product(db_names) | list }}
+  become: true
+  become_user: postgres

@@ -36,6 +36,7 @@
   - pgedge.platform
 
   roles:
+  - install_repos
   - install_pgedge
   - setup_postgres
   - install_etcd
@@ -77,6 +78,6 @@
   - pgedge.platform
 
   roles:
-  - install_pgedge
+  - install_repos
   - install_backrest
   - setup_backrest

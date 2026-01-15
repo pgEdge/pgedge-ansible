@@ -1,0 +1,28 @@
+---
+
+# Download the RHEL EPEL package from external resource.
+
+- name: Include EPEL package download task
+  include_tasks: rhel_epel_dl.yaml
+
+# Older RHEL systems have an excessively long command to enable the CRB:
+
+- name: Enable CRB on RHEL 8 and 9 Linux systems
+  community.general.dnf_config_manager:
+    name: "codeready-builder-for-rhel-{{ os_version }}-rhui-rpms"
+    state: enabled
+  vars:
+    os_version: "{{ ansible_facts.distribution_major_version }}"
+  become: true
+  when:
+  - ansible_facts.distribution_major_version in (8, 9)
+
+# Just to be different, RHEL 10 has a completely different CRB command:
+
+- name: Enable CRB on RHEL 10 Linux systems
+  community.general.rhsm_repository:
+    name: codeready-builder-for-rhel-10-x86_64-rpms
+    state: enabled
+  become: true
+  when:
+  - ansible_facts.distribution_major_version == 10

@@ -1,28 +1,72 @@
 ---
 
+# Try to connect to connect to all proxy nodes to ensure they're all
+# working properly, as our subscriptions will route through them.
+
+- name: Verify this host can contact Postgres through known proxies
+  community.postgresql.postgresql_ping:
+    login_port: "{{ proxy_port }}"
+    login_db: postgres
+    login_host: "{{ item }}"
+    login_user: "{{ pgedge_user }}"
+  register: result
+  loop: >-
+    {{ ( (hostvars.values() | map(attribute = 'proxy_node', default = '')) +
+       (groups['haproxy'] | default([])) ) | select() }}
+  retries: 5
+  delay: 10
+  until: result.is_available
+  become: true
+  become_user: postgres
+
+# Now that proxies are verified, it's safe to start wiring the cluster
+# together, starting with establishing our own node.
+
 - name: Set up Spock to manage node metadata
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge spock node-create edge{{ zone }}  \
-      'host={{ subscribe_target }} user={{ ansible_user_id }} dbname={{ item }}' \
-      {{ item }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: |-
+      DO $$
+      BEGIN
+        PERFORM FROM spock.node WHERE node_name = %(node_name)s;
+        IF NOT FOUND THEN
+          PERFORM spock.node_create (
+            node_name := %(node_name)s, dsn := %(dsn)s
+          );
+        END IF;
+      END; $$ LANGUAGE plpgsql;
+    named_args:
+      node_name: "edge{{ zone }}"
+      dsn: "host={{ subscribe_target }} user={{ pgedge_user }} dbname={{ item }} port={{ proxy_port }}"
   loop: "{{ db_names }}"
+  become: true
+  become_user: postgres
 
 # Loop through every _other_ zone than our own and subscribe in this order:
 #
 # - The user-specified proxy_node for the host, if present.
 # - The first node in the `haproxy` group for this zone, if any.
 # - The first pgedge node in the zone itself, assuming no proxies match.
-#
-# We retry a few times in case the proxy layer is still negotiating checks by
-# the time we reach this.
 
 - name: Subscribe to any other pgEdge nodes in the cluster, by zone
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge spock sub-create sub_n{{ zone }}_n{{ item.0 }}  \
-      'host={{ conn_target }} user={{ ansible_user_id }} dbname={{ item.1 }}' \
-      {{ item.1 }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item.1 }}"
+    login_unix_socket: /var/run/postgresql
+    query: |
+      DO $$
+      BEGIN
+        PERFORM FROM spock.subscription WHERE sub_name = %(sub_name)s;
+        IF NOT FOUND THEN
+          PERFORM spock.sub_create(subscription_name := %(sub_name)s, provider_dsn := %(dsn)s);
+        END IF;
+      END;
+      $$ LANGUAGE plpgsql;
+    named_args:
+      sub_name: "sub_n{{ zone }}_n{{ item.0 }}"
+      dsn: "host={{ conn_target }} user={{ pgedge_user }} dbname={{ item.1 }} port={{ proxy_port }}"
   vars:
     remote_first_node: >-
       {{ groups['pgedge'] |
@@ -40,8 +84,22 @@
       {{ remote_proxy_node if remote_proxy_node > ''
          else remote_proxies | first if remote_proxies
          else remote_first_node }}
-  retries: 5
-  delay: 10
-  register: subscription
-  until: subscription.rc == 0
   loop: "{{ zone_list | reject('equalto', zone) | product(db_names) | list }}"
+  become: true
+  become_user: postgres
+
+# This may not be strictly necessary, but it's good practice to wait until the
+# subscriptions are synced before continuing. If this is preventing cluster
+# setup from completing, it will be moved to an optional validation step.
+
+- name: Wait for subscriptions to sync
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: |
+      SELECT spock.sub_wait_for_sync(subscription_name := sub_name)
+        FROM spock.subscription;
+  loop: "{{ db_names }}"
+  become: true
+  become_user: postgres

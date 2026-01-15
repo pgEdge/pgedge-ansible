@@ -1,0 +1,16 @@
+---
+
+- name: Wait until Patroni cluster is established
+  shell: |-
+    {{ ctl }} list pgedge -f json \
+        | jq -r '.[] | select(.Host == "{{ first_node_in_zone }}") | .State'
+  args:
+    chdir: "{{ patroni_bin_dir }}"
+  vars:
+    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
+  register: patroni_status
+  retries: 30
+  delay: 10
+  until: patroni_status.stdout  == 'running'
+  become: true
+  become_user: postgres

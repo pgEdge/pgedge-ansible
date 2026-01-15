@@ -1,0 +1,43 @@
+---
+
+- name: Create an SSL private key for the server
+  community.crypto.openssl_privatekey:
+    path: "{{ pg_data }}/server.key"
+    type: RSA
+    size: 4096
+    mode: "0600"
+  become: true
+  become_user: postgres
+
+# Create the CSR file to avoid rerunning by using openssl_csr_pipe.
+
+- name: Create a Certificate Signing Request for the server
+  community.crypto.openssl_csr:
+    path: "{{ pg_data }}/server.csr"
+    privatekey_path: "{{ pg_data }}/server.key"
+    common_name: localhost
+    country_name: US
+    locality_name: Alexandria
+    organization_name: self
+    organizational_unit_name: signed
+    subject:
+      ST: Virginia
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - serverAuth
+    mode: "0600"
+  become: true
+  become_user: postgres
+
+- name: Create an X509 SSL cert for the server
+  community.crypto.x509_certificate:
+    path: "{{ pg_data }}/server.crt"
+    privatekey_path: "{{ pg_data }}/server.key"
+    csr_path: "{{ pg_data }}/server.csr"
+    provider: selfsigned
+    selfsigned_not_after: +365d
+    mode: "0600"
+  become: true
+  become_user: postgres

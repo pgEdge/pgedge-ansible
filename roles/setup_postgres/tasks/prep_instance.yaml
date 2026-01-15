@@ -1,0 +1,124 @@
+---
+
+# The pg_data location may not exist yet, or it may not be owned by the 
+# postgres user, so make sure that's the case before bootstrapping Postgres.
+
+- name: Ensure Postgres data directory is owned by postgres user
+  file:
+    path: "{{ pg_data }}"
+    state: directory
+    owner: postgres
+    mode: "0700"
+  become: true
+
+# Debian and RHEL systems have _vastly_ different bootstrap processes. They
+# are separated here for simplicity.
+
+- name: Include Debian Postgres setup steps
+  include_tasks: debian_pg_setup.yaml
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Include RedHat Postgres setup steps
+  include_tasks: rhel_pg_setup.yaml
+  when: ansible_facts.os_family == 'RedHat'
+
+# With the PGDATA folder established, it's safe to generate server certificates
+# for SSL needs.
+
+- include_tasks: certificate.yaml
+
+# Override several Postgres configuration parameters so it all works better
+# with pgEdge Distributed. This is just the initial bootstrap, so these can
+# all be set to something else later; this is just for cluster setup.
+
+- name: Configure Postgres for pgEdge compatibility
+  blockinfile:
+    path: "{{ pg_config_dir }}/postgresql.conf"
+    block: |
+      port = '{{ pg_port }}'
+      ssl_cert_file = '{{ pg_data }}/server.crt'
+      ssl_key_file = '{{ pg_data }}/server.key'
+      listen_addresses = '0.0.0.0'
+      archive_mode = 'on'
+      archive_command = '/bin/true'
+      TimeZone = 'UTC'
+      wal_level = 'logical'
+      max_worker_processes = 12
+      max_replication_slots = 16
+      max_wal_senders = 16
+      wal_level = 'logical'
+      hot_standby_feedback = 'on'
+      track_commit_timestamp = 'on'
+      shared_preload_libraries = 'spock, snowflake, pg_stat_statements'
+      spock.conflict_resolution = 'last_update_wins'
+      spock.enable_ddl_replication = 'on'
+      spock.allow_ddl_from_functions = 'on'
+      spock.include_ddl_repset = 'on'
+      spock.exception_behaviour = '{{ spock_exception_behaviour }}'
+      spock.save_resolutions = 'on'
+      snowflake.zone = {{ zone }}
+    state: present
+    marker: "# {mark} pgEdge ANSIBLE MANAGED BLOCK"
+    insertafter: EOF
+  become: true
+  become_user: postgres
+
+# Ensure all necessary pg_hba.conf lines are listed for:
+#
+# - Local postgres peer user for automated administration.
+# - The db_user superuser that will administer the cluster.
+# - The pgedge user for node-to-node communication.
+#
+# Otherwise, follow the principal of least access and only name necessary
+# database and user combinations.
+#
+# Do this with one line per rule for easier editing later.
+
+- name: Ensure local peer access for the postgres user
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: local
+    users: postgres
+    databases: all
+    method: peer
+    create: true
+    overwrite: true
+  become: true
+  become_user: postgres
+
+- name: Allow localhost connections from any user
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: host
+    users: all
+    databases: all
+    method: scram-sha-256
+    source: 127.0.0.1/32
+  become: true
+  become_user: postgres
+
+- name: Add access for the pgedge communication and admin/DB user
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: host
+    users: "{{ pgedge_user + ',' + db_user }}"
+    databases: "{{ (db_names + ['postgres']) | join(',') }}"
+    method: scram-sha-256
+    source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
+  loop: "{{ groups['pgedge'] }}"
+  become: true
+  become_user: postgres
+
+- name: Add customized user / host access
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_data }}/pg_hba.conf"
+    contype: "{{ item.contype | default('host') }}"
+    users: "{{ item.users | default('postgres') }}"
+    databases: "{{ item.databases | default('postgres') }}"
+    method: "{{ item.method | default('scram-sha-256') }}"
+    source: "{{ item.source | default('127.0.0.1/32') }}"
+  loop: "{{ custom_hba_rules }}"
+  become: true
+  become_user: postgres
+  when: 
+  - custom_hba_rules | length > 0

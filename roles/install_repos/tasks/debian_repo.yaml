@@ -1,0 +1,29 @@
+---
+
+- name: Install Debian-family prerequisite packages
+  apt:
+    name:
+    - curl
+    - gnupg2
+    - lsb-release
+    state: latest
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Install the pgEdge repo package
+  apt:
+    deb: 'https://apt.pgedge.com/repodeb/pgedge-release_latest_all.deb'
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Update APT cache to include pgEdge packages
+  apt:
+    update_cache: true
+  become: true

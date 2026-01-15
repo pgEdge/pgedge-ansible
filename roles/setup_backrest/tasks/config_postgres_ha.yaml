@@ -1,29 +1,34 @@
 ---
 
 # Patch the Patroni configuration to include required archive and restore
-# commands for PgBackRest. We use a patch apply because patronictl has a bug
-# where its edit-config arguents will not allow spaces even in quoted values.
+# commands for PgBackRest.
 
 - name: Configure Patroni to integrate with PgBackRest
   shell: |
-    cat<<EOF>>patroni.patch
+    cat<<EOF|{{ ctl }} edit-config --force --apply - pgedge
     postgresql:
       parameters:
         hot_standby: true
-        archive_command: "{{ cmd }} {{ push_args }}"
-        restore_command: "{{ cmd }} {{ pull_args }}"
+        archive_command: "pgbackrest {{ push_args }}"
+        restore_command: "pgbackrest {{ pull_args }}"
     EOF
-    patronictl -c /etc/patroni/patroni.yaml edit-config --force \
-               --apply patroni.patch pgedge
-    rm patroni.patch
+  args:
+    chdir: "{{ patroni_bin_dir }}"
   vars:
+    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
     stanza: "pgedge-{{ cluster_name }}-{{ zone }}"
-    cmd: "LD_LIBRARY_PATH={{ pg_path }}/lib {{ cluster_path }}/backrest/bin/pgbackrest"
     push_args: "--stanza={{ stanza }} archive-push %p"
     pull_args: "--stanza={{ stanza }} archive-get %f %p"
+  become: true
+  become_user: postgres
   when: inventory_hostname == first_node_in_zone
 
 - name: Reload the Postgres service to incorporate changes
   shell: |
-    patronictl -c /etc/patroni/patroni.yaml reload pgedge --force
-  when: inventory_hostname == first_node_in_zone
+    {{ ctl }} reload -r any --force pgedge {{ ansible_hostname }}
+  args:
+    chdir: "{{ patroni_bin_dir }}"
+  vars:
+    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
+  become: true
+  become_user: postgres

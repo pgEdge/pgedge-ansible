@@ -1,15 +1,61 @@
 ---
 
 cluster_name: demo
-repo_name: download
+repo_name: release
 repo_prefix: ""
 zone: 1
 pg_version: 17
-spock_version: "5.0.0"
+spock_version: "5.0.4"
+
 db_names:
 - demo
 db_user: admin
 db_password: secret
 
+pgedge_user: pgedge
+pgedge_password: secret
+
+replication_user: replicator
+replication_password: secret
+
+custom_hba_rules: []
+
 is_ha_cluster: false
 exception_behaviour: "transdiscard"
+
+proxy_port: 5432
+proxy_node: ''
+
+pg_port: 5432
+
+pg_home: >-
+  {{ 
+    "/var/lib/pgsql" if ansible_facts.os_family == "RedHat" 
+    else
+    "/var/lib/postgresql" if ansible_facts.os_family == 'Debian'
+  }}
+
+pg_path: >-
+  {{
+    "/usr/pgsql-" + pg_version|string if ansible_facts.os_family == "RedHat"
+     else
+    "/usr/lib/postgresql/" + pg_version|string if ansible_facts.os_family == 'Debian'
+  }}
+
+pg_data: >-
+  {{ 
+    pg_home + "/" + pg_version|string + "/data" if ansible_facts.os_family == "RedHat"
+    else
+    pg_home + "/" + pg_version|string + "/main" if ansible_facts.os_family == 'Debian' 
+  }}
+
+backup_host: ""
+backup_user: backrest
+backup_password: secret
+
+backup_repo_type: ssh
+backup_repo_user: "{{ ansible_user_id }}"
+backup_repo_path: "/home/{{ ansible_user_id }}"
+
+patroni_bin_dir: "{{ pg_home }}/.local/bin"
+patroni_config_dir: "/etc/patroni"

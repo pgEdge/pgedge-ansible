@@ -1,0 +1,19 @@
+---
+
+# The RemoveIPC setting is probably the most idiotic systemd feature to date.
+# By simply logging out of a shell, it will deallocate any shared memory used
+# by that user, as if they couldn't possibly have launched a daemon of some
+# kind. Even worse, it's enabled by DEFAULT on Debian systems. It could be
+# set anywhere, so just burn it with fire.
+
+- name: Ensure RemoveIPC setting is disabled system-wide
+  lineinfile:
+    path: /etc/systemd/logind.conf
+    line: RemoveIPC=no
+  become: true
+
+- name: Reload systemd login service for new IPC setting
+  systemd:
+    name: systemd-logind
+    state: restarted
+  become: true

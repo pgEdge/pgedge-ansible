@@ -2,3 +2,4 @@
 
 debug_pgedge: true
 manage_host_file: true
+disable_selinux: true

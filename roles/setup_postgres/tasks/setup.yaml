@@ -1,29 +1,19 @@
 ---
 
-# Bootstrap the installation with the first DB name in the list. This list is
-# usually just one item anyway.
+- name: Ensure Postgres data directory is initialized and properly configured
+  include_tasks: prep_instance.yaml
 
-- name: Install and set up Postgres using pgedge CLI
-  shell: |
-    cd {{ cluster_path }}
-    ./pgedge setup -d {{ db_names | first }} \
-        -U {{ db_user }} -P {{ db_password }} \
-        --pg_ver {{ pg_version }} \
-        --spock_ver {{ spock_version }}
-  args:
-    creates: "{{ pg_path }}"
+# Start the database so we can perform additional administrative actions.
+# Make sure the service is enabled while we're at it.
 
-# Since we created the instance using the first database name, ensure each
-# remaining database exists and contains the spock and snowflake extensions.
-# Add a gratuitous database name check to avoid additional executions.
+- name: Ensure Postgres instance is started
+  service:
+    name: "{{ pg_service_name }}"
+    state: started
+    enabled: true
+  become: true
 
-- name: Bootstrap additional requested databases
-  shell: |
-    cd {{ pg_path }}/bin
-    db_check=$(./psql -qAtl | cut -d'|' -f 1 | grep {{ item }} | cat)
-    if [ "$db_check" != "{{ item }}" ]; then
-      ./createdb -O {{ db_user }} {{ item }}
-      ./psql -c "CREATE EXTENSION IF NOT EXISTS spock;" {{ item }}
-      ./psql -c "CREATE EXTENSION IF NOT EXISTS snowflake;" {{ item }}
-    fi
-  loop: "{{ db_names[1:] }}"
+# Include all other common steps for a standard Postgres node
+
+- name: Include common Postgres setup steps
+  include_tasks: common_setup.yaml

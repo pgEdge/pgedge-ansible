@@ -40,15 +40,21 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | **Parameter** | **Default** | **Description**                                     |
 |---------------|-------------|-----------------------------------------------------|
 | cluster_name | demo | Canonical name for the cluster, primarily used for descriptive items and generated values. |
-| repo_name | download | Can be one of `download`, `upstream`, or `devel`. This will control which pgEdge repository is used for software installation. |
+| repo_name | release | Can be one of `release`, `staging`, or `daily`. This will control which pgEdge repository is used for software installation. |
 | repo_prefix | None | If set, makes it possible to install specific custom or automated builds based on repository prefix. Consult a member of pgEdge staff for valid setting here. |
 | zone | 1 | Zone or region for a node. This helps organize HA clusters. It also doubles as the snowflake ID of a node. For non-HA clusters, just use one node per zone. |
 | pg_version | 17 | Postgres version to install. Default to the most recent version. |
 | spock_version | 5.0.0 | Version of the Spock extension to install. |
+| pg_port | 5432 | Port where Postgres should listen for connections. |
+| pg_path | `/usr/pgsql-${pg_version}` on RHEL, `/usr/lib/postgresql/${pg_version} on Debian | Where Postgres binary and library directories can be found. Almost all systems are based on RHEL or Debian variants. Specify for custom location. |
+| pg_data | `/var/lib/pgsql/${pg_version}/data` on RHEL, `/var/lib/postgresql/${pg_version}/main` on Debian | Data directory where Postgres should reside. Like `pg_path`, this may differ based on distribution. Specify for custom location. |
 | db_names | demo | List of database names to use for the Spock cluster. At least one database name is expected to initialize the cluster. Any missing databases will be created and owned by `db_user`. |
-| db_user | admin | Database username. Must be something other than the OS username performing the installation. Note that the CLI will create a database user named after the OS user for its own purposes as part of the installation and setup process. |
+| db_user | admin | Database username. Must be something other than the OS username performing the installation. |
 | db_password | secret | Password for the `db_user` user. |
+| pgedge_user | pgedge | Database username for the pgedge inter-node communication logical replication. |
+| pgedge_password | secret | Password for the `pgedge_user` user. |
 | is_ha_cluster | false | If true, install etcd and Patroni on all nodes in the `pgedge` group. If HAProxy nodes exist, they will reflect nodes in the same zone. Subscriptions from other pgEdge nodes will also pass through the zone HAProxy. |
+| proxy_port | 5432 | Allows specifying a different port specifically for proxied connections. This enables running HAProxy on the same node as Postgres, but on a different port. |
 | proxy_node | None | If specified in an HA cluster, will be used as the pgEdge Spock subscription target instead of the inventory node itself. Otherwise, subscriptions will target the first available HAProxy node in the same zone as the inventory node, or the inventory node if no other options are available. |
 | replication_user | replicator | This user is specifically for Patroni replication purposes. |
 | replication_password | secret | Password for the `replication_user` user. |
@@ -57,9 +63,12 @@ All of the roles are meant to operate in conjunction. They are simplified to red
 | debug_pgedge | true | When enabled, various kernel settings will be configured to retain all core files produced during a process crash. |
 | manage_host_file | true | When enabled, all hosts in the cluster will be listed in the `/etc/hosts` file of every other host. Set to false if external DNS is in use, or inventory hostnames are IP addresses. |
 | haproxy_extra_routes | See description | Parameters to list additional HAProxy routes recognized by the [Patroni REST interface](https://patroni.readthedocs.io/en/latest/rest_api.html). The key should match the type of check being performed, and sub-keys of `port` for the HAProxy listening port and `lag` for maximum allowed lag for viable routing. The `port` field must be supplied. Default: `{ replica: { port: 5433 }` |
+| backup_user | backrest | Database login user to use for backups. Only used for `ssh` mode. |
+| backup_password | secret | Password for the `backup_user` database user. Only used for `ssh` mode. |
 | backup_host | '' | Should be set to the hostname where PgBackRest backups should be transmitted. If left empty and `backup_repo_type` is ssh, will default to the first node in the `backup` node group in the same zone. |
 | backup_repo_type | ssh | The type of PgBackRest backup repository to use. Using 'ssh' means backups are stored on a dedicated backup server as defined in the `backup` host group. Using 's3' will use a remote AWS S3 bucket and requires `backup_repo_params` to be set. Other options will be added as requested. |
-| backup_repo_path | `$cluster_path/data/backrest` | Full path to storage location of PgBackRest repository. If using S3 as a repo type, set this to something simple like `/backrest`. |
+| backup_repo_user | `ansible_user_id` | When in `ssh` mode, the OS user which owns and operates the PgBackRest backup repository. |
+| backup_repo_path | `/home/backrest` | Full path to storage location of PgBackRest repository. If using S3 as a repo type, set this to something simple like `/backrest`. If this user didn't exist prior to this role, this will be set as the user's home directory. |
 | backup_repo_cipher_type | aes-256-cbc | Encryption algorithm to use for backup files stored in the PgBackRest repository. |
 | backup_repo_cipher | (random) | This should be specified and will define the encryption cipher used for backup files stored in the PgBackRest repository. If not defined, will be set to a 20-character deterministic random string based on the backup repository name. |
 | full_backup_count | 1 | Defines how many full backups to retain in the backup repository. |
@@ -80,9 +89,6 @@ Notable items are listed here:
 | **Variable**  | **Value**   | **Description**                                     |
 |---------------|-------------|-----------------------------------------------------|
 | repo_url | https://pgedge-$repo.s3.amazonaws.com/REPO | This is based on the sanitized value of the `repo` role parameter. |
-| cluster_path | `$HOME/pgedge` | In most cases, this is `/home/pgedge/pgedge`. This is the default location where the CLI will install itself. |
-| pg_path | `$cluster_path/pg${version}` | For a Postgres 17 install, this will likely be `/home/pgedge/pgedge/pg17`. |
-| pg_data | `$cluster_path/data/pg${version}` | For a Postgres 17 install, this will likely be `/home/pgedge/pgedge/data/pg17`. |
 | nodes_in_zone | Node list | Should be a list of all nodes in the `pgedge` group which are in the same zone as this node. Used in several roles for service configuration. |
 
 ## Role List
@@ -106,6 +112,7 @@ The full list of roles is as follows, in the expected order of execution:
   * Defines full and differential backup automation.
 
 ## Usage
+
 
 Files in the [sample-playbooks](./sample-playbooks) directory provide a sample inventory and playbook to illustrate how these roles should be utilized:
 

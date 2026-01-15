@@ -1,8 +1,9 @@
 ---
 
-- include_tasks: environment.yaml
 - include_tasks: packages.yaml
+
 - include_tasks: selinux.yaml
+  when: disable_selinux
 
 - include_tasks: cores.yaml
   when: debug_pgedge
@@ -10,4 +11,18 @@
 - include_tasks: hosts.yaml
   when: manage_host_file
 
-- include_tasks: ssh.yaml
+- include_tasks: platform.yaml
+
+# Only pgEdge and backup servers should need an SSH key for communication.
+# This step is done here so all keys exist for all servers before we start
+# adding them to known hosts and authorized key files.
+
+- include_tasks: postgres_user.yaml
+  when:
+  - backup_type == 'ssh'
+  - inventory_hostname in groups.pgedge
+
+- include_tasks: backup_user.yaml
+  when: 
+  - backup_type == 'ssh'
+  - inventory_hostname in groups.backup | default()

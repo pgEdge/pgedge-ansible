@@ -2,7 +2,7 @@
 
 - name: Bootstrap the repository with the PgBackRest metadata
   shell: |
-    {{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} stanza-create
+    pgbackrest {{ stanza }} stanza-create
   vars:
     stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
   environment:
@@ -14,7 +14,7 @@
 
 - name: Create the initial backup for this instance
   shell: |
-    {{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=full
+    pgbackrest {{ stanza }} backup --type=full
   vars:
     stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
   environment:

@@ -1,6 +1,7 @@
 {%- set ip_mask = (ansible_default_ipv4.address + '/' +
       ansible_default_ipv4.netmask) |
       ansible.utils.ipaddr('host/prefix') %}
+{%- set db_list = (db_names + ['postgres']) | join(',') %}
 scope: pgedge
 namespace: /db/
 name: {{ ansible_hostname }}
@@ -30,6 +31,7 @@ bootstrap:
 
       # Change any cluster-wide configuration settings here
       parameters:
+        port: {{ pg_port }}
         ssl: on
         ssl_cert_file: "{{ pg_data }}/server.crt"
         ssl_key_file: "{{ pg_data }}/server.key"
@@ -43,7 +45,7 @@ bootstrap:
         max_wal_senders: 16
         hot_standby_feedback: "on"
         track_commit_timestamp: "on"
-        shared_preload_libraries: "pg_stat_statements, snowflake, spock"
+        shared_preload_libraries: "spock, snowflake, pg_stat_statements"
         spock.enable_ddl_replication: "on"
         spock.allow_ddl_from_functions: "on"
         spock.include_ddl_repset: "on"
@@ -59,21 +61,60 @@ bootstrap:
       plugin: spock_output
 
 postgresql:
-  listen: 0.0.0.0:5432
-  connect_address: {{ inventory_hostname }}:5432
+  listen: 0.0.0.0:{{ pg_port }}
+  connect_address: {{ inventory_hostname }}:{{ pg_port }}
+  config_dir: {{ pg_config_dir }}
   data_dir: {{ pg_data }}
   bin_dir: {{ pg_path }}/bin
-  pgpass: {{ ansible_facts['user_dir'] }}/.patroni_pgpass
+  pgpass: {{ pg_home }}/.patroni_pgpass
 
   # HBA rules go here because the only other way to get them is to fully
   # bootstrap the cluster from scratch. That basically precludes adding to an
   # existing cluster.
 
   pg_hba:
-  - local all {{ ansible_user_id }} peer
-  - host replication {{ replication_user }} {{ ip_mask }} scram-sha-256
-  - host replication {{ replication_user }} 127.0.0.1/32 scram-sha-256
-  - host all all 0.0.0.0/0 scram-sha-256
+  - local all postgres peer
+  - host all all 127.0.0.1/32 scram-sha-256
+  # pgEdge Distributed Postgres node communication and admin user
+{% for host in groups['pgedge'] %}
+{%   set host_ip = hostvars[host].ansible_default_ipv4.address %}
+  - host {{ db_list }} {{ pgedge_user }} {{ host_ip }}/32 scram-sha-256
+  - host {{ db_list }} {{ db_user }} {{ host_ip }}/32 scram-sha-256
+{% endfor %}
+  # Physical replication user connections
+  - host postgres,replication {{ replication_user }} 127.0.0.1/32 scram-sha-256
+{% for host in nodes_in_zone %}
+{%   set host_ip = hostvars[host].ansible_default_ipv4.address %}
+  - host postgres,replication {{ replication_user }} {{ host_ip }}/32 scram-sha-256
+{% endfor %}
+  # Connections from proxy servers
+{% for host in proxies_in_zone %}
+{%   set host_ip = hostvars[host].ansible_default_ipv4.address %}
+  - host {{ db_list }} {{ db_user }} {{ host_ip }}/32 scram-sha-256
+  - host {{ db_list }} {{ pgedge_user }} {{ host_ip }}/32 scram-sha-256
+{% endfor %}
+{% if proxy_node %}
+{% set host_ip = proxy_node | ansible.utils.ipaddr('address') or lookup('dig', proxy_node) %}
+  - host {{ db_list }} {{ db_user }} {{ host_ip }}/32 scram-sha-256
+  - host {{ db_list }} {{ pgedge_user }} {{ host_ip }}/32 scram-sha-256
+{% endif %}
+{% for rule in custom_hba_rules %}
+{%   set contype = rule.contype | default('host') %}
+{%   set databases = rule.databases | default('postgres') %}
+{%   set users = rule.users | default('postgres') %}
+{%   set source = rule.source | default('127.0.0.1/32') %}
+{%   set method = rule.method | default('scram-sha-256') %}
+  - {{ contype }} {{ databases }} {{ users }} {{ source }} {{ method }}
+{% endfor %}
+  # Connections from backup servers
+{% if backup_host %}
+{% set host_ip = backup_host | ansible.utils.ipaddr('address') or lookup('dig', backup_host) %}
+  - host postgres,replication {{ backup_user }} {{ host_ip }}/32 scram-sha-256
+{% endif %}
+{% for host in groups['backup'] | default([]) %}
+{%   set host_ip = hostvars[host].ansible_default_ipv4.address %}
+  - host postgres,replication {{ backup_user }} {{ host_ip }}/32 scram-sha-256
+{% endfor %}
 
   authentication:
     replication:

@@ -1,0 +1,3 @@
+---
+
+repo: "{{ repo_name if repo_name in ('release', 'staging', 'daily') else 'release' }}"

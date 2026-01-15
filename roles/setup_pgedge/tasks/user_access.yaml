@@ -1,0 +1,13 @@
+---
+
+# Make sure that the pgedge node communication user has an appropriate .pgpass
+# entry so the nodes can communicate with each other.
+
+- name: Ensure pgedge communication user can connect to cluster
+  lineinfile:
+    path: ~/.pgpass
+    line: "*:*:*:{{ pgedge_user }}:{{ pgedge_password }}"
+    create: true
+    mode: "0600"
+  become: true
+  become_user: postgres

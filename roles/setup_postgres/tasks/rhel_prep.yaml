@@ -1,0 +1,18 @@
+---
+
+# RHEL systems handle everything related to Postgres through a service file.
+# So we need to install one. The important part is that the PGDATA location
+# is set in the template.
+
+- name: Install service file for Postgres 
+  template:
+    src: files/pgedge-postgres.service.j2
+    dest: "/etc/systemd/system/{{ pg_service_name }}.service"
+  become: true
+
+# Since we installed a new service file, reload systemd.
+
+- name: Reload Systemd to register new Postgres service file
+  systemd:
+    daemon_reload: true
+  become: true

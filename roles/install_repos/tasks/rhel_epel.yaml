@@ -1,0 +1,17 @@
+---
+
+- name: Include EPEL installation steps on Rocky and Alma systems
+  include_tasks: rhel_rocky_epel.yaml
+  when: ansible_facts.distribution in ('Rocky', 'AlmaLinux')
+
+- name: Include EPEL steps for official RHEL systems
+  include_tasks: rhel_rhel_epel.yaml
+  when: 
+  - ansible_facts.distribution  == 'RedHat'
+  - ansible_facts.distribution_major_version > 7
+
+- name: Include EPEL steps for Oracle Linux systems
+  include_tasks: rhel_oracle_epel.yaml
+  when: 
+  - ansible_facts.distribution  == 'OracleLinux'
+  - ansible_facts.distribution_major_version > 7
