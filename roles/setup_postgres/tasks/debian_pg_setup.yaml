@@ -1,0 +1,39 @@
+---
+
+# If the user supplied a service name other than "main", the new instance may
+# conflict with the existing one. Debian systems create a new instance upon
+# package installation, and they use the default port. If the port as the
+# same as our non-default cluster, we need to stop the existing one. In most
+# cases, this is the default and likely unused cluster.
+
+- name: Stop and disable existing Postgres if it's blocking the new cluster
+  service: 
+    name: "postgresql@{{ pg_version }}-main"
+    state: stopped
+    enabled: false
+  when:
+  - cluster_name != main
+  - pg_port == 5432
+
+# If the user supplied a cluster name other than "main", which is the Debian
+# default, create a new cluster rather than risk breaking an existing one.
+
+- name: Install and set up Postgres using Postgres CLI tooling
+  command:
+    argv:
+    - pg_createcluster
+    - "{{ pg_version }}"
+    - "{{ cluster_name }}"
+    - "-d {{ pg_data }}"
+  args:
+    creates: "{{ pg_data }}/PG_VERSION"
+  become: true
+  become_user: postgres
+  when: cluster_name != 'main'
+
+# Reload systemd since creating a new cluster implicitly adds a service.
+
+- name: Reload Systemd to register new Postgres service file
+  systemd:
+    daemon_reload: true
+  become: true

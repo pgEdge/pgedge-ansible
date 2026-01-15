@@ -28,13 +28,13 @@ spock_exception_behaviour: >-
 backup_type: "{{ backup_repo_type if backup_repo_type in ('ssh', 's3') else 'ssh' }}"
 
 pg_service_name: >-
-  postgresql{{ 
-    '-' + pg_version|string if ansible_facts.os_family == 'RedHat' else
-    '@' + pg_version|string + '-main' if ansible_facts.os_family == 'Debian'
+  {{ 
+    'pgedge-postgres-' + pg_version|string if ansible_facts.os_family == 'RedHat' else
+    'postgresql@' + pg_version|string + '-' + cluster_name if ansible_facts.os_family == 'Debian'
   }}
 
 pg_config_dir: >-
   {{ 
-    '/etc/postgresql/' + pg_version|string + '/main' if ansible_facts.os_family == 'Debian'
+    '/etc/postgresql/' + pg_version|string + '/' + cluster_name if ansible_facts.os_family == 'Debian'
     else pg_data
   }}

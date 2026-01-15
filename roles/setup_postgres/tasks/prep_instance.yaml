@@ -1,14 +1,25 @@
 ---
 
-# We should only have to init RHEL family systems, as installing Postgres
-# packages automatically initializes a "main" cluster on Debian systems.
+# The pg_data location may not exist yet, or it may not be owned by the 
+# postgres user, so make sure that's the case before bootstrapping Postgres.
 
-- name: Install and set up Postgres using Postgres CLI tooling
-  shell: |
-    postgresql-{{ pg_version }}-setup initdb
-  args:
-    creates: "{{ pg_data }}/PG_VERSION"
-  become: yes
+- name: Ensure Postgres data directory is owned by postgres user
+  file:
+    path: "{{ pg_data }}"
+    state: directory
+    owner: postgres
+    mode: "0700"
+  become: true
+
+# Debian and RHEL systems have _vastly_ different bootstrap processes. They
+# are separated here for simplicity.
+
+- name: Include Debian Postgres setup steps
+  include_tasks: debian_pg_setup.yaml
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Include RedHat Postgres setup steps
+  include_tasks: rhel_pg_setup.yaml
   when: ansible_facts.os_family == 'RedHat'
 
 # With the PGDATA folder established, it's safe to generate server certificates

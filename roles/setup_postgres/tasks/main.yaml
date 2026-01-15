@@ -1,5 +1,9 @@
 ---
 
+- name: Ensure RHEL pgedge Postgres service is set up
+  include_tasks: rhel_prep.yaml
+  when: ansible_facts.os_family == 'RedHat'
+
 - include_tasks: setup.yaml
   when:
   - not is_ha_cluster
