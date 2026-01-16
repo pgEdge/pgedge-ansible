@@ -14,6 +14,21 @@
     state: started
   become: true
 
+# Wait for Patroni to become ready before sending it commands.
+
+- name: Wait until Patroni cluster is established
+  shell: |-
+    {{ ctl }} list pgedge -f json \
+        | jq -r '.[] | select(.Host == "{{ first_node_in_zone }}") | .State'
+  args:
+    chdir: "{{ patroni_bin_dir }}"
+  vars:
+    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
+  register: patroni_status
+  retries: 30
+  delay: 10
+  until: patroni_status.stdout  == 'running'
+
 # Patroni should restart nodes with changes which require restart, but doesn't.
 # We use the patronictl tool because a direct Postgres restart won't change the
 # "Pending restart" flag in the Patroni cluster status.
@@ -22,5 +37,5 @@
   shell: |
     cd {{ patroni_bin_dir }}
     ./patronictl -c {{ patroni_config_dir }}/patroni.yaml \
-                 restart -r any pgedge {{ ansible_hostname }} \
+                 restart pgedge {{ ansible_hostname }} \
                  --force
