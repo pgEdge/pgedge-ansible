@@ -3,6 +3,7 @@
 - name: Include all the packages which should be installed everywhere
   package:
     name:
+    - jq
     - nano
     - less
     - rsync
