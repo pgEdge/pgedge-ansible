@@ -1,32 +1,36 @@
 # setup_patroni
 
-## Overview
+The `setup_patroni` role configures and starts Patroni for high availability
+Postgres cluster management. The role creates the Patroni configuration file
+with etcd connection details, Postgres settings, and cluster policies, then
+orchestrates the startup sequence to ensure proper cluster formation.
 
-The `setup_patroni` role configures and starts Patroni for high availability PostgreSQL cluster management. It creates the Patroni configuration file with etcd connection details, PostgreSQL settings, and cluster policies, then orchestrates the startup sequence to ensure proper cluster formation.
+The role performs the following tasks on inventory hosts:
 
-## Purpose
-
-The role performs the following tasks:
-
-- generates the Patroni configuration file with cluster settings.
-- configures etcd connection for distributed consensus.
-- sets up PostgreSQL parameters managed by Patroni.
-- configures authentication for replication and superuser access.
-- manages `pg_hba.conf` rules through Patroni.
-- disables the native PostgreSQL service in favor of Patroni.
-- orchestrates the primary-first startup sequence.
-- establishes a highly available cluster.
+- Generate the Patroni configuration file with cluster settings.
+- Configure etcd connection for distributed consensus.
+- Set up Postgres parameters managed by Patroni.
+- Configure authentication for replication and superuser access.
+- Manage `pg_hba.conf` rules through Patroni configuration.
+- Disable the native Postgres service in favor of Patroni management.
+- Orchestrate the primary-first startup sequence for cluster formation.
 
 ## Role Dependencies
 
-- `role_config`: Provides shared configuration variables
-- `install_patroni`: You must install Patroni binaries
-- `setup_etcd`: The etcd cluster must be running
-- `setup_postgres`: You must initialize PostgreSQL
+This role requires the following roles for normal operation:
+
+- `role_config` provides shared configuration variables to the role.
+- `install_patroni` installs Patroni binaries and dependencies.
+- `setup_etcd` starts the etcd cluster for distributed consensus.
+- `setup_postgres` initializes and configures Postgres instances.
 
 ## When to Use
 
-Execute this role on **all pgedge hosts** in high availability configurations after setting up etcd and PostgreSQL:
+Execute this role on all pgedge hosts in high availability configurations
+after setting up etcd and Postgres.
+
+In the following example, the playbook invokes the role after etcd and
+Postgres setup:
 
 ```yaml
 - hosts: pgedge
@@ -40,190 +44,153 @@ Execute this role on **all pgedge hosts** in high availability configurations af
 ```
 
 !!! note "HA Clusters Only"
-    This role is only required for high availability deployments when you enable the `is_ha_cluster` parameter. Standalone PostgreSQL instances do not use Patroni.
+    This role is only required for high availability deployments when you
+    enable the `is_ha_cluster` parameter; standalone Postgres instances do
+    not use Patroni.
 
-## Parameters
+## Configuration
 
-This role uses the following configuration parameters:
+This role utilizes several of the collection-wide configuration parameters
+described in the [Configuration section](../configuration/index.md).
 
-### Database Configuration
+Set the parameters in the inventory file as shown in the following example:
 
-* `db_list`
-* `pg_port`
-* `pg_data`
-* `pg_path`
-* `pg_home`
-* `pg_service_name` - Primarily used to replace Postgres with Patroni service management
+```yaml
+pgedge:
+  vars:
+    is_ha_cluster: true
+    synchronous_mode: true
+```
 
-### Users and Authentication
+Below is a complete list of valid parameters that affect the operation of
+this role:
 
-* `backup_user`
-* `db_user`
-* `db_password`
-* `pgedge_user`
-* `replication_user`
-* `replication_password`
+| Option | Use Case |
+|--------|----------|
+| `db_names` | Databases to configure for the cluster. |
+| `pg_port` | Postgres port for client connections. |
+| `pg_data` | Postgres data directory path. |
+| `pg_path` | Postgres binary directory path. |
+| `pg_home` | Home directory for the postgres user. |
+| `pg_service_name` | Native Postgres service name to disable. |
+| `backup_user` | Backup user for pg_hba.conf rules. |
+| `db_user` | Admin database user. |
+| `db_password` | Password for the admin database user. |
+| `pgedge_user` | pgEdge user for node communication. |
+| `replication_user` | User for Patroni streaming replication. |
+| `replication_password` | Password for the replication user. |
+| `patroni_bin_dir` | Directory containing Patroni binaries. |
+| `patroni_config_dir` | Directory for Patroni configuration files. |
+| `spock_exception_behaviour` | Spock replication exception handling behavior. |
+| `synchronous_mode` | Enable synchronous replication mode. |
+| `synchronous_mode_strict` | Require synchronous replica for commits. |
 
-### Patroni Settings
+## How It Works
 
-* `patroni_bin_dir`
-* `patroni_config_dir`
+The role configures Patroni and orchestrates cluster formation.
 
-### Extension and Replication
+### Patroni Configuration
 
-* `spock_exception_behaviour`
-* `synchronous_mode`
-* `synchronous_mode_strict`
+When the role runs on pgedge hosts, it performs these steps:
 
-## Tasks Performed
+1. Generate the Patroni configuration file.
+    - Create `{{ patroni_config_dir }}/patroni.yaml` with cluster settings.
+    - Configure cluster identification with scope, namespace, and node name.
+    - Set REST API endpoints for health checks and management.
+    - Configure etcd connection details for distributed consensus.
+    - Set bootstrap DCS settings for cluster policies.
+    - Configure Postgres parameters managed by Patroni.
+    - Set up `pg_hba.conf` rules for authentication.
+    - Configure replication and superuser credentials.
 
-### 1. Patroni Configuration File Generation
+2. Disable the native Postgres service.
+    - Disable the systemd Postgres service.
+    - Ensure Patroni has exclusive control of the Postgres lifecycle.
 
-Creates `{{ patroni_config_dir }}/patroni.yaml` with comprehensive settings:
+3. Start the Patroni service on the primary node.
+    - Start Patroni on `first_node_in_zone` immediately.
+    - Establish the cluster scope and initialize etcd keys.
+    - The primary node becomes the cluster leader.
+
+4. Start the Patroni service on replica nodes.
+    - Wait for the primary to establish the cluster.
+    - Check for primary availability before starting.
+    - Start Patroni to bootstrap from the primary.
+    - Join the cluster as a replica.
+
+5. Apply configuration changes.
+    - Restart Postgres through Patroni to apply settings.
+    - Use `patronictl restart` to clear the "Pending restart" flag.
+
+!!! info "Configuration Management"
+    Patroni manages most Postgres configuration; direct edits to
+    `postgresql.conf` may be overwritten, so use the `patronictl` utility
+    for cluster-wide settings.
+
+### Configuration Details
+
+The generated configuration file includes the following settings.
 
 **Cluster Identification:**
 
-- `scope`: `pgedge` - Cluster name in etcd
-- `namespace`: `/db/` - etcd key prefix
-- `name`: Node hostname
-- `replication_slot_name`: Sanitized hostname for replication slot
+- `scope` contains `pgedge` as the cluster name in etcd.
+- `namespace` contains `/db/` as the etcd key prefix.
+- `name` contains the node hostname.
 
 **REST API Configuration:**
 
-- Listens on all interfaces port 8008
-- Used for health checks and cluster management
-- Connect address uses inventory hostname
+- Listens on all interfaces on port 8008.
+- Patroni uses this endpoint for health checks and cluster management.
 
 **etcd Connection:**
 
-- Host: `{{ inventory_hostname }}:2379`
-- TTL: 30 seconds
-- Protocol: HTTP (unencrypted)
+- Host uses `{{ inventory_hostname }}:2379`.
+- TTL uses a value of 30 seconds.
 
 **Bootstrap DCS Settings:**
 
-- `ttl`: 30 seconds - Leader key TTL in etcd
-- `loop_wait`: 10 seconds - Time between checks
-- `retry_timeout`: 10 seconds - Retry interval for failed operations
-- `maximum_lag_on_failover`: 1MB - Max acceptable lag for failover candidates
-- `synchronous_mode`: Configured value
-- `synchronous_mode_strict`: Configured value
-- `use_pg_rewind`: true - Use pg_rewind for diverged replicas
-- `use_slots`: true - Use replication slots
+- `ttl` uses 30 seconds for leader key TTL in etcd.
+- `loop_wait` uses 10 seconds between checks.
+- `retry_timeout` uses 10 seconds for failed operations.
+- `maximum_lag_on_failover` uses 1MB for failover candidates.
+- `use_pg_rewind` enables recovery for diverged replicas.
+- `use_slots` enables replication slots.
 
-**PostgreSQL Parameters:**
+**Postgres Parameters:**
 
-Managed cluster-wide by Patroni:
+Patroni manages these parameters cluster-wide:
 
-- Port, SSL certificates, listen addresses
-- Archive mode and command
-- WAL level (logical for Spock)
-- Worker processes and replication slots
-- Spock configuration (DDL replication, conflict resolution, exception handling)
-- Snowflake zone setting
-
-!!! info "Configuration Management"
-    Patroni manages most PostgreSQL configuration. Direct edits to `postgresql.conf` may be overwritten. Use the `patronictl` utility for cluster-wide settings.
-
-**Spock Slot Ignore:**
-
-- Ignores logical replication slots created by Spock
-- Prevents Patroni from interfering with Spock replication
-
-**PostgreSQL Connection Details:**
-
-- Listen address and port
-- Connect address for cluster communication
-- Config, data, and bin directories
-- `.patroni_pgpass` location for password storage
+- Port, SSL certificates, and listen addresses.
+- Archive mode and archive command.
+- WAL level uses `logical` for Spock.
+- Worker processes and replication slots.
+- Spock configuration for DDL replication and conflict resolution.
+- Snowflake zone setting.
 
 **pg_hba.conf Management:**
 
 Patroni manages pg_hba.conf with rules for:
 
-- Local postgres peer access
-- Localhost connections
-- pgEdge user communication between all pgedge nodes
-- Admin user access from all pgedge nodes
-- Replication user access within zone
-- Proxy server access (if configured)
-- Backup server access (if configured)
-- Custom HBA rules
+- Local postgres peer access.
+- Localhost connections.
+- pgEdge user communication between all pgedge nodes.
+- Admin user access from all pgedge nodes.
+- Replication user access within the zone.
+- Proxy server access when configured.
+- Backup server access when configured.
+- Custom HBA rules from inventory.
 
 !!! warning "pg_hba.conf"
-    Patroni manages `pg_hba.conf`. Manual changes will be overwritten. Use `custom_hba_rules` or `patronictl` instead.
+    Patroni manages `pg_hba.conf`; manual changes will be overwritten, so use
+    `custom_hba_rules` or `patronictl` instead.
 
-**Authentication:**
+## Usage Examples
 
-- Replication user credentials for streaming replication
-- Superuser credentials for cluster management
+Here are a few examples of how to use this role in an Ansible playbook.
 
-### 2. PostgreSQL Service Disable
+### Basic HA Cluster
 
-- Disables native PostgreSQL systemd service
-- Ensures Patroni has exclusive control of PostgreSQL lifecycle
-- Prevents conflicts between Patroni and systemd management
-
-### 3. Orchestrated Service Startup
-
-**Primary Node First:**
-
-- Starts Patroni on `first_node_in_zone` immediately
-- Primary establishes cluster scope and initializes etcd keys
-- Becomes cluster leader
-
-**Replica Nodes Wait:**
-
-- Replica nodes wait for primary to establish cluster
-- Checks for primary availability before starting
-- Prevents race conditions in cluster formation
-
-**Replica Node Startup:**
-
-- Starts Patroni service after primary is ready
-- Patroni automatically bootstraps from primary
-- Joins cluster as replica
-
-### 4. Configuration Restart
-
-- Restarts PostgreSQL through Patroni to apply configuration changes
-- Uses `patronictl restart` to clear "Pending restart" flag
-- Ensures all settings take effect
-- Performed on all nodes
-
-## Files Generated
-
-### Configuration Files
-
-- `/etc/patroni/patroni.yaml` - Main Patroni configuration (mode 600, owner: postgres)
-- `{{ pg_home }}/.patroni_pgpass` - Password file for Patroni (mode 600, owner: postgres)
-
-### etcd Keys
-
-Patroni creates keys in etcd under `/db/pgedge/`:
-
-- `/db/pgedge/leader` - Current cluster leader
-- `/db/pgedge/members/<hostname>` - Member metadata
-- `/db/pgedge/config` - Cluster configuration
-- `/db/pgedge/initialize` - Initialization key
-
-## Platform-Specific Behavior
-
-### All Supported Platforms
-
-This role behaves identically on:
-
-- Debian 12
-- Rocky Linux 9
-
-Platform differences are handled through variables:
-
-- `pg_service_name` - OS-specific service name
-- `pg_path`, `pg_config_dir`, `pg_data` - OS-specific paths
-
-## Example Usage
-
-### Basic HA Cluster Setup
+In the following example, the playbook deploys a basic HA cluster:
 
 ```yaml
 - hosts: pgedge
@@ -239,6 +206,9 @@ Platform differences are handled through variables:
 
 ### Synchronous Replication Cluster
 
+In the following example, the playbook deploys an HA cluster with synchronous
+replication enabled:
+
 ```yaml
 - hosts: pgedge
   collections:
@@ -251,7 +221,10 @@ Platform differences are handled through variables:
     - setup_patroni
 ```
 
-### Multi-Node Cluster with Custom HBA Rules
+### Custom HBA Rules
+
+In the following example, the playbook adds custom `pg_hba.conf` rules through
+the Patroni configuration:
 
 ```yaml
 - hosts: pgedge
@@ -270,6 +243,9 @@ Platform differences are handled through variables:
 ```
 
 ### Full HA Deployment
+
+In the following example, the playbook deploys a complete HA cluster with all
+required components:
 
 ```yaml
 - hosts: pgedge
@@ -293,29 +269,45 @@ Platform differences are handled through variables:
     - setup_patroni
 ```
 
+## Artifacts
+
+This role generates and modifies files on inventory hosts during execution.
+
+| File | New / Modified | Explanation |
+|------|----------------|-------------|
+| `/etc/patroni/patroni.yaml` | New | Main Patroni configuration file with cluster settings, etcd connection, and Postgres parameters. |
+| `{{ pg_home }}/.patroni_pgpass` | New | Password file for Patroni database connections with mode 600. |
+
+The role also creates etcd keys under `/db/pgedge/`:
+
+| Key | Purpose |
+|-----|---------|
+| `/db/pgedge/leader` | Current cluster leader. |
+| `/db/pgedge/members/<hostname>` | Member metadata. |
+| `/db/pgedge/config` | Cluster configuration. |
+| `/db/pgedge/initialize` | Initialization key. |
+
+## Platform-Specific Behavior
+
+This role behaves identically on all supported platforms including Debian 12
+and Rocky Linux 9.
+
+Variables handle platform differences:
+
+- `pg_service_name` specifies the OS-specific service name.
+- `pg_path`, `pg_config_dir`, and `pg_data` specify OS-specific paths.
+
 ## Idempotency
 
-This role has limited idempotency and may cause issues in multiple executions. Subsequent executions will:
+This role has limited idempotency and may cause issues in multiple executions.
 
-- regenerate configuration files each run to incorporate changes.
-- disable the Postgres system service in favor of Patroni.
-- enable the Patroni system service to manage Postgres.
-- always restart Patroni and/or Postgres to ensure configuration changes apply.
+The role may update these items on subsequent runs:
+
+- Regenerate configuration files to incorporate inventory changes.
+- Disable the Postgres system service in favor of Patroni.
+- Enable the Patroni system service to manage Postgres.
+- Restart Patroni and Postgres to ensure configuration changes apply.
 
 !!! warning "Configuration Updates"
-    Changes to Patroni configuration require service restart. The role performs this automatically via patronictl.
-
-## Notes
-
-You can use `patronictl` for cluster operations:
-
-```bash
-# List cluster status
-patronictl -c /etc/patroni/patroni.yaml list
-
-# Switchover to a new primary
-patronictl -c /etc/patroni/patroni.yaml switchover
-
-# Reinitialize a replica
-patronictl -c /etc/patroni/patroni.yaml reinit pgedge <hostname>
-```
+    Changes to Patroni configuration require a service restart; the role
+    performs this automatically via `patronictl`.

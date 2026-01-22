@@ -1,12 +1,14 @@
-# PostgreSQL Configuration
+# Postgres Configuration
 
-Parameters in this category include any settings that affect how the Postgres service itself operates. This can include software versions, installation directories, listening ports, and so on.
+Parameters in this category include any settings that affect how the Postgres
+service operates. This can include software versions, installation directories,
+listening ports, and similar settings.
 
 ## pg_version
 
 - Type: Integer
 - Default: `17`
-- Description: This parameter specifies the PostgreSQL major version to install.
+- Description: This parameter specifies the Postgres major version to install.
 
 ```yaml
 pg_version: 17
@@ -16,7 +18,8 @@ pg_version: 17
 
 - Type: Integer
 - Default: `5432`
-- Description: This parameter specifies the port where PostgreSQL listens for connections.
+- Description: This parameter specifies the port where Postgres listens for
+  connections.
 
 ```yaml
 pg_port: 5432
@@ -26,10 +29,12 @@ pg_port: 5432
 
 - Type: String
 - Default: OS-dependent
-- Description: This parameter specifies the home directory of the `postgres` OS user. The value primarily determines defaults for other dependent variables.
+- Description: This parameter specifies the home directory of the `postgres`
+  OS user. The value primarily determines defaults for other dependent
+  variables.
 
-    - RHEL: `/var/lib/pgsql`
-    - Debian: `/var/lib/postgresql`
+    - For RHEL-family systems, the default is `/var/lib/pgsql`.
+    - For Debian-family systems, the default is `/var/lib/postgresql`.
 
 ```yaml
 pg_home: `/home/postgres`
@@ -40,10 +45,13 @@ pg_home: `/home/postgres`
 - Type: String
 - Default: OS-dependent
 
-    - RHEL: `/usr/pgsql-{{ pg_version }}`
-    - Debian: `/usr/lib/postgresql/{{ pg_version }}`
+    - For RHEL-family systems, the default is `/usr/pgsql-{{ pg_version }}`.
+    - For Debian-family systems, the default is
+      `/usr/lib/postgresql/{{ pg_version }}`.
 
-- Description: This parameter specifies the directory containing PostgreSQL binaries and libraries. You can specify this parameter for custom installations.
+- Description: This parameter specifies the directory containing Postgres
+  binaries and libraries. You can specify this parameter for custom
+  installations.
 
 ```yaml
 pg_path: /opt/postgresql/17
@@ -54,10 +62,13 @@ pg_path: /opt/postgresql/17
 - Type: String
 - Default: OS-dependent
 
-    - RHEL: `{{ pg_home }}/{{ pg_version }}/data`
-    - Debian: `{{ pg_home }}/{{ pg_version }}/main`
+    - For RHEL-family systems, the default is
+      `{{ pg_home }}/{{ pg_version }}/data`.
+    - For Debian-family systems, the default is
+      `{{ pg_home }}/{{ pg_version }}/main`.
 
-- Description: This parameter specifies the PostgreSQL data directory. You can specify this parameter for custom locations.
+- Description: This parameter specifies the Postgres data directory. You can
+  specify this parameter for custom locations.
 
 ```yaml
 pg_data: /data/postgresql
@@ -67,13 +78,19 @@ pg_data: /data/postgresql
 
 - Type: List of dictionaries
 - Default: `[]`
-- Description: This parameter provides a list of user-specified rules for the `pg_hba.conf` file. The following fields are recognized:
+- Description: This parameter provides a list of user-specified rules for the
+  `pg_hba.conf` file. The collection recognizes the following fields:
 
-    - `contype` - Type of allowed connection (`local`, `host`, `hostssl`) (default: `host`)
-    - `users` - Comma-separated list of database users (default: `postgres`)
-    - `databases` - Comma-separated list of databases  (default: `postgres`)
-    - `method` - Authentication method to allow (default: `scram-sha-256`)
-    - `source` - IP + mask, or hostname of allowed connection (default: `127.0.0.1/32`)
+    - The `contype` field specifies the connection type such as `local`,
+      `host`, or `hostssl`; the default is `host`.
+    - The `users` field specifies a comma-separated list of database users;
+      the default is `postgres`.
+    - The `databases` field specifies a comma-separated list of databases;
+      the default is `postgres`.
+    - The `method` field specifies the authentication method; the default
+      is `scram-sha-256`.
+    - The `source` field specifies the IP and mask or hostname of allowed
+      connections; the default is `127.0.0.1/32`.
 
 - Since: 1.0.0
 

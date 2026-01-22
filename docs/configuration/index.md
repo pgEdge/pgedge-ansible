@@ -1,23 +1,27 @@
 # Configuration
 
-This page provides a complete reference for configuring your pgEdge cluster deployment, including inventory structure and all available configuration variables.
+This page provides a complete reference for configuring your pgEdge cluster
+deployment. The reference includes inventory structure and all available
+configuration variables.
 
 ## Configuration Overview
 
-The pgEdge Ansible Collection provides the following methods for managing configuration:
+The pgEdge Ansible Collection provides the following methods for managing
+configuration:
 
-- Inventory files: Define your hosts and host groups
-- Group variables: Set variables for all hosts in a group
-- Host variables: Set variables for individual hosts
-- Role defaults: Default values defined in each role
+- Inventory files define hosts and host groups for the cluster.
+- Group variables set values for all hosts in a group.
+- Host variables set values for individual hosts only.
+- Role defaults provide fallback values defined in each role.
 
-You can set variables at multiple levels, with the following precedence (highest to lowest):
+You can set variables at multiple levels; the following list shows precedence
+from highest to lowest:
 
-1. Host variables in inventory files.
-2. Group variables in inventory files.
-3. Variables in the `group_vars/` directory.
-4. Variables in the `host_vars/` directory.
-5. Role default settings.
+1. Host variables in inventory files take first precedence.
+2. Group variables in inventory files take second precedence.
+3. Variables in the `group_vars/` directory take third precedence.
+4. Variables in the `host_vars/` directory take fourth precedence.
+5. Role default settings provide fallback values.
 
 ## Variable Precedence Example
 
@@ -73,14 +77,15 @@ ansible-playbook playbook.yml --ask-vault-pass
 
 The collection validates certain variables:
 
-- `exception_behaviour` must be valid per Spock documentation
-- `backup_repo_type` must be `ssh` or `s3`
+- The `exception_behaviour` parameter must be valid per Spock documentation.
+- The `backup_repo_type` parameter must be `ssh` or `s3`.
 
 !!! tip "Validation Errors"
-    If you encounter variable validation errors, check the role's `vars/main.yaml` for specific validation logic.
+    If you encounter variable validation errors, check the role's
+    `vars/main.yaml` for specific validation logic.
 
 ## Next Steps
 
-- Review [sample playbooks](usage.md) for complete configuration examples.
-- Understand [role-specific parameters](roles/index.md) for advanced customization.
-- Learn about [architecture patterns](architecture.md) to inform your configuration choices.
+- Review [sample playbooks](../usage.md) for complete configuration examples.
+- Understand [role-specific parameters](../roles/index.md) for advanced options.
+- Learn about [architecture patterns](../architecture.md) to inform your choices.

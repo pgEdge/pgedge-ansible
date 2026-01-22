@@ -1,20 +1,34 @@
 # Installation
 
-This guide covers the prerequisites and steps required to install the pgEdge Ansible Collection on your Ansible control node.
+This guide covers the prerequisites and steps required to install the pgEdge
+Ansible Collection on your Ansible control node.
 
 ## Prerequisites
 
+Before deploying pgEdge with Ansible, ensure your environment meets all 
+requirements to guarantee smooth operation. The pgEdge Ansible Collection 
+automates complex database provisioning and clustering, but it demands specific 
+conditions on both the control node (where you run Ansible) and target hosts 
+(where pgEdge components will be deployed).
+
+Meeting these requirements prevents installation failures, connection issues, 
+and configuration conflicts during deployment. This section details the exact 
+specifications your infrastructure must satisfy—from software versions to 
+network configuration—so you can validate your setup before proceeding with 
+installation.
+
 ### Ansible Control Node Requirements
 
-The machine where you run Ansible playbooks must meet the following requirements:
+The machine where you run Ansible playbooks must meet the following
+requirements:
 
-- Ansible version 2.12 or later
-- Python 3.6 or later
-- Git (for cloning the repository)
-- Network connectivity to all target hosts
-- SSH access to all target hosts
+- Install Ansible version 2.12 or later on the control node.
+- Ensure Python 3.6 or later runs on the system.
+- Install Git for cloning the repository.
+- Verify the control node has network connectivity to all target hosts.
+- Configure SSH access for all target hosts.
 
-To check your Ansible version:
+The following command checks your Ansible version:
 
 ```bash
 ansible --version
@@ -22,27 +36,29 @@ ansible --version
 
 ### Target Host Requirements
 
-Each server in your pgEdge cluster must meet these requirements:
+Each server in your pgEdge cluster must meet these requirements.
 
 #### Supported Operating Systems
 
-The pgEdge Ansible Collection has been verified on the following operating systems:
+The pgEdge team has verified the Ansible Collection on the following operating
+systems:
 
-- Debian 12 (Bookworm)
-- Rocky Linux 9
+- Debian 12 (Bookworm) receives full support and testing.
+- Rocky Linux 9 receives full support and testing.
 
-The collection may also work with other Debian or RHEL variants, but compatibility has not been validated.
+The collection may work with other Debian or RHEL variants, but the pgEdge
+team has not validated compatibility.
 
 #### System Requirements
 
 Each server in your pgEdge cluster must meet the following requirements:
 
-- Architecture: x86_64 (amd64)
-- RAM: Minimum 2GB, recommended 4GB or more
-- Disk Space: Minimum 20GB available
-- Network: All nodes must be able to communicate with each other
-- SSH: SSH server running and accessible
-- User Access: A user account with sudo/root privileges
+- Use x86_64 (amd64) architecture for all nodes.
+- Provide at least 2GB RAM; the pgEdge team recommends 4GB or more.
+- Allocate at least 20GB of available disk space.
+- Ensure all nodes have network connectivity to communicate with each other.
+- Run an SSH server that remains accessible from the control node.
+- Provide a user account with sudo or root privileges.
 
 #### Network Requirements
 
@@ -50,54 +66,68 @@ Ensure the following ports are accessible between nodes:
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| PostgreSQL | 5432 (default) | Database connections |
+| Postgres | 5432 (default) | Database connections |
 | HAProxy | 5432, 5433 (default) | Proxy connections for primary and replica |
 | etcd | 2379, 2380 | Distributed key-value store for HA |
 | Patroni | 8008 | REST API for health checks |
 
 !!! warning "Firewall Configuration"
-    You may need to configure firewall rules to allow traffic between cluster nodes. This collection does not automatically configure firewall rules.
+    You may need to configure firewall rules to allow traffic between cluster
+    nodes. This collection does not automatically configure firewall rules.
 
 ## Installation Methods
 
+Installing the pgEdge Ansible Collection gives you the tools to automate 
+database deployments with confidence and precision. The collection provides a 
+wide gamut of installation methods to maximize environment compatibility. This 
+includes GitHub source installs, offline deployment with local builds, or 
+future inclusion in Ansible Galaxy.
+
+Each method provides the same robust collection of playbooks and roles, 
+ensuring consistency regardless of your installation path. This section guides 
+you through each option, highlighting best practices and requirements so you 
+can integrate pgEdge's automation capabilities seamlessly into your existing 
+infrastructure management processes.
+
 ### Method 1: Install from Git Repository (Recommended)
 
-This is the current recommended method for installing the collection:
+This is the current recommended method for installing the collection.
+
+Clone the repository and build the collection:
 
 ```bash
-# Clone the repository
 git clone git@github.com:pgEdge/pgedge-ansible.git
 cd pgedge-ansible
-
-# Build and install the collection
 make install
 ```
 
 The `make install` command performs the following steps:
 
-1. Read the version from the `VERSION` file
-2. Generate a `galaxy.yml` file from the template
-3. Build the collection archive
-4. Install it to your Ansible collections path
+1. Read the version from the `VERSION` file.
+2. Generate a `galaxy.yml` file from the template.
+3. Build the collection archive.
+4. Install the archive to your Ansible collections path.
 
-By default, collections are installed to `~/.ansible/collections/ansible_collections/`.
+By default, Ansible installs collections to the
+`~/.ansible/collections/ansible_collections/` directory.
 
 ### Method 2: Install from Local Build
 
-If you've already built the collection or received a `.tar.gz` archive:
+Use this method if you have already built the collection or received a
+`.tar.gz` archive.
+
+Build and install the collection manually:
 
 ```bash
-# Build the collection without installing
 make build
-
-# Install manually
 ansible-galaxy collection install pgedge-platform-<version>.tar.gz --force
 ```
 
 ### Method 3: Install from Ansible Galaxy (Future)
 
 !!! note "Coming Soon"
-    The collection will eventually be available on Ansible Galaxy for easier installation:
+    The collection will eventually be available on Ansible Galaxy for easier
+    installation:
     ```bash
     ansible-galaxy collection install pgedge.platform
     ```
@@ -105,37 +135,54 @@ ansible-galaxy collection install pgedge-platform-<version>.tar.gz --force
 
 ## Verifying Installation
 
-After installation, verify the collection is available:
+After installation, verify Ansible can locate the collection:
 
 ```bash
 ansible-galaxy collection list pgedge.platform
 ```
 
-You should see output similar to:
+You should see output similar to the following:
 
 ```
 Collection      Version
 --------------- -------
-pgedge.platform 1.0.0  
+pgedge.platform 1.0.0
 ```
 
 ## Setting Up Your Environment
 
+With the collection installed, your next step is configuring the runtime 
+environment to ensure flawless communication between your control node and 
+pgEdge infrastructure. Proper environment setup eliminates connection Issues, 
+authentication failures, and permission problems that could derail your 
+deployment.
+
+This involves establishing secure access methods, optimizing Ansible's behavior 
+through configuration, and validating connectivity before executing your first 
+playbook. Taking time to configure your environment correctly creates a stable 
+foundation for pgEdge's automated provisioning, monitoring, and management 
+capabilities.
+
 ### SSH Key Configuration
 
-Ensure you have SSH access to all target hosts:
+Ensure you have SSH access to all target hosts.
+
+The following commands test SSH access and configure key-based authentication:
 
 ```bash
 # Test SSH access
 ssh user@target-host
 
-# If using SSH keys (recommended)
+# Copy SSH key if using key-based authentication (recommended)
 ssh-copy-id user@target-host
 ```
 
 ### Ansible Configuration
 
-Create or update your `ansible.cfg` file to configure behavior:
+Create or update your `ansible.cfg` file to configure behavior.
+
+In the following example, the configuration file sets common options for
+cluster deployment:
 
 ```ini
 [defaults]
@@ -155,7 +202,9 @@ become_ask_pass = False
 
 ### Testing Connectivity
 
-Test connectivity to your hosts before running playbooks:
+Test connectivity to your hosts before running playbooks.
+
+The following commands verify Ansible can reach all hosts:
 
 ```bash
 # Test all hosts
@@ -169,15 +218,16 @@ ansible pgedge -m ping
 
 After successful installation:
 
-1. Review the [architecture patterns](architecture.md) to understand cluster design
-2. Create an [inventory file](configuration.md#inventory-structure) for your deployment
-3. Configure [variables](configuration.md#configuration-variables) for your deployment
-4. Examine the [sample playbooks](usage.md#sample-playbooks) for deployment examples
-5. Review the [roles documentation](roles/index.md) to understand each component
+1. Review [architecture patterns](architecture.md) to understand cluster
+   design.
+2. Create an [inventory file](configuration/index.md) for your deployment.
+3. Configure [variables](configuration/index.md) for your environment.
+4. Examine [sample playbooks](usage.md) for deployment examples.
+5. Review [roles documentation](roles/index.md) to understand each component.
 
 ## Upgrading the Collection
 
-To upgrade to a newer version:
+To upgrade to a newer version, pull the latest changes and reinstall:
 
 ```bash
 cd pgedge-ansible
@@ -185,11 +235,12 @@ git pull
 make install
 ```
 
-The `--force` flag in the Makefile ensures the new version replaces the existing installation.
+The `--force` flag in the Makefile ensures the new version replaces the
+existing installation.
 
 ## Uninstalling
 
-To remove the collection:
+To remove the collection from your Ansible installation:
 
 ```bash
 ansible-galaxy collection remove pgedge.platform

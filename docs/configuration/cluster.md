@@ -1,6 +1,7 @@
 # Cluster Configuration
 
 The collection uses cluster-wide configuration variables across multiple roles.
+These settings define the basic operation and user accounts for the cluster.
 
 ## Basic Operation
 
@@ -8,7 +9,8 @@ The collection uses cluster-wide configuration variables across multiple roles.
 
 - Type: List
 - Default: `[ demo ]`
-- Description: Database names for the Spock cluster. At least one database is required. The roles create any missing databases automatically.
+- Description: Database names for the Spock cluster. You must specify at least
+  one database. The roles create any missing databases automatically.
 
 ```yaml
 # Single database
@@ -25,7 +27,8 @@ db_names:
 
 - Type: String
 - Default: `demo`
-- Description: Canonical name for the cluster. The collection uses this name for descriptive items and generated values.
+- Description: Canonical name for the cluster. The collection uses this name
+  for descriptive items and generated values.
 
 ```yaml
 cluster_name: production-cluster
@@ -35,14 +38,16 @@ cluster_name: production-cluster
 
 - Type: Integer
 - Default: `1`
-- Description: Zone or region identifier for a node. This parameter serves the following purposes:
+- Description: Zone or region identifier for a node. This parameter serves the
+  following purposes:
 
-    - Organizes nodes into logical groups
-    - Determines HA cluster boundaries
-    - Used as the snowflake sequence ID
+    - The zone organizes nodes into logical groups.
+    - The zone determines HA cluster boundaries.
+    - The zone value serves as the snowflake sequence ID.
 
 !!! important
-    In simple clusters, use one node per zone. In HA clusters, assign multiple nodes to the same zone.
+    In simple clusters, use one node per zone. In HA clusters, assign multiple
+    nodes to the same zone.
 
 ```yaml
 hosts:
@@ -54,16 +59,19 @@ hosts:
 
 ## Cluster Users
 
-The cluster requires several user roles for proper operation. The collection creates and maintains these roles automatically.
+The cluster requires several user roles for proper operation. The collection
+creates and maintains these roles automatically.
 
 !!! warning "Security"
-    Never commit passwords to version control. Use Ansible Vault or environment variables for any of the `_password` parameters when possible.
+    Never commit passwords to version control. Use Ansible Vault or environment
+    variables for any of the `_password` parameters when possible.
 
 ### db_user
 
 - Type: String
 - Default: `admin`
-- Description: Primary database username. This username must differ from the OS user running Ansible.
+- Description: Primary database username. This username must differ from the
+  OS user running Ansible.
 
 ```yaml
 db_user: appuser
@@ -84,6 +92,7 @@ db_password: "{{ vault_db_password }}"
 - Type: String
 - Default: `pgedge`
 - Description: Database username for pgEdge inter-node logical replication.
+  The cluster uses this account for Spock operations.
 
 ```yaml
 pgedge_user: pgedge
@@ -103,7 +112,8 @@ pgedge_password: "{{ vault_pgedge_password }}"
 
 - Type: String
 - Default: `replicator`
-- Description: Username for Patroni streaming replication (HA clusters only).
+- Description: Username for Patroni streaming replication. This setting only
+  applies to HA clusters.
 
 ```yaml
 replication_user: replicator
@@ -121,13 +131,15 @@ replication_password: "{{ vault_replication_password }}"
 
 ## High Availability
 
-The following settings control how high availability functions within the cluster or per zone.
+The following settings control how high availability functions within the
+cluster or per zone.
 
 ### is_ha_cluster
 
 - Type: Boolean
 - Default: `false`
-- Description: This parameter enables high availability features including etcd, Patroni, and HAProxy.
+- Description: This parameter enables high availability features including
+  etcd, Patroni, and HAProxy.
 
 ```yaml
 is_ha_cluster: true
@@ -137,7 +149,8 @@ is_ha_cluster: true
 
 - Type: Boolean
 - Default: `false`
-- Description: This parameter enables Patroni management of `synchronous_commit` and `synchronous_standby_names` based on cluster state.
+- Description: This parameter enables Patroni management of
+  `synchronous_commit` and `synchronous_standby_names` based on cluster state.
 
 ```yaml
 synchronous_mode: true
@@ -147,13 +160,14 @@ synchronous_mode: true
 
 - Type: Boolean
 - Default: `false`
-- Description: This parameter enforces synchronous commit when you enable synchronous mode, even if no synchronous replicas are available. This setting can prevent writes during replica failures.
+- Description: This parameter enforces synchronous commit when you enable
+  synchronous mode, even if no synchronous replicas are available. This setting
+  can prevent writes during replica failures.
 
 ```yaml
 synchronous_mode_strict: false
 ```
 
 !!! warning "Data Availability Trade-off"
-    Strict synchronous mode prioritizes data durability over availability. Writes will be blocked if synchronous replicas are unavailable.
-
-
+    Strict synchronous mode prioritizes data durability over availability.
+    The cluster blocks writes if synchronous replicas become unavailable.

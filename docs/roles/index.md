@@ -1,43 +1,46 @@
 # Roles Overview
 
-The pgEdge Ansible Collection consists of several specialized roles that work together to deploy and configure pgEdge Distributed Postgres clusters. This page provides an overview of all roles, their purposes, and intended execution order.
+The pgEdge Ansible Collection consists of several specialized roles that work
+together to deploy and configure pgEdge Distributed Postgres clusters. This
+page provides an overview of all roles, their purposes, and execution order.
 
 ## Role Categories
 
-The roles are organized into four functional categories:
+The roles are organized into four functional categories.
 
 ### Configuration Foundation
 
-- [role_config](role_config.md): Central configuration role providing shared variables
+- [role_config](role_config.md) provides shared variables to all other roles.
 
 ### Server Preparation
 
-- [init_server](init_server.md): Initializes servers with required packages and configuration
-- [install_repos](install_repos.md): Configures pgEdge package repositories
+- [init_server](init_server.md) initializes servers with required packages.
+- [install_repos](install_repos.md) configures pgEdge package repositories.
 
 ### Software Installation
 
-- [install_pgedge](install_pgedge.md): Installs PostgreSQL with pgEdge enhancements
-- [install_backrest](install_backrest.md): Installs pgBackRest backup software
-- [install_etcd](install_etcd.md): Installs etcd distributed key-value store (HA only)
-- [install_patroni](install_patroni.md): Installs Patroni HA management system (HA only)
+- [install_pgedge](install_pgedge.md) installs Postgres with pgEdge extensions.
+- [install_backrest](install_backrest.md) installs the pgBackRest backup tool.
+- [install_etcd](install_etcd.md) installs etcd for HA cluster coordination.
+- [install_patroni](install_patroni.md) installs Patroni for HA management.
 
 ### Service Configuration
 
-- [setup_postgres](setup_postgres.md): Initializes and configures PostgreSQL instances
-- [setup_etcd](setup_etcd.md): Configures and starts etcd clusters (HA only)
-- [setup_patroni](setup_patroni.md): Configures and starts Patroni (HA only)
-- [setup_haproxy](setup_haproxy.md): Installs and configures HAProxy load balancers (HA only)
-- [setup_pgedge](setup_pgedge.md): Establishes Spock replication between nodes
-- [setup_backrest](setup_backrest.md): Configures backups and automation
+- [setup_postgres](setup_postgres.md) initializes and configures Postgres.
+- [setup_etcd](setup_etcd.md) configures and starts etcd clusters for HA.
+- [setup_patroni](setup_patroni.md) configures and starts Patroni for HA.
+- [setup_haproxy](setup_haproxy.md) installs and configures HAProxy for HA.
+- [setup_pgedge](setup_pgedge.md) establishes Spock replication between nodes.
+- [setup_backrest](setup_backrest.md) configures backups and automation.
 
 ## Execution Order
 
-You must execute roles in a specific order to ensure proper dependencies. The recommended execution order differs between simple and HA clusters.
+Execute roles in a specific order to ensure proper dependencies. The
+recommended execution order differs between simple and HA clusters.
 
 ### Simple Cluster Execution Order
 
-For a basic multi-node cluster:
+In the following example, the playbook deploys a basic multi-node cluster:
 
 ```yaml
 - hosts: pgedge
@@ -46,12 +49,12 @@ For a basic multi-node cluster:
   roles:
     - init_server          # 1. Prepare servers
     - install_repos        # 2. Configure repositories
-    - install_pgedge       # 3. Install PostgreSQL
+    - install_pgedge       # 3. Install Postgres
     - setup_postgres       # 4. Initialize databases
     - setup_pgedge         # 5. Configure replication
 ```
 
-Optional backup configuration:
+In the following example, the playbook adds optional backup configuration:
 
 ```yaml
 # For pgEdge nodes with backups
@@ -70,7 +73,7 @@ Optional backup configuration:
 
 ### HA Cluster Execution Order
 
-For high-availability clusters:
+In the following example, the playbook deploys a high-availability cluster:
 
 ```yaml
 # Initialize all hosts
@@ -84,7 +87,7 @@ For high-availability clusters:
 - hosts: pgedge
   roles:
     - install_repos        # 2. Configure repositories
-    - install_pgedge       # 3. Install PostgreSQL
+    - install_pgedge       # 3. Install Postgres
     - setup_postgres       # 4. Initialize databases
     - install_etcd         # 5. Install etcd
     - install_patroni      # 6. Install Patroni
@@ -118,7 +121,7 @@ For high-availability clusters:
 | [role_config](role_config.md) | Shared configuration | All | N/A (included) |
 | [init_server](init_server.md) | Server initialization | All | ~2-5 min |
 | [install_repos](install_repos.md) | Repository setup | All | ~1-2 min |
-| [install_pgedge](install_pgedge.md) | PostgreSQL installation | All | ~3-5 min |
+| [install_pgedge](install_pgedge.md) | Postgres installation | All | ~3-5 min |
 | [install_etcd](install_etcd.md) | etcd installation | HA clusters | ~1-2 min |
 | [install_patroni](install_patroni.md) | Patroni installation | HA clusters | ~2-3 min |
 | [install_backrest](install_backrest.md) | Backup software | Optional | ~1 min |
@@ -130,13 +133,30 @@ For high-availability clusters:
 | [setup_backrest](setup_backrest.md) | Backup configuration | Optional | ~5-10 min |
 
 !!! note "Timing Estimates"
-    Execution times are approximate and vary based on hardware, network speed, and cluster size.
+    Execution times are approximate and vary based on hardware, network speed,
+    and cluster size.
 
 ## Role Usage Patterns
 
+When working with the pgEdge Ansible Collection, you'll employ roles to 
+automate infrastructure provisioning, software installation, and service 
+configuration. These roles handle everything from preparing your servers to 
+setting up high-availability clusters with replication and load balancing. You 
+can include roles in your playbooks in multiple ways: incorporating them 
+directly, applying them conditionally based on cluster requirements, or passing 
+role-specific variables to customize behavior. The collection provides clear 
+patterns for integrating these roles into your deployment workflows, including 
+examples for both simple clusters and high-availability configurations. By 
+mastering these usage patterns, you'll establish a repeatable, consistent 
+process for scaling and maintaining your pgEdge deployments across diverse 
+environments.
+
 ### Including Roles in Playbooks
 
-Roles are used by declaring them in a playbook:
+Declare roles in a playbook to include them in the execution.
+
+In the following example, the playbook uses the collection declaration to
+access all roles from the pgEdge platform collection:
 
 ```yaml
 - hosts: pgedge
@@ -146,11 +166,12 @@ Roles are used by declaring them in a playbook:
     - role_name
 ```
 
-The `collections` declaration makes all roles from the pgEdge platform collection available.
-
 ### Conditional Role Execution
 
-Some roles should only execute under specific conditions:
+Some roles execute only under specific conditions.
+
+In the following example, the playbook uses conditionals to skip HA roles
+when the `is_ha_cluster` parameter is `false`:
 
 ```yaml
 - hosts: pgedge
@@ -166,13 +187,19 @@ Some roles should only execute under specific conditions:
       when: is_ha_cluster | default(false) | bool
 ```
 
-While many roles contain conditionals to control execution of sub-components, playbooks should only execute roles on their intended targets. You can build playbooks more easily by omitting HA-related roles for non-HA clusters rather than enforcing conditionals. The included sample playbooks demonstrate this principle.
+While many roles contain conditionals to control sub-component execution,
+playbooks should only execute roles on their intended targets. Omit HA-related
+roles for non-HA clusters rather than relying on conditionals. The included
+sample playbooks demonstrate this principle.
 
 ### Role Variables
 
-Most configuration is handled through inventory variables. See the [Configuration](../configuration.md) page for details.
+Most configuration is handled through inventory variables. See the
+[Configuration](../configuration/index.md) page for details.
 
-Some roles accept role-specific parameters:
+Some roles accept role-specific parameters.
+
+In the following example, the playbook passes a variable directly to the role:
 
 ```yaml
 - hosts: pgedge
@@ -184,7 +211,10 @@ Some roles accept role-specific parameters:
         proxy_node: custom-proxy.example.com
 ```
 
-However, for the sake of cluster consistency, we recommend setting these across the cluster through the inventory file when possible:
+For cluster consistency, set parameters through the inventory file when
+possible.
+
+In the following example, the inventory file sets a variable for all hosts:
 
 ```yaml
 pgedge:
@@ -194,12 +224,26 @@ pgedge:
 
 ## Common Role Features
 
+Every role in the pgEdge Ansible Collection implements shared capabilities that 
+ensure predictable, reliable automation across all deployment scenarios. These 
+features address critical concerns like system state consistency, 
+cross-platform compatibility, and operational visibility. By incorporating 
+standardized patterns for idempotent operations, operating system detection, 
+and comprehensive logging, the roles deliver repeatable deployments while 
+minimizing manual intervention. Whether provisioning a standalone Postgres 
+instance or constructing a multi-region high-availability cluster, these 
+capabilities form the foundation for robust, maintainable infrastructure 
+automation that adapts seamlessly to different environments and requirements.
+
 ### Idempotency
 
-The collection designs all roles to be idempotent - running them multiple times produces the same result. However, some roles (particularly setup roles) may encounter issues if you run them after a partial failure.
+All roles in the collection operate idempotently; running them multiple times
+produces the same result. However, some roles may encounter issues when you
+execute them after a partial failure.
 
 !!! warning "Re-running After Failures"
-    The collection is in early development and not fully re-entrant after errors. Manual cleanup may be required before re-running failed playbooks.
+    The collection is in early development and not fully re-entrant after
+    errors. Manual cleanup may be required before re-running failed playbooks.
 
 ### OS Support
 
@@ -208,7 +252,7 @@ All roles support both Debian and RHEL-based distributions:
 - Debian 12 (Bookworm)
 - Rocky Linux 9
 
-Roles automatically detect the OS family and adjust:
+Roles automatically detect the OS family and adjust these items:
 
 - Package names
 - File paths
@@ -219,12 +263,14 @@ Roles automatically detect the OS family and adjust:
 
 Roles provide detailed output during execution:
 
-- Task names clearly indicate current operations
-- Changed/OK status for each task
-- Error messages with context
-- Debug output when available
+- Task names clearly indicate current operations.
+- Changed or OK status appears for each task.
+- Error messages include context for troubleshooting.
+- Debug output is available when enabled.
 
-Use `-v`, `-vv`, or `-vvv` flags for increased verbosity:
+Use the `-v`, `-vv`, or `-vvv` flags for increased verbosity.
+
+In the following example, the command runs a playbook with verbose output:
 
 ```bash
 ansible-playbook playbook.yml -vv
@@ -234,5 +280,5 @@ ansible-playbook playbook.yml -vv
 
 - Review individual role documentation for detailed information.
 - Examine [sample playbooks](../usage.md) for complete examples.
-- Understand [configuration variables](../configuration.md) that affect role behavior.
-- Consult the [troubleshooting guide](../troubleshooting.md) for solutions to common issues.
+- Understand [configuration variables](../configuration/index.md) for roles.
+- Consult the [troubleshooting guide](../troubleshooting/index.md) for solutions.

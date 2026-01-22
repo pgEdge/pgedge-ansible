@@ -1,27 +1,31 @@
 # install_repos
 
-## Overview
+The `install_repos` role configures official pgEdge package repositories on
+target systems. The role enables installation of pgEdge Enterprise Postgres
+packages and adds EPEL on RHEL-based systems to satisfy dependencies.
 
-The `install_repos` role configures official pgEdge package repositories on target systems, enabling installation of pgEdge Enterprise PostgreSQL packages and dependencies. This includes adding EPEL (Extra Packages for Enterprise Linux) on RHEL-based systems to satisfy certain dependencies.
+The role performs the following tasks on inventory hosts:
 
-## Purpose
-
-The role performs the following tasks:
-
-- installs prerequisite packages for repository management.
-- adds pgEdge package repositories for the target OS.
-- configures the EPEL repository on RHEL-based systems.
-- imports and verifies GPG keys for package signing.
-- updates the package cache to make pgEdge packages available.
+- Install prerequisite packages for repository management.
+- Add pgEdge package repositories for the target operating system.
+- Configure the EPEL repository on RHEL-based systems.
+- Import and verify GPG keys for package signing.
+- Update the package cache to make pgEdge packages available.
 
 ## Role Dependencies
 
-- `role_config`: Provides shared configuration variables
-- `init_server`: Systems should be prepared prior to installing repositories
+This role requires the following roles for normal operation:
+
+- `role_config` provides shared configuration variables to the role.
+- `init_server` prepares systems before repository installation.
 
 ## When to Use
 
-Execute this role on **all hosts** where you will install pgEdge PostgreSQL packages. You should run this role before any package installation roles:
+Execute this role on all hosts where you will install pgEdge Postgres
+packages. Run this role before any package installation roles.
+
+In the following example, the playbook configures repositories on all
+pgedge hosts:
 
 ```yaml
 - hosts: pgedge
@@ -31,67 +35,67 @@ Execute this role on **all hosts** where you will install pgEdge PostgreSQL pack
     - install_repos
 ```
 
-## Parameters
+## Configuration
 
-This role uses no custom parameters. The role handles all repository configuration automatically based on the detected operating system.
+This role uses no custom parameters. The role handles all repository
+configuration automatically based on the detected operating system.
 
-## Tasks Performed
+## How It Works
 
-### 1. Repository Setup
+The role configures package repositories based on the operating system
+family that it detects on each target host.
 
-#### Debian-Family Systems
+### Debian Family Setup
 
-**Prerequisite Package Installation:**
+On Debian-based systems, the role performs these steps:
 
-- `curl` - For downloading repository packages
-- `gnupg2` - For GPG key verification
-- `lsb-release` - For OS version detection
+1. Install prerequisite packages.
+    - Install `curl` for downloading repository packages.
+    - Install `gnupg2` for GPG key verification.
+    - Install `lsb-release` for OS version detection.
 
-**pgEdge Repository Configuration:**
+2. Configure the pgEdge repository.
+    - Download and install the pgEdge repository definition package.
+    - Update the APT package cache to include pgEdge packages.
+    - Configure automatic repository sources in `/etc/apt/sources.list.d/`.
 
-- Downloads and installs the pgEdge repository definition package.
-- Updates the APT package cache to include pgEdge packages.
-- Configures automatic repository sources in `/etc/apt/sources.list.d/`.
+### RHEL Family Setup
 
-#### RHEL-Family Systems
+On RHEL-based systems, the role performs these steps:
 
-**EPEL Repository Installation:**
+1. Install the EPEL repository.
+    - Enable EPEL via DNF configuration manager on RHEL 8 and 9.
+    - Enable EPEL via subscription manager on RHEL 10.
+    - Install EPEL from existing repos on Rocky and AlmaLinux 8+.
+    - Install the Fedora EPEL package on Oracle Linux 8+.
 
-The role detects the specific RHEL variant and installs EPEL accordingly:
+2. Configure the pgEdge repository.
+    - Import the pgEdge GPG key for package verification.
+    - Download and install the pgEdge repository definition package.
+    - Configure the YUM/DNF repository in `/etc/yum.repos.d/`.
 
-- **RHEL 8, 9**: Enables EPEL via DNF configuration manager
-- **RHEL 10**: Enables EPEL via subscription manager
-- **Rocky or AlmaLinux 8+**: Installs EPEL from existing repos
-- **Oracle Linux 8+**: Installs Fedora EPEL package
+!!! important "Execution Order"
+    Execute this role before any `install_*` roles that install pgEdge
+    packages. The role establishes the package sources that all subsequent
+    installations need.
 
-**pgEdge Repository Installation:**
+!!! warning "EPEL Dependencies"
+    RHEL-based systems need EPEL for several Postgres dependencies. The role
+    handles EPEL installation automatically but may need subscription access
+    on RHEL systems.
 
-- Imports the pgEdge GPG key.
-- Downloads and installs the pgEdge repository definition package.
-- Configures the YUM/DNF repository in `/etc/yum.repos.d/`.
+!!! note "Network Requirements"
+    This role requires outbound HTTPS access to pgEdge repository servers.
+    Ensure firewall rules and proxy settings allow this connectivity.
 
-### 2. Package Cache Update
+## Usage Examples
 
-After repository installation:
+Here are a few examples of how to use this role in an Ansible playbook.
 
-- **Debian**: Runs `apt update`
-- **RHEL**: DNF automatically updates metadata during repository installation
+### Basic Usage
 
-## Files Generated
-
-### On Debian/Ubuntu Systems
-
-- `/etc/apt/sources.list.d/pgedge.sources` - pgEdge repository configuration
-- `/etc/apt/keyrings/pgedge.gpg` - Public pgEdge GPG key
-
-### On RHEL-based Systems
-
-- `/etc/yum.repos.d/pgedge.repo` - pgEdge repository configuration
-- `/etc/yum.repos.d/epel.repo` - EPEL repository configuration
-
-## Example Usage
-
-### Basic Repository Installation
+In the following example, the playbook configures pgEdge repositories on
+target hosts:
 
 ```yaml
 - hosts: pgedge
@@ -101,33 +105,67 @@ After repository installation:
     - install_repos
 ```
 
-### Multi-Group Installation
+### Multiple Node Groups
+
+In the following example, the playbook configures repositories on Postgres
+nodes and backup servers:
 
 ```yaml
-# Install repos on all PostgreSQL nodes
+# Install repos on all Postgres nodes
 - hosts: pgedge
+  collections:
+    - pgedge.platform
   roles:
     - install_repos
 
 # Install repos on backup servers
 - hosts: backup
+  collections:
+    - pgedge.platform
   roles:
     - install_repos
 ```
 
+## Artifacts
+
+This role generates files on inventory hosts during execution.
+
+| File | New / Modified | Explanation |
+|------|----------------|-------------|
+| `/etc/apt/sources.list.d/pgedge.sources` | New | pgEdge repository configuration on Debian systems. |
+| `/etc/apt/keyrings/pgedge.gpg` | New | Public pgEdge GPG key on Debian systems. |
+| `/etc/yum.repos.d/pgedge.repo` | New | pgEdge repository configuration on RHEL systems. |
+| `/etc/yum.repos.d/epel.repo` | New | EPEL repository configuration on RHEL systems. |
+
+## Platform-Specific Behavior
+
+The role adapts its behavior based on the operating system family.
+
+### Debian Family
+
+On Debian-based systems, the role installs these packages and files:
+
+| Setting | Value |
+|---------|-------|
+| Prerequisite packages | `curl`, `gnupg2`, `lsb-release` |
+| Repository file | `/etc/apt/sources.list.d/pgedge.sources` |
+| GPG key location | `/etc/apt/keyrings/pgedge.gpg` |
+| Cache update | `apt update` |
+
+### RHEL Family
+
+On RHEL-based systems, the role installs these packages and files:
+
+| Setting | Value |
+|---------|-------|
+| EPEL installation | Varies by distribution |
+| Repository file | `/etc/yum.repos.d/pgedge.repo` |
+| GPG key import | Automatic during package installation |
+| Cache update | Automatic during repository installation |
+
 ## Idempotency
 
-This role is idempotent and safe to re-run. Subsequent executions will:
+This role is idempotent and safe to re-run on inventory hosts.
 
-- delegate package installation to the operating system.
-
-## Notes
-
-!!! important "Execution Order"
-    You must execute this role before any `install_*` roles that install pgEdge packages. The role establishes the package sources needed for all subsequent installations.
-
-!!! warning "EPEL Dependencies"
-    EPEL is required on RHEL-based systems for several PostgreSQL dependencies. The role handles EPEL installation automatically but may require subscription access on RHEL systems.
-
-!!! note "Network Requirements"
-    This role requires outbound HTTPS access to pgEdge repository servers. Ensure firewall rules and proxy settings allow this connectivity.
+The role delegates package installation to the operating system, which
+handles existing packages appropriately.

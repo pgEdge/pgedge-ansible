@@ -1,29 +1,32 @@
 # install_patroni
 
-## Overview
+The `install_patroni` role installs Patroni, a high availability solution for
+Postgres that uses etcd for distributed consensus. Patroni manages automatic
+failover, leader election, and cluster configuration.
 
-The `install_patroni` role installs Patroni, a high availability solution for PostgreSQL using Python and etcd for distributed consensus. Patroni manages automatic failover, leader election, and cluster configuration for PostgreSQL.
+The role performs the following tasks on inventory hosts:
 
-## Purpose
-
-The role performs the following tasks:
-
-- installs pipx for isolated Python application management.
-- installs Patroni with required dependencies via pipx.
-- configures Patroni as postgres OS user.
-- installs systemd service unit for Patroni.
-- creates Patroni configuration directory.
-- prepares the system for HA PostgreSQL cluster management.
+- Install pipx for isolated Python application management.
+- Install Patroni with necessary dependencies via pipx.
+- Configure Patroni as the postgres OS user.
+- Install the systemd service unit for Patroni.
+- Create the Patroni configuration directory.
 
 ## Role Dependencies
 
-- `role_config`: Provides shared configuration variables.
-- `init_server`: You must create the postgres user first.
-- `install_pgedge`: You must install PostgreSQL.
+This role requires the following roles for normal operation:
+
+- `role_config` provides shared configuration variables to the role.
+- `init_server` creates the postgres user that the installation process needs.
+- `install_pgedge` installs Postgres before Patroni can manage the cluster.
 
 ## When to Use
 
-Execute this role on **pgedge hosts** in high availability configurations after installing PostgreSQL and etcd:
+Execute this role on pgedge hosts in high availability configurations after
+installing Postgres and etcd.
+
+In the following example, the playbook installs Patroni as part of a high
+availability cluster deployment:
 
 ```yaml
 - hosts: pgedge
@@ -36,106 +39,78 @@ Execute this role on **pgedge hosts** in high availability configurations after 
 ```
 
 !!! important "HA Clusters Only"
-    Patroni is only required for high availability deployments when you enable the `is_ha_cluster` parameter. Standalone PostgreSQL instances do not need Patroni.
+    Only high availability deployments need Patroni; set the `is_ha_cluster`
+    parameter to `true` to enable HA mode. Standalone Postgres instances do
+    not need Patroni.
 
-## Parameters
+## Configuration
 
-This role uses the following configuration parameters:
+This role utilizes several of the collection-wide configuration parameters
+described in the [Configuration section](../configuration/index.md).
 
-* `patroni_bin_dir`
-* `patroni_config_dir`
+Set the parameters in the inventory file as shown in the following example:
 
-## Tasks Performed
+```yaml
+pgedge:
+  vars:
+    patroni_bin_dir: /var/lib/postgresql/.local/bin
+    patroni_config_dir: /etc/patroni
+```
 
-### 1. Installation Check
+Below is a complete list of valid parameters that affect the operation of
+this role:
 
-- Checks if Patroni binary already exists at `{{ patroni_bin_dir }}/patroni`
-- Runs as postgres OS user to check user-specific installation
-- Skips installation if Patroni is already present
+| Option | Use Case |
+|--------|----------|
+| `patroni_bin_dir` | Set the directory for Patroni binaries. |
+| `patroni_config_dir` | Set the directory for Patroni configuration files. |
 
-### 2. Package Prerequisites
+## How It Works
+
+The role installs Patroni using pipx to create an isolated Python environment
+that prevents conflicts with system packages.
+
+1. Check for existing installation.
+    - Check whether the Patroni binary exists at 
+      `{{ patroni_bin_dir }}/patroni`.
+    - Run the check as the postgres OS user for user-specific installations.
+    - Skip the installation process when the role finds an existing binary.
+
+2. Install package prerequisites.
+    - Install the `pipx` package via APT on Debian-family systems.
+    - Install `python3-pip` via DNF on RHEL-family systems.
+    - Install pipx using pip3 for the postgres user on RHEL systems.
+
+3. Install Patroni via pipx.
+    - Install Patroni as the postgres user for proper ownership.
+    - Include the `psycopg2-binary` extra for Postgres connectivity.
+    - Include the `etcd` extra for distributed consensus support.
+    - Create an isolated Python environment in the user home directory.
+
+4. Install the systemd service.
+    - Install the systemd service unit at 
+      `/etc/systemd/system/patroni.service`.
+    - Configure the service to run as the postgres user.
+    - Leave the service disabled; `setup_patroni` handles service startup.
+
+5. Create the configuration directory.
+    - Create the `patroni_config_dir` directory for YAML configuration.
+    - Set ownership to `postgres:postgres` for proper access.
+    - Apply secure permissions with mode 0700.
 
 !!! info "pipx Isolation"
-    This role currently uses pipx for installing Patroni and dependencies.
-    Using pipx creates an isolated Python environment for Patroni, preventing conflicts with system Python packages. This is especially important on Debian 12+ which restricts system-wide pip installations.
+    Using pipx creates an isolated Python environment for Patroni. This
+    approach prevents conflicts with system Python packages and Debian 12+
+    requires pipx because the system restricts system-wide pip installations.
 
-**Debian/Ubuntu Systems:**
+## Usage Examples
 
-- Installs `pipx` package via APT
-- Ensures pipx is available system-wide
+Here are a few examples of how to use this role in an Ansible playbook.
 
-**RHEL/Rocky Linux Systems:**
+### Basic Usage
 
-- Installs `python3-pip` via DNF
-- Installs pipx using pip3 as root
-- Creates pipx environment for postgres OS user
-- Ensures postgres user has pipx in PATH
-
-### 3. Patroni Installation
-
-- Installs Patroni via pipx as postgres user
-- Includes required extras:
-  - `psycopg2-binary` - PostgreSQL database adapter
-  - `etcd` - etcd client library for distributed consensus
-- Creates isolated Python environment
-- Installs binaries to `patroni_bin_dir`
-- Sources bash profile for proper environment setup
-
-### 4. Systemd Service Installation
-
-- Installs systemd service unit file
-- Configures service to run as postgres user
-- Sets up proper dependencies and startup order
-- Service is installed but not enabled or started
-- Actual service configuration is performed by `setup_patroni` role
-
-!!! note "Service Management"
-    This role installs the systemd service but does not enable or start it. The `setup_patroni` role handles service configuration and startup.
-
-### 5. Configuration Directory Creation
-
-- Creates `patroni_config_dir` directory
-- Sets ownership to `postgres:postgres`
-- Applies secure permissions (mode `0700`)
-- Prepares location for Patroni YAML configuration
-
-## Files Generated
-
-### Binaries (via pipx)
-
-- `{{ patroni_bin_dir }}/patroni` - Patroni main binary
-- `{{ patroni_bin_dir }}/patronictl` - Patroni control utility
-- `{{ pg_home }}/.local/share/pipx/venvs/patroni/` - Isolated Python environment
-
-### System Files and Directories
-
-- `/etc/systemd/system/patroni.service` - Systemd service unit
-- `{{ patroni_config_dir }}/` - Configuration directory (empty, populated by setup_patroni)
-
-### User Environment
-
-- Updates postgres user's PATH to include pipx binaries
-- Integrates with `.bash_profile` and `.bashrc`
-
-## Platform-Specific Behavior
-
-### Debian-Family
-
-- Installs pipx from system packages (`pipx` package)
-- pipx is managed by APT and available to all users
-- Uses pipx to install Patroni and prerequisite libraries
-- Patroni installs to `/var/lib/postgresql/.local/bin` by default (`patroni_bin_dir`)
-
-### RHEL-Family
-
-- Installs `python3-pip` first
-- Uses pip to install pipx to postgres user's environment
-- Uses pipx to install Patroni and prerequisite libraries
-- Patroni installs to `/var/lib/pgsql/.local/bin` by default (`patroni_bin_dir`)
-
-## Example Usage
-
-### Basic Installation (HA Cluster)
+In the following example, the playbook installs Patroni for a high
+availability cluster:
 
 ```yaml
 - hosts: pgedge
@@ -148,7 +123,10 @@ This role uses the following configuration parameters:
     - install_patroni
 ```
 
-### Standalone Installation with Custom Binaries Location
+### Custom Binary Location
+
+In the following example, the playbook specifies a custom directory for
+Patroni binaries:
 
 ```yaml
 - hosts: pgedge
@@ -160,20 +138,52 @@ This role uses the following configuration parameters:
     - install_patroni
 ```
 
+## Artifacts
+
+This role generates and modifies files on inventory hosts during execution.
+
+| File | New / Modified | Explanation |
+|------|----------------|-------------|
+| `{{ patroni_bin_dir }}/patroni` | New | Main Patroni binary for cluster management. |
+| `{{ patroni_bin_dir }}/patronictl` | New | Patroni control utility for administration. |
+| `/etc/systemd/system/patroni.service` | New | Systemd service unit for Patroni. |
+| `{{ patroni_config_dir }}/` | New | Configuration directory; populated by `setup_patroni`. |
+| `{{ pg_home }}/.local/share/pipx/venvs/patroni/` | New | Isolated Python environment for Patroni. |
+
+## Platform-Specific Behavior
+
+The role adapts its behavior based on the operating system family.
+
+### Debian Family
+
+On Debian-based systems, the role uses these paths and packages:
+
+| Setting | Value |
+|---------|-------|
+| pipx package | `pipx` via APT |
+| Patroni binary path | `/var/lib/postgresql/.local/bin` |
+| Python environment | `~postgres/.local/share/pipx/venvs/patroni/` |
+
+### RHEL Family
+
+On RHEL-based systems, the role uses these paths and packages:
+
+| Setting | Value |
+|---------|-------|
+| pipx installation | `pip3 install pipx` as root |
+| Patroni binary path | `/var/lib/pgsql/.local/bin` |
+| Python environment | `~postgres/.local/share/pipx/venvs/patroni/` |
+
 ## Idempotency
 
-This role is idempotent and safe to re-run. Subsequent executions will:
+This role is idempotent and safe to re-run on inventory hosts.
 
-- check for existing Patroni binary before installation.
-- skip pipx installation if already present.
-- defer packages maintenance by the operating system once installed.
-- update the service file if the template changes.
+The role skips these operations when the target already exists:
 
-## Notes
+- Skip the Patroni installation when the binary exists.
+- Skip pipx installation when the system already has pipx.
+- Defer package maintenance to the operating system.
 
-You should verify Patroni is installed correctly after installation:
+The role may update these items on subsequent runs:
 
-```bash
-sudo -i -u postgres patroni --version
-sudo -i -u postgres patronictl version
-```
+- Update the systemd service file when the template changes.

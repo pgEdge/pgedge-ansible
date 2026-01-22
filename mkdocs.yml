@@ -97,5 +97,19 @@ nav:
       - setup_pgedge: roles/setup_pgedge.md
       - setup_backrest: roles/setup_backrest.md
   - Usage Examples: usage.md
-  - Troubleshooting: troubleshooting.md
+  - Troubleshooting:
+    - Overview: troubleshooting/index.md
+    - Basic Problems:
+      - Ansible Execution: troubleshooting/ansible.md
+      - Collection Installation: troubleshooting/installation.md
+      - Package Installation: troubleshooting/package.md
+      - pgEdge Software Repository: troubleshooting/repository.md
+      - System Hosts: troubleshooting/system.md
+    - Software-Specific Issues:
+      - Etcd: troubleshooting/etcd.md
+      - HAProxy: troubleshooting/haproxy.md
+      - Patroni: troubleshooting/patroni.md
+      - Postgres: troubleshooting/postgres.md
+      - Spock Extension: troubleshooting/spock.md
+    - Backup and Recovery: troubleshooting/backup.md
   - Release Notes: release_notes.md

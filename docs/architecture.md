@@ -1,57 +1,81 @@
 # Architecture
 
-This page describes the various cluster architectures supported by the pgEdge Ansible Collection, including deployment patterns, component relationships, and design considerations.
+This page describes the cluster architectures supported by the pgEdge Ansible
+Collection, including deployment patterns and design considerations.
 
 ## Overview
 
-The pgEdge Ansible Collection supports multiple cluster topologies, from simple multi-node setups to complex high-availability configurations with geographic distribution. Understanding these patterns will help you choose the right architecture for your requirements.
+The pgEdge Ansible Collection supports multiple cluster topologies, from simple
+multi-node setups to complex high-availability configurations with geographic
+distribution. Understanding these patterns will help you choose the right
+architecture for your requirements.
 
 ## Core Concepts
 
+Deploying effective Postgres cluster architectures requires familiarity with 
+the fundamental building blocks of the pgEdge Ansible Collection. These core 
+concepts provide the foundational knowledge needed to properly configure and 
+manage Postgres deployments across various topologies. The collection's 
+architecture relies upon logical groupings and coordination mechanisms that 
+ensure high availability, disaster recovery, and efficient replication.
+
 ### Zones
 
-A **zone** represents a logical grouping of nodes, typically corresponding to a data center, availability zone, or geographic region. Zones serve the following purposes:
+A zone represents a logical grouping of nodes, typically corresponding to a
+data center, availability zone, or geographic region. Zones serve the
+following purposes:
 
-- Logical organization to group related nodes together
-- Snowflake IDs where each zone number becomes the sequence ID for nodes in that zone
-- HA boundaries where Patroni/etcd clusters are formed within each zone
-- Replication topology where subscriptions are established between zones
+- Zones provide logical organization to group related nodes together.
+- Each zone number becomes the Snowflake sequence ID for nodes in that zone.
+- Patroni and etcd clusters form within each zone to define HA boundaries.
+- Spock establishes subscriptions between zones for replication topology.
 
 !!! tip "Zone Assignment"
-    In simple clusters, use one node per zone. In HA clusters, assign multiple nodes to the same zone to form a Patroni cluster.
+    In simple clusters, use one node per zone. In HA clusters, assign multiple
+    nodes to the same zone to form a Patroni cluster.
 
 ### Node Groups
 
 The collection recognizes the following inventory groups:
 
-- pgedge: PostgreSQL nodes that participate in distributed replication
-- haproxy: Load balancer nodes for HA clusters (optional)
-- backup: Dedicated backup servers for pgBackRest (optional)
+- The `pgedge` group contains Postgres nodes in distributed replication.
+- The `haproxy` group contains load balancer nodes for HA clusters.
+- The `backup` group contains dedicated backup servers for pgBackRest.
 
 ## Architecture Patterns
 
+The pgEdge Ansible Collection supports multiple cluster topologies designed to 
+meet different requirements for availability, scalability, and geographic 
+distribution. Each architecture pattern offers distinct advantages and 
+trade-offs in terms of complexity, resource usage, and fault tolerance. 
+Understanding these patterns makes it possible to select the most appropriate 
+configuration for your specific use case, 
+
 ### Simple Three-Node Cluster
 
-The simplest deployment consists of three pgEdge nodes in separate zones with direct node-to-node replication.
+The simplest deployment consists of three pgEdge nodes in separate zones with
+direct node-to-node replication.
 
 ![Simple 3-Node Cluster](img/simple-cluster.png)
 
-**Characteristics:**
+This cluster type has the following characteristics:
 
-- Each node is in its own zone
-- Full mesh replication between all nodes
-- No automatic failover within zones
-- Simple to deploy and manage
+- Each node resides in its own zone.
+- Full mesh replication occurs between all nodes.
+- No automatic failover exists within zones.
+- Deployment and management are straightforward.
 
-**Use Cases:**
+Use this cluster type for the following scenarios:
 
-- Development, testing, or small production deployments
-- Low impact regional databases with active-active requirements
+- Development, testing, or small production deployments benefit from simplicity.
+- Low impact regional databases with active-active requirements work well.
 
 !!! warning "Important"
-    This type of cluster is not recommended for production use. Since no nodes are protected by a physical replica, it's possible to experience data loss in the event of node failure.
+    This cluster type is not recommended for production use. Since no nodes
+    are protected by a physical replica, data loss can occur during node
+    failure.
 
-**Inventory Example:**
+In the following example, each node is assigned to a separate zone:
 
 ```yaml
 pgedge:
@@ -66,26 +90,28 @@ pgedge:
 
 ### High-Availability Single-Zone Cluster
 
-A single-zone HA cluster provides automatic failover within a zone using Patroni and etcd.
+A single-zone HA cluster provides automatic failover within a zone using
+Patroni and etcd.
 
 ![Single Zone HA Cluster](img/ha-cluster-1-zone.png)
 
-**Characteristics:**
+This cluster type has the following characteristics:
 
-- Multiple nodes in a single zone
-- Automatic failover using Patroni
-- Distributed consensus with etcd
-- HAProxy provides single connection endpoint
-- Streaming replication within the zone
-- No multi-zone replication
+- Multiple nodes reside in a single zone.
+- Automatic failover uses Patroni for leader election.
+- Distributed consensus relies on etcd for coordination.
+- HAProxy provides a single connection endpoint for applications.
+- Streaming replication operates within the zone.
+- No multi-zone replication occurs in this configuration.
 
-**Use Cases:**
+Use this cluster type for the following scenarios:
 
-- High availability within a single data center
-- Development/testing of HA features
-- Prerequisites for multi-zone HA clusters
+- High availability within a single data center suits most workloads.
+- Development and testing of HA features benefit from this topology.
+- This topology serves as a prerequisite for multi-zone HA clusters.
 
-**Inventory Example:**
+In the following example, all nodes share the same zone to form a Patroni
+cluster:
 
 ```yaml
 pgedge:
@@ -100,25 +126,27 @@ pgedge:
 
 ### Ultra-HA Multi-Zone Cluster
 
-The most robust architecture combines HA within zones with distributed replication between zones, which is our standard Ultra HA configuration.
+The most robust architecture combines HA within zones with distributed
+replication between zones; this is the standard Ultra HA configuration.
 
 ![Two Zone Ultra HA Cluster](img/ultra-ha-cluster-2-zone.png)
 
-**Characteristics:**
+This cluster type has the following characteristics:
 
-- Multiple zones, each with its own Patroni cluster
-- Automatic failover within each zone
-- Spock replication between zones through HAProxy
-- Geographic distribution for disaster recovery
-- High availability at both zone and cluster levels
-- Survives complete zone failures
+- Multiple zones each contain their own Patroni cluster.
+- Automatic failover occurs within each zone independently.
+- Spock replication connects zones through HAProxy endpoints.
+- Geographic distribution provides disaster recovery capabilities.
+- High availability exists at both zone and cluster levels.
+- The cluster survives complete zone failures without data loss.
 
-**Use Cases:**
+Use this cluster type for the following scenarios:
 
-- Multi-region deployments that need local write speeds
-- Environments that need the highest HA guarantee
+- Multi-region deployments benefit from local write speeds.
+- Environments requiring the highest HA guarantee use this topology.
 
-**Inventory Example:**
+In the following example, nodes are distributed across two zones with HAProxy
+in each zone:
 
 ```yaml
 pgedge:
@@ -148,50 +176,70 @@ haproxy:
 
 ### Hybrid Cluster
 
-A hybrid cluster mixes single pgEdge nodes with HA deployments, useful for testing or transitional deployments.
+A hybrid cluster mixes single pgEdge nodes with HA deployments; this topology
+is useful for testing or transitional deployments.
 
 ![Hybrid HA Cluster](img/ultra-ha-cluster-hybrid.png)
 
-**Characteristics:**
+This cluster type has the following characteristics:
 
-- Mix of simple and HA zones
-- Simple nodes connect directly
-- HA nodes connect through HAProxy
-- Flexible for migration scenarios
-- Useful for testing HA features
+- The cluster contains a mix of simple and HA zones.
+- Simple nodes connect directly to other nodes.
+- HA nodes connect through HAProxy for load balancing.
+- This topology provides flexibility for migration scenarios.
+- Testing HA features becomes easier with this configuration.
 
 ## Component Architecture
 
+The pgEdge Ansible Collection implements a layered architecture that combines 
+proven Postgres technologies with modern orchestration practices to deliver 
+robust and scalable database deployments. This component-based approach ensures 
+that each layer serves a specific purpose in the overall architecture while 
+maintaining clear separation of concerns. Understanding how these components 
+interact provides insight into the collection's capabilities and helps in 
+troubleshooting and optimization.
+
 ### Replication Stack
 
-The collection uses a layered replication approach to maximize availability and minimize write latency.
+The collection uses a layered replication approach to maximize availability
+and minimize write latency.
 
-**Streaming Replication (within zone):**
+Streaming replication operates within zones with these characteristics:
 
-- Physical replication managed by Patroni
-- Synchronous or asynchronous modes available
-- Provides hot standby servers
-- Automatic failover on primary failure
+- Patroni manages physical replication between nodes.
+- Administrators can choose synchronous or asynchronous modes.
+- Hot standby servers provide read scalability.
+- Automatic failover activates when the primary fails.
 
-**Spock Replication (between zones):**
+Spock replication operates between zones with these characteristics:
 
-- Logical multi-master replication
-- Bidirectional data flow
-- Conflict detection and resolution
-- Row-level replication
+- Logical multi-master replication enables writes on any node.
+- Bidirectional data flow keeps all zones synchronized.
+- Conflict detection and resolution handle concurrent writes.
+- Row-level replication minimizes bandwidth usage.
 
 ### Backup Architecture
 
-The collection currently supports a regional backup strategy, where a backup server will target nodes in the same region. Alternatively, backups may be transmitted to a remote S3 store.
+The collection supports a regional backup strategy where a backup server
+targets nodes in the same region. Alternatively, backups may be transmitted
+to a remote S3 store.
 
 Backup options include the following:
 
-- SSH mode: Dedicated backup servers per zone
-- S3 mode: Cloud object storage (AWS S3 or compatible)
-- Per-zone backups: Each zone maintains its own backup repository
-- Automated scheduling: Cron-based full and differential backups
+- SSH mode provides dedicated backup servers per zone.
+- S3 mode uses cloud object storage such as AWS S3 or compatible services.
+- Per-zone backups ensure each zone maintains its own backup repository.
+- Automated scheduling uses cron-based full and differential backups.
 
 ## Design Considerations
+
+When implementing Postgres clusters with the pgEdge Ansible Collection, 
+it's important to evaluate several factors to ensure optimal performance, 
+reliability, and maintainability. These design considerations influence every 
+aspect of your deployment, from initial topology selection to ongoing 
+maintenance strategies. Addressing these factors proactively will help mitigate 
+potential issues and ensure your cluster meets both current requirements and 
+future scalability needs.
 
 ### Choosing a Topology
 
@@ -199,60 +247,62 @@ Consider these factors when selecting your architecture:
 
 | Factor | Simple Cluster | HA Cluster | Ultra-HA |
 |--------|----------------|------------|----------|
-| **Deployment Complexity** | Low | Medium | High |
-| **Automatic Failover** | No | Within zone | Within & between zones |
-| **Resource Requirements** | 3+ nodes | 6+ nodes | 8+ nodes |
-| **Geographic Distribution** | Yes | No | Yes |
-| **Maintenance Complexity** | Low | Medium | High |
-| **Cost** | Lower | Medium | Higher |
+| Deployment Complexity | Low | Medium | High |
+| Automatic Failover | No | Within zone | Within and between zones |
+| Resource Requirements | 3+ nodes | 6+ nodes | 8+ nodes |
+| Geographic Distribution | Yes | No | Yes |
+| Maintenance Complexity | Low | Medium | High |
+| Cost | Lower | Medium | Higher |
 
 ### Scalability
 
-**Adding Nodes:**
+Adding nodes follows these patterns:
 
-- Simple clusters: Add nodes to new zones
-- HA clusters: Add nodes to existing zones (requires Patroni reconfiguration)
-- Hybrid: Mix approaches as needed
+- Simple clusters add nodes to new zones for horizontal scaling.
+- HA clusters add nodes to existing zones but require Patroni changes.
+- Hybrid clusters mix approaches as needed for flexibility.
 
-**Adding Zones:**
+Adding zones follows these patterns:
 
-- Scales linearly with proper configuration
-- Each zone adds one subscription per existing zone
-- Total subscriptions = n * (n-1) where n = number of zones
+- The cluster scales linearly with proper configuration.
+- Each zone adds one subscription per existing zone.
+- Total subscriptions equal n * (n-1) where n is the number of zones.
 
 ### Network Requirements
 
-Consider network latency and bandwidth:
+Consider network latency and bandwidth when planning your deployment:
 
-- **Within zone**: Low latency required for Patroni/etcd (<10ms recommended)
-- **Between zones**: Higher latency tolerable (depends on replication lag tolerance)
-- **Bandwidth**: Sufficient for replication traffic between zones
+- Connections within a zone require low latency for Patroni and etcd.
+- Connections between zones tolerate higher latency based on lag tolerance.
+- Bandwidth must be sufficient for replication traffic between zones.
 
 ### Consistency Models
 
-**Within HA Zone:**
+Within an HA zone, operators can configure the following consistency options:
 
-- Can be configured for synchronous replication
-- Synchronous mode ensures zero data loss within zone
-- Synchronous strict mode prevents writes if replicas unavailable
+- Enable synchronous replication to achieve zero data loss.
+- Synchronous mode ensures all writes reach at least one replica.
+- Synchronous strict mode prevents writes if no replicas respond.
 
-**Between Zones:**
+Between zones, the following consistency model applies:
 
-- Asynchronous logical replication via Spock
-- Eventual consistency model
-- Conflict resolution strategies available
+- Asynchronous logical replication via Spock provides eventual consistency.
+- Conflict resolution strategies handle concurrent writes to different zones.
 
 ## Best Practices
 
-1. Start simple by beginning with a simple cluster and migrating to HA when needed.
-2. Plan zones by aligning them with physical infrastructure boundaries.
-3. Test network latency and bandwidth between zones before deployment.
-4. Configure backups, preferably to separate infrastructure, for all deployments.
-5. Implement monitoring for replication lag and cluster health.
-6. Document your specific topology and connection details for reference.
+Avoid surprises by applying the following checklist to your pgEdge Ansible 
+deployments:
+
+- Start small by beginning with a simple cluster and migrate to HA later.
+- Plan zones by aligning them with physical infrastructure boundaries.
+- Test network latency and bandwidth between zones before deployment.
+- Configure backups to separate infrastructure for all deployments.
+- Implement monitoring for replication lag and cluster health.
+- Document your specific topology and connection details for reference.
 
 ## Next Steps
 
-- Review [configuration variables](configuration.md) to customize your deployment
-- Examine [sample playbooks](usage.md) for practical examples
-- Understand the [roles](roles/index.md) that implement these architectures
+- Review [configuration variables](configuration/index.md) for customization.
+- Examine [sample playbooks](usage.md) for practical examples.
+- Understand the [roles](roles/index.md) that implement these architectures.

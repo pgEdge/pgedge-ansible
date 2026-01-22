@@ -1,12 +1,15 @@
 # etcd Configuration
 
-The `install_etcd` and `setup_etcd` are the principal owners for the parameters described in this page. In most cases, the defaults are sufficient to build a fully operational DCS layer for Patroni.
+The `install_etcd` and `setup_etcd` roles manage the parameters described on
+this page. In most cases, the defaults are sufficient to build a fully
+operational DCS layer for Patroni.
 
 ## etcd_version
 
 - Type: String
 - Default: `3.6.5`
-- Description: This parameter specifies the etcd version to download and install.
+- Description: This parameter specifies the etcd version to download and
+  install.
 
 ```yaml
 etcd_version: "3.6.7"
@@ -16,7 +19,8 @@ etcd_version: "3.6.7"
 
 - Type: String
 - Default: `https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}`
-- Description: This parameter specifies the base URL for etcd downloads. You can customize this parameter for air-gapped environments or local mirrors.
+- Description: This parameter specifies the base URL for etcd downloads. You
+  can customize this parameter for air-gapped environments or local mirrors.
 
 ```yaml
 etcd_base_url: "https://my-mirror.local/etcd/v{{ etcd_version }}"
@@ -26,13 +30,15 @@ etcd_base_url: "https://my-mirror.local/etcd/v{{ etcd_version }}"
 
 - Type: String
 - Default: `sha256:{{ etcd_base_url }}/SHA256SUMS`
-- Description: This parameter specifies the URL to the SHA256 checksum file for download verification.
+- Description: This parameter specifies the URL to the SHA256 checksum file
+  for download verification.
 
 ## etcd_package
 
 - Type: String
 - Default: `etcd-v{{ etcd_version }}-linux-amd64`
-- Description: This parameter specifies the etcd package filename (architecture-specific).
+- Description: This parameter specifies the etcd package filename. The value
+  is architecture-specific.
 
 ```yaml
 etcd_package: etcd-v{{ etcd_version }}-linux-arm64
@@ -42,7 +48,8 @@ etcd_package: etcd-v{{ etcd_version }}-linux-arm64
 
 - Type: String
 - Default: `etcd`
-- Description: This parameter specifies the system user for running the etcd service.
+- Description: This parameter specifies the system user for running the etcd
+  service.
 
 ```yaml
 etcd_user: etcd-sys
@@ -62,7 +69,8 @@ etcd_group: etcd-sys
 
 - Type: String
 - Default: `/usr/local/etcd`
-- Description: This parameter specifies the directory where etcd binaries are installed.
+- Description: This parameter specifies the directory where the roles install
+  etcd binaries.
 
 ```yaml
 etcd_install_dir: /opt/etcd
@@ -72,7 +80,8 @@ etcd_install_dir: /opt/etcd
 
 - Type: String
 - Default: `/etc/etcd`
-- Description: This parameter specifies the directory for etcd configuration files.
+- Description: This parameter specifies the directory for etcd configuration
+  files.
 
 ```yaml
 etcd_config_dir: /usr/local/etc/etcd
@@ -82,7 +91,8 @@ etcd_config_dir: /usr/local/etc/etcd
 
 - Type: String
 - Default: `/var/lib/etcd`
-- Description: This parameter specifies the directory for etcd data storage and cluster state.
+- Description: This parameter specifies the directory for etcd data storage
+  and cluster state.
 
 ```yaml
 etcd_data_dir: /data/etcd

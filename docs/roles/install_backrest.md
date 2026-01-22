@@ -1,30 +1,33 @@
 # install_backrest
 
-## Overview
+The `install_backrest` role installs pgBackRest, a modern backup and restore
+solution for Postgres. The role also installs the cron service so the
+`setup_backrest` role can schedule automated backups.
 
-The `install_backrest` role installs pgBackRest, a modern backup and restore solution for PostgreSQL. It also ensures the cron service is installed and available for scheduling automated backups.
+The role performs the following tasks on inventory hosts:
 
-## Purpose
-
-The role performs the following tasks:
-
-- installs pgBackRest from pgEdge repositories.
-- installs the cron service for backup scheduling.
-- prepares the system for PostgreSQL backup and recovery operations.
-- enables both full and incremental backup capabilities.
+- Install the pgBackRest package from pgEdge repositories.
+- Install the cron service for backup scheduling.
+- Prepare the system for Postgres backup and recovery operations.
 
 ## Role Dependencies
 
-- `role_config`: Provides shared configuration variables
-- `init_server`: You must initialize all servers
-- `install_repos`: You must configure repositories first
+This role requires the following roles for normal operation:
+
+- `role_config` provides shared configuration variables to the role.
+- `init_server` prepares the target system for package installation.
+- `install_repos` configures pgEdge package repositories.
 
 ## When to Use
 
-Execute this role on **all pgedge hosts** and **backup servers** where pgBackRest will be used:
+Execute this role on all pgedge hosts and backup servers where pgBackRest
+will manage backups.
+
+In the following example, the playbook installs pgBackRest on Postgres nodes
+and a dedicated backup server:
 
 ```yaml
-# Install on PostgreSQL nodes
+# Install on Postgres nodes
 - hosts: pgedge
   collections:
     - pgedge.platform
@@ -41,72 +44,44 @@ Execute this role on **all pgedge hosts** and **backup servers** where pgBackRes
     - install_backrest
 ```
 
-## Parameters
+## Configuration
 
-This role uses no custom parameters. All configuration is handled through package installation.
+This role uses no custom parameters. All configuration happens through package
+installation.
 
-## Tasks Performed
+## How It Works
 
-### 1. Package Installation
+The role installs pgBackRest and cron packages using the system package
+manager with retry logic to handle transient issues.
 
-Installs the following packages:
+1. Install the pgBackRest package.
+    - Install the `pgedge-pgbackrest` package from pgEdge repositories.
+    - Provide CLI utilities for backup and restore operations.
+    - Create the default configuration directory at `/etc/pgbackrest/`.
 
-!!! note "Backup and Restore"
-    This role only installs pgBackRest. Actual backup configuration, repository setup, and scheduling is handled by the `setup_backrest` role.
+2. Install the cron service.
+    - Install `cronie` on RHEL-family systems for Vixie cron support.
+    - Install `cron` on Debian-family systems for the standard daemon.
+    - Enable backup scheduling when `setup_backrest` runs later.
 
-**pgBackRest Package:**
+3. Apply retry logic for reliability.
+    - Attempt installation up to 5 times to handle transient failures.
+    - Wait 20 seconds between retries.
+    - Use a 300-second lock timeout for the package manager.
+    - Update the package cache before each installation attempt.
 
-This role focuses on installing the `pgedge-pgbackrest` system package for the pgBackRest backup utility. This package includes all standard backup and restore tools and provides both CLI utilities and configuration management.
+!!! note "Backup Configuration"
+    This role only installs pgBackRest. The `setup_backrest` role handles
+    backup configuration, repository setup, and scheduling.
 
-**Cron Service:**
+## Usage Examples
 
-The `setup_backrest` role requires cron to configure backup schedules. Cron packaging is not always standardized across Linux variants. As a result, we use different packages for the main Linux families:
+Here are a few examples of how to use this role in an Ansible playbook.
 
-- RHEL/Rocky: `cronie` - Vixie cron implementation
-- Debian/Ubuntu: `cron` - Standard cron daemon
+### Basic Usage
 
-### 2. Retry Logic
-
-The role includes robust retry logic, and will:
-
-- attempt installation up to 5 times.
-- wait 20 seconds between retries.
-- handle transient network or repository issues.
-- include lock timeout of 300 seconds for package manager.
-- update package cache before installation.
-
-## Files Generated
-
-This role installs system packages which create:
-
-### Binaries
-
-- `/usr/bin/pgbackrest` - Main pgBackRest executable
-
-### Configuration Directories
-
-- `/etc/pgbackrest/` - Default configuration directory (empty until `setup_backrest`)
-- `/var/log/pgbackrest/` - Log directory
-
-## Platform-Specific Behavior
-
-### Debian-Family
-
-- Installs `cron` package for scheduling
-- Uses APT package manager
-- Package: `pgedge-pgbackrest`
-- Cron service: `cron.service`
-
-### RHEL-Family
-
-- Installs `cronie` package for scheduling
-- Uses DNF package manager
-- Package: `pgedge-pgbackrest`
-- Cron service: `crond.service`
-
-## Example Usage
-
-### Basic Installation
+In the following example, the playbook installs pgBackRest after configuring
+the pgEdge repositories:
 
 ```yaml
 - hosts: pgedge
@@ -117,23 +92,10 @@ This role installs system packages which create:
     - install_backrest
 ```
 
-### Install on All Cluster Components
+### Full Cluster Installation
 
-```yaml
-# Install on PostgreSQL nodes (backup clients)
-- hosts: pgedge
-  roles:
-    - install_repos
-    - install_backrest
-
-# Install on dedicated backup server (backup repository)
-- hosts: backup
-  roles:
-    - install_repos
-    - install_backrest
-```
-
-### Installation with Other Components
+In the following example, the playbook installs pgBackRest as part of a
+complete pgEdge deployment with backup configuration:
 
 ```yaml
 - hosts: pgedge
@@ -148,18 +110,51 @@ This role installs system packages which create:
     - setup_backrest
 ```
 
+## Artifacts
+
+This role installs system packages that create the following files.
+
+| File | New / Modified | Explanation |
+|------|----------------|-------------|
+| `/usr/bin/pgbackrest` | New | Main pgBackRest executable for backup and restore operations. |
+| `/etc/pgbackrest/` | New | Default configuration directory; remains empty until `setup_backrest` runs. |
+| `/var/log/pgbackrest/` | New | Log directory for pgBackRest operations. |
+
+## Platform-Specific Behavior
+
+The role adapts its behavior based on the operating system family.
+
+### Debian Family
+
+On Debian-based systems, the role uses these packages and service names:
+
+| Setting | Value |
+|---------|-------|
+| pgBackRest package | `pgedge-pgbackrest` |
+| Cron package | `cron` |
+| Cron service | `cron.service` |
+| Package manager | APT |
+
+### RHEL Family
+
+On RHEL-based systems, the role uses these packages and service names:
+
+| Setting | Value |
+|---------|-------|
+| pgBackRest package | `pgedge-pgbackrest` |
+| Cron package | `cronie` |
+| Cron service | `crond.service` |
+| Package manager | DNF |
+
 ## Idempotency
 
-This role is idempotent and safe to re-run. Subsequent executions will:
+This role is idempotent and safe to re-run on inventory hosts.
 
-- make no changes if the packages are already installed.
-- update to the latest package version if available.
-- make no configuration changes (the `setup_backrest` role handles those).
+The role skips these operations when the target already exists:
 
-## Notes
+- Skip package installation when the system already has packages at the
+  required version.
 
-You should verify pgBackRest is installed correctly after installation:
+The role may update these items on subsequent runs:
 
-```bash
-pgbackrest version
-```
+- Update packages to the latest available version when newer versions exist.

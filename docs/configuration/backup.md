@@ -1,6 +1,8 @@
 # Backup Configuration
 
-The pgEdge Ansible collection provides pgBackRest as the default backup management software. The following settings control how backup functionality behaves. The `install_backrest` and `setup_backrest` roles mainly use these variables.
+The pgEdge Ansible collection provides pgBackRest as the default backup
+management software. The following settings control how backup functionality
+behaves. The `install_backrest` and `setup_backrest` roles use these variables.
 
 ## backup_repo_type
 
@@ -9,8 +11,8 @@ The pgEdge Ansible collection provides pgBackRest as the default backup manageme
 - Options: `ssh`, `s3`
 - Description: This parameter specifies the PgBackRest repository type.
 
-    - `ssh` - Dedicated backup server (requires `backup` host group)
-    - `s3` - AWS S3 or compatible object storage
+    - The `ssh` value requires a dedicated backup server in the `backup` group.
+    - The `s3` value uses AWS S3 or compatible object storage.
 
 ```yaml
 backup_repo_type: ssh
@@ -19,8 +21,10 @@ backup_repo_type: ssh
 ## backup_host
 
 - Type: String
-- Default: First node in `backup` group in the same zone
-- Description: This parameter specifies the hostname of the backup server for SSH mode.
+- Default: The collection selects the first node in the `backup` group within
+  the same zone.
+- Description: This parameter specifies the hostname of the backup server when
+  using SSH mode.
 
 ```yaml
 backup_host: backup1.example.com
@@ -30,7 +34,8 @@ backup_host: backup1.example.com
 
 - Type: String
 - Default: `{{ ansible_user_id }}`
-- Description: This parameter specifies the OS user that owns the PgBackRest repository (SSH mode only).
+- Description: This parameter specifies the OS user that owns the PgBackRest
+  repository when using SSH mode.
 
 ```yaml
 backup_repo_user: backrest
@@ -40,7 +45,8 @@ backup_repo_user: backrest
 
 - Type: String
 - Default: `/home/backrest`
-- Description: This parameter specifies the full path to the PgBackRest repository storage location.
+- Description: This parameter specifies the full path to the PgBackRest
+  repository storage location.
 
 ```yaml
 backup_repo_path: /backup/pgbackrest
@@ -50,7 +56,8 @@ backup_repo_path: /backup/pgbackrest
 
 - Type: String
 - Default: `backrest`
-- Description: This parameter specifies the database username for backups (SSH mode only).
+- Description: This parameter specifies the database username for backups when
+  using SSH mode.
 
 ```yaml
 backup_user: backrest
@@ -60,7 +67,8 @@ backup_user: backrest
 
 - Type: String
 - Default: `secret`
-- Description: This parameter specifies the password for the backup database user.
+- Description: This parameter specifies the password for the backup database
+  user.
 
 ```yaml
 backup_password: "{{ vault_backup_password }}"
@@ -70,7 +78,8 @@ backup_password: "{{ vault_backup_password }}"
 
 - Type: String
 - Default: `aes-256-cbc`
-- Description: This parameter specifies the encryption algorithm for backup files.
+- Description: This parameter specifies the encryption algorithm for backup
+  files.
 
 ```yaml
 backup_repo_cipher_type: aes-256-cbc
@@ -79,8 +88,10 @@ backup_repo_cipher_type: aes-256-cbc
 ## backup_repo_cipher
 
 - Type: String
-- Default: Auto-generated from cluster name
-- Description: This parameter specifies the encryption cipher for backup files. The roles generate a deterministic random string when you do not specify this parameter.
+- Default: Auto-generated from cluster name.
+- Description: This parameter specifies the encryption cipher for backup files.
+  The roles generate a deterministic random string when you do not specify this
+  parameter.
 
 !!! warning "Important"
     Store this value securely. Lost ciphers make backups unrecoverable.
@@ -103,7 +114,8 @@ full_backup_count: 2
 
 - Type: Integer
 - Default: `6`
-- Description: This parameter specifies the number of differential backups to retain.
+- Description: This parameter specifies the number of differential backups to
+  retain.
 
 ```yaml
 diff_backup_count: 7
@@ -113,7 +125,8 @@ diff_backup_count: 7
 
 - Type: String (cron format)
 - Default: `10 0 * * 0` (Sundays at 00:10)
-- Description: This parameter specifies the cron schedule for automated full backups.
+- Description: This parameter specifies the cron schedule for automated full
+  backups.
 
 ```yaml
 full_backup_schedule: "0 2 * * 0"  # Sundays at 2:00 AM
@@ -123,7 +136,8 @@ full_backup_schedule: "0 2 * * 0"  # Sundays at 2:00 AM
 
 - Type: String (cron format)
 - Default: `10 0 * * 1-6` (Monday-Saturday at 00:10)
-- Description: This parameter specifies the cron schedule for automated differential backups.
+- Description: This parameter specifies the cron schedule for automated
+  differential backups.
 
 ```yaml
 diff_backup_schedule: "0 2 * * 1-6"  # Mon-Sat at 2:00 AM
@@ -143,7 +157,9 @@ diff_backup_schedule: "0 2 * * 1-6"  # Mon-Sat at 2:00 AM
       secret_key: ''
     ```
 
-- Description: This parameter provides configuration for S3 backup repositories. You must specify this parameter when you set the `backup_repo_type` parameter to `s3`.
+- Description: This parameter provides configuration for S3 backup
+  repositories. You must specify this parameter when you set the
+  `backup_repo_type` parameter to `s3`.
 
 ```yaml
 backup_repo_params:

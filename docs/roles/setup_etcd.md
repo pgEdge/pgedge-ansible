@@ -1,27 +1,31 @@
 # setup_etcd
 
-## Overview
+The `setup_etcd` role configures and starts etcd as a distributed consensus
+cluster for high availability Postgres deployments. The role creates the etcd
+configuration file with cluster membership and starts the etcd service on all
+nodes in a zone.
 
-The `setup_etcd` role configures and starts etcd as a distributed consensus cluster for high availability PostgreSQL deployments. It creates the etcd configuration file with cluster membership and starts the etcd service on all nodes in a zone.
+The role performs the following tasks on inventory hosts:
 
-## Purpose
-
-The role performs the following tasks:
-
-- generates the etcd cluster configuration file.
-- configures cluster membership for all nodes in each zone.
-- sets appropriate network endpoints and URLs.
-- enables and starts etcd service.
-- establishes distributed key-value store for Patroni.
+- Generate the etcd cluster configuration file with node membership.
+- Configure cluster membership for all nodes within each zone.
+- Set appropriate network endpoints and peer URLs.
+- Enable and start the etcd service for cluster formation.
+- Establish a distributed key-value store for Patroni coordination.
 
 ## Role Dependencies
 
-- `role_config`: Provides shared configuration variables
-- `install_etcd`: You must install etcd binaries and service
+This role requires the following roles for normal operation:
+
+- `role_config` provides shared configuration variables to the role.
+- `install_etcd` installs etcd binaries and the systemd service file.
 
 ## When to Use
 
-Execute this role on **pgedge hosts** in high availability configurations after installing etcd:
+Execute this role on pgedge hosts in high availability configurations after
+installing etcd.
+
+In the following example, the playbook invokes the role after installing etcd:
 
 ```yaml
 - hosts: pgedge
@@ -34,114 +38,111 @@ Execute this role on **pgedge hosts** in high availability configurations after 
 ```
 
 !!! important "HA Clusters Only"
-    This role is only required for high availability deployments when you enable the `is_ha_cluster` parameter. Standalone PostgreSQL instances do not need etcd.
+    This role is only required for high availability deployments when you
+    enable the `is_ha_cluster` parameter; standalone Postgres instances do
+    not need etcd.
 
-## Parameters
+## Configuration
 
-This role uses the following configuration parameters:
+This role utilizes several of the collection-wide configuration parameters
+described in the [Configuration section](../configuration/index.md).
 
-* `etcd_user`
-* `etcd_group`
-* `etcd_install_dir`
-* `etcd_config_dir`
-* `etcd_data_dir`
+Set the parameters in the inventory file as shown in the following example:
 
-## Tasks Performed
+```yaml
+pgedge:
+  vars:
+    is_ha_cluster: true
+    etcd_data_dir: /var/lib/etcd
+```
 
-### 1. Configuration Check
+Below is a complete list of valid parameters that affect the operation of
+this role:
 
-- Checks if etcd data directory for PostgreSQL cluster exists
-- Looks for `{{ etcd_data_dir }}/postgresql` directory
-- Skips setup if cluster is already configured
+| Option | Use Case |
+|--------|----------|
+| `etcd_user` | System user that owns the etcd process. |
+| `etcd_group` | System group for etcd file ownership. |
+| `etcd_install_dir` | Directory containing etcd binaries. |
+| `etcd_config_dir` | Directory for etcd configuration files. |
+| `etcd_data_dir` | Directory for etcd cluster data storage. |
 
-### 2. Configuration Directory Creation
+## How It Works
 
-- Creates `etcd_config_dir` directory
-- Sets ownership to `etcd:etcd`
-- Ensures proper permissions for configuration files
+The role configures etcd for distributed consensus within each zone.
 
-### 3. Cluster Configuration File Generation
+### Cluster Setup
 
-Creates `{{ etcd_config_dir }}/etcd.yaml` with:
+When the role runs on pgedge hosts, it performs these steps:
+
+1. Check for existing cluster configuration.
+    - Look for the `{{ etcd_data_dir }}/postgresql` directory.
+    - Skip setup when the cluster is already configured.
+
+2. Create the configuration directory.
+    - Create `etcd_config_dir` directory with proper ownership.
+    - Set ownership to `etcd:etcd` for the service user.
+
+3. Generate the cluster configuration file.
+    - Create `{{ etcd_config_dir }}/etcd.yaml` with cluster settings.
+    - Configure node identity with hostname and advertise URLs.
+    - Set initial cluster membership for all nodes in the zone.
+    - Configure network endpoints for client and peer communication.
+    - Set the data directory to `{{ etcd_data_dir }}/postgresql`.
+
+4. Start the etcd service.
+    - Enable the etcd service for automatic startup.
+    - Start the etcd service to begin cluster formation.
+
+!!! info "Zone Isolation"
+    etcd clusters are isolated per zone; each zone has its own independent
+    etcd cluster for Patroni coordination within that zone.
+
+!!! important "Cluster Formation"
+    All nodes in the etcd cluster must be started within a reasonable time
+    window to form quorum; if nodes are started too far apart, cluster
+    formation may fail.
+
+### Configuration Details
+
+The generated configuration file includes the following settings.
 
 **Node Identity:**
 
-- `name`: Node's hostname
-- `advertise-client-urls`: HTTP URL for client connections (port 2379)
-- `initial-advertise-peer-urls`: HTTP URL for peer communication (port 2380)
+- `name` contains the node hostname.
+- `advertise-client-urls` specifies the HTTP URL for client connections.
+- `initial-advertise-peer-urls` specifies the HTTP URL for peer communication.
 
 **Cluster Membership:**
 
-- `initial-cluster`: List of all nodes in zone with peer URLs
-- Format: `hostname1=http://host1:2380,name2=http://host2:2380,...`
-- Automatically includes all nodes from `nodes_in_zone` variable
-
-!!! info "Zone Isolation"
-    etcd clusters are isolated per zone. Each zone has its own independent etcd cluster for Patroni coordination within that zone.
-
-**Cluster State:**
-
-- `initial-cluster-state`: Set to `new` for initial bootstrap
-- `initial-cluster-token`: `pgedge_cluster` for cluster identification
-
-!!! warning "Initial State"
-    The role uses `new` as the initial cluster state to establish node consensus. This role cannot (yet) add new etcd nodes after this bootstrap phase, so new nodes must be added manually with `etcdctl`.
+- `initial-cluster` lists all nodes in the zone with peer URLs.
+- `initial-cluster-state` uses the value `new` for initial bootstrap.
+- `initial-cluster-token` identifies the cluster as `pgedge_cluster`.
 
 **Network Configuration:**
 
-- `listen-client-urls`: Listens on node IP and localhost (port 2379)
-- `listen-peer-urls`: Listens on node IP for peer communication (port 2380)
-
-**Data Storage:**
-
-- `data-dir`: `{{ etcd_data_dir }}/postgresql` for cluster data
-
-!!! warning "Data Directory"
-    The etcd data directory contains critical cluster state. Back up this directory before making cluster changes. Loss of quorum (majority of nodes) will make the cluster unavailable.
+- `listen-client-urls` listens on the node IP and localhost on port 2379.
+- `listen-peer-urls` listens on the node IP for peer communication on port
+  2380.
 
 **Timeouts:**
 
-- `dial-timeout`: 20 seconds
-- `read-timeout`: 20 seconds
-- `write-timeout`: 20 seconds
+- `dial-timeout` uses a value of 20 seconds.
+- `read-timeout` uses a value of 20 seconds.
+- `write-timeout` uses a value of 20 seconds.
 
-### 4. Service Startup
+!!! warning "Initial State"
+    The role uses `new` as the initial cluster state to establish node
+    consensus; new etcd nodes cannot join after the bootstrap phase, so
+    operators must add new nodes manually with `etcdctl`.
 
-- Enables etcd service for automatic startup
-- Starts etcd service
-- Service begins cluster formation with other nodes
+## Usage Examples
 
-!!! important "Cluster Formation"
-    All nodes in the etcd cluster must be started within a reasonable time window to form quorum. If nodes are started too far apart, cluster formation may fail.
+Here are a few examples of how to use this role in an Ansible playbook.
 
-## Files Generated
+### Basic etcd Cluster
 
-### Configuration Files
-
-- `/etc/etcd/etcd.yaml` - Main etcd configuration file (mode `644`, owner: `etcd:etcd`)
-
-### Data Files
-
-- `{{ etcd_data_dir }}/postgresql/` - Cluster data directory
-- `{{ etcd_data_dir }}/postgresql/member/` - Member data and WAL logs
-
-### Log Files
-
-etcd logs to systemd journal. View with:
-
-```bash
-sudo journalctl -u etcd -f
-```
-
-## Platform-Specific Behavior
-
-### All Supported Platforms
-
-This role is platform-agnostic as it installs pre-compiled binaries directly from GitHub. It should work identically on any systemd-based Linux distribution.
-
-## Example Usage
-
-### Basic etcd Cluster Setup
+In the following example, the playbook deploys an etcd cluster for HA:
 
 ```yaml
 - hosts: pgedge
@@ -153,7 +154,10 @@ This role is platform-agnostic as it installs pre-compiled binaries directly fro
   when: is_ha_cluster
 ```
 
-### HA Deployment
+### Full HA Deployment
+
+In the following example, the playbook deploys a complete HA cluster with
+etcd, Patroni, and Postgres:
 
 ```yaml
 - hosts: pgedge
@@ -175,76 +179,80 @@ This role is platform-agnostic as it installs pre-compiled binaries directly fro
 
 ### Multi-Zone Deployment
 
-To use multiple zones, ensure the inventory file includes zone assignment:
+In the following example, the inventory file defines zone assignments for
+multi-zone deployment:
 
 ```yaml
-# Inventory File
 pgedge:
   vars:
     is_ha_cluster: true
-  host1:
-    zone: 1
-  host2:
-    zone: 1
-  host3:
-    zone: 1
-  host4:
-    zone: 2
-  host5:
-    zone: 2
-  host6:
-    zone: 2
-...
+  hosts:
+    host1:
+      zone: 1
+    host2:
+      zone: 1
+    host3:
+      zone: 1
+    host4:
+      zone: 2
+    host5:
+      zone: 2
+    host6:
+      zone: 2
 ```
 
-Then the role will configure etcd nodes within the proper zone automatically.
-
-```yaml
-# Playbook
-- hosts: pgedge
-  collections:
-    - pgedge.platform
-  roles:
-    - setup_etcd
-```
-
-Each zone will have its own independent etcd cluster.
+The role configures etcd nodes within the proper zone automatically; each zone
+has its own independent etcd cluster.
 
 ### Custom Data Directory
+
+In the following example, the playbook specifies a custom data directory:
 
 ```yaml
 - hosts: pgedge
   collections:
     - pgedge.platform
   vars:
-    etcd_data_dir: "/data/etcd"
+    etcd_data_dir: /data/etcd
   roles:
     - install_etcd
     - setup_etcd
 ```
 
+## Artifacts
+
+This role generates and modifies files on inventory hosts during execution.
+
+| File | New / Modified | Explanation |
+|------|----------------|-------------|
+| `/etc/etcd/etcd.yaml` | New | Main etcd configuration file with cluster membership and network settings. |
+| `{{ etcd_data_dir }}/postgresql/` | New | Cluster data directory containing member data and WAL logs. |
+
+## Platform-Specific Behavior
+
+This role is platform-agnostic because it installs etcd binaries directly
+from GitHub releases; the role works identically on any systemd-based Linux
+distribution.
+
 ## Idempotency
 
-This role is idempotent and safe to re-run. Subsequent executions will:
+This role is idempotent and safe to re-run on inventory hosts.
 
-- not overwrite an existing cluster.
-- Regenerate configuration files each run to incorporate changes.
-- leave Etcd in an enabled and running state.
+The role skips these operations when the target already exists:
+
+- Skip cluster setup when the data directory already contains cluster data.
+
+The role may update these items on subsequent runs:
+
+- Regenerate configuration files to incorporate inventory changes.
+- Ensure the etcd service is enabled and running.
 
 !!! warning "Configuration Changes"
-    Changing etcd cluster membership after initial setup requires special procedures. Adding or removing nodes should be done using etcdctl, not by re-running this role.
+    Changing etcd cluster membership after initial setup requires special
+    procedures; adding or removing nodes should be done using `etcdctl` rather
+    than by re-running this role.
 
-## Notes
-
-You can monitor etcd cluster health:
-
-```bash
-# Check cluster health
-/usr/local/etcd/etcdctl endpoint health
-
-# Check cluster status
-/usr/local/etcd/etcdctl endpoint status --write-out=table
-
-# List cluster members
-/usr/local/etcd/etcdctl member list
-```
+!!! warning "Data Directory"
+    The etcd data directory contains critical cluster state; back up this
+    directory before making cluster changes because loss of quorum makes the
+    cluster unavailable.

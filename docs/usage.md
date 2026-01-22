@@ -1,18 +1,24 @@
 # Usage Examples
 
-This page provides practical examples for deploying pgEdge clusters using the Ansible collection, from simple configurations to complex high-availability setups.
+This page provides practical examples for deploying pgEdge clusters using the
+Ansible collection; examples range from simple configurations to complex
+high-availability setups.
 
 ## Before You Begin
 
-Ensure you have:
+Ensure you have completed the following steps:
 
-1. [Installed the collection](installation.md)
-2. Reviewed the [architecture patterns](architecture.md)
-3. Understood the [configuration variables](configuration.md)
-4. Prepared your target hosts
+1. Install the collection as described in the 
+   [installation guide](installation.md).
+2. Review the [architecture patterns](architecture.md) for deployment options.
+3. Understand [configuration variables](configuration/index.md) for 
+   customization.
+4. Prepare target hosts with SSH access and appropriate permissions.
 
 !!! important "Multi-Stage Playbooks"
-    Any cluster design which requires multiple node types will likely restrict certain roles to specific node groups. Our sample playbooks always include the following play at the very top in this case:
+    Cluster designs that require multiple node types restrict certain roles to
+    specific node groups. Sample playbooks include the following play at the
+    top:
 
     ```yaml
     - hosts: all
@@ -22,7 +28,11 @@ Ensure you have:
       - init_server
     ```
 
-    This ensures Ansible host variables are populated for every server in the inventory. Some roles may require variables for hosts that are not part of the intended role group. For example, a `pgedge` node may need to know information about nodes in the `backup` group. If you'd rather not repeatedly invoke `init_server` at the top of every playbook, ensure hostvar population using a dummy play like this at the top of the playbook:
+    This ensures Ansible populates host variables for every server in the
+    inventory. Some roles require variables for hosts outside the intended
+    role group. For example, a `pgedge` node may need information about nodes
+    in the `backup` group. If you prefer not to invoke `init_server` at the
+    top of every playbook, use a dummy play like this instead:
 
     ```yaml
     - hosts: all
@@ -33,18 +43,20 @@ Ensure you have:
 
 The repository includes sample playbooks in the `sample-playbooks/` directory:
 
-- simple-cluster: Standard three-node cluster
-- ultra-ha: Ultra-HA cluster with multiple zones
+- The `simple-cluster` directory contains a standard three-node cluster.
+- The `ultra-ha` directory contains an Ultra-HA cluster with multiple zones.
 
-These serve as templates for your own deployments.
+These samples serve as templates for your own deployments.
 
 ## Simple Three-Node Cluster
 
-The simplest deployment consists of three pgEdge nodes with direct replication between them.
+The simplest deployment consists of three pgEdge nodes with direct replication
+between them.
 
 ### Inventory File
 
-Create `inventory.yaml`:
+In the following example, the inventory file defines a three-node cluster with
+one node per zone:
 
 ```yaml
 # Simple three-node cluster with one node per zone
@@ -66,7 +78,8 @@ pgedge:
 
 ### Playbook File
 
-Create `playbook.yaml`:
+In the following example, the playbook deploys a basic cluster with Spock
+replication:
 
 ```yaml
 ---
@@ -77,12 +90,15 @@ Create `playbook.yaml`:
   roles:
     - init_server         # Prepare servers
     - install_repos       # Configure repositories
-    - install_pgedge      # Install PostgreSQL
+    - install_pgedge      # Install Postgres
     - setup_postgres      # Initialize database
     - setup_pgedge        # Configure multi-master replication
 ```
 
 ### Running the Playbook
+
+In the following example, the `ansible-playbook` command executes the playbook
+against the inventory:
 
 ```bash
 ansible-playbook -i inventory.yaml playbook.yaml
@@ -90,28 +106,31 @@ ansible-playbook -i inventory.yaml playbook.yaml
 
 ### What Gets Deployed
 
-This creates:
+This configuration creates the following components:
 
-- PostgreSQL 17 on each node
-- Spock extension for multi-master replication
-- Full-mesh replication between all three nodes
-- Database named `myapp` on all nodes
+- Postgres 17 runs on each node with required extensions.
+- Spock extension provides multi-master replication between nodes.
+- Full-mesh replication synchronizes data across all three nodes.
+- The setup creates a database named `myapp` on all nodes.
 
 ### Connecting to the Cluster
 
-Connect to any node:
+In the following example, the `psql` command connects to the cluster:
 
 ```bash
 psql -h node1.example.com -U admin myapp
 ```
 
-Data written to any node replicates to all others.
+Spock replicates data written to any node to all other nodes automatically.
 
 ## High-Availability Single-Zone Cluster
 
-Deploy a single-zone HA cluster with automatic failover.
+Deploy a single-zone HA cluster with automatic failover using Patroni and etcd.
 
 ### Inventory File
+
+In the following example, the inventory file defines an HA cluster with all
+nodes in a single zone:
 
 ```yaml
 pgedge:
@@ -133,6 +152,8 @@ haproxy:
 ```
 
 ### Playbook File
+
+In the following example, the playbook deploys an HA cluster with HAProxy:
 
 ```yaml
 ---
@@ -173,12 +194,16 @@ haproxy:
 
 ### What Gets Deployed
 
-- Patroni-managed PostgreSQL cluster in zone 1
-- etcd for distributed consensus
-- HAProxy for connection routing to the current primary node
-- Automatic failover within the zone
+This configuration creates the following components:
+
+- Patroni manages the Postgres cluster in zone 1.
+- An etcd cluster provides distributed consensus.
+- HAProxy routes connections to the current primary node.
+- Automatic failover activates when the primary becomes unavailable.
 
 ### Testing Failover
+
+In the following example, commands verify and test the HA cluster:
 
 ```bash
 # Connect through HAProxy
@@ -195,9 +220,13 @@ patronictl -c /etc/patroni/patroni.yaml failover
 
 ## Ultra-HA Multi-Zone Cluster
 
-The most robust configuration with HA within zones and replication between zones.
+The most robust configuration provides HA within zones and replication between
+zones.
 
 ### Inventory File
+
+In the following example, the inventory file defines a multi-zone Ultra-HA
+cluster:
 
 ```yaml
 pgedge:
@@ -243,6 +272,8 @@ backup:
 ```
 
 ### Playbook File
+
+In the following example, the playbook deploys a complete Ultra-HA cluster:
 
 ```yaml
 ---
@@ -296,27 +327,31 @@ backup:
 
 ### What Gets Deployed
 
-- Two Patroni clusters (one per zone)
-- etcd cluster in each zone
-- HAProxy in each zone
-- Spock replication between zones through HAProxy
-- Automated backups to dedicated backup servers
-- Full redundancy at all levels
+This configuration creates the following components:
+
+- Two Patroni clusters operate independently in separate zones.
+- An etcd cluster runs in each zone for local consensus.
+- HAProxy in each zone routes traffic to local primary nodes.
+- Spock replication synchronizes data between zones through HAProxy.
+- Automated backups run on dedicated backup servers.
+- Full redundancy exists at all levels for maximum availability.
 
 ### Connection Architecture
 
+Applications connect through HAProxy to reach their local Patroni cluster:
+
 ```
-Application (Zone 1) -> proxy-z1 -> Patroni Cluster Zone 1 -> Spock -> Patroni Cluster Zone 2
-Application (Zone 2) -> proxy-z2 -> Patroni Cluster Zone 2 -> Spock -> Patroni Cluster Zone 1
+Application (Zone 1) -> proxy-z1 -> Patroni Cluster Zone 1 -> Spock -> Zone 2
+Application (Zone 2) -> proxy-z2 -> Patroni Cluster Zone 2 -> Spock -> Zone 1
 ```
 
 ## Adding Backups to Existing Cluster
 
-Add backup capability to an already-deployed cluster.
+Add backup capability to an already-deployed cluster using S3 or SSH methods.
 
 ### S3 Backups
 
-Update your inventory:
+In the following example, the inventory configures S3-based backups:
 
 ```yaml
 pgedge:
@@ -333,7 +368,7 @@ pgedge:
     diff_backup_schedule: "0 2 * * 1-6"  # Mon-Sat 2 AM
 ```
 
-Run backup setup:
+In the following example, the playbook configures backup on existing nodes:
 
 ```yaml
 - hosts: pgedge
@@ -346,7 +381,7 @@ Run backup setup:
 
 ### SSH Backups with Dedicated Server
 
-Add backup hosts to inventory:
+Add backup hosts to your inventory:
 
 ```yaml
 backup:
@@ -355,7 +390,7 @@ backup:
       zone: 1
 ```
 
-Update pgedge group in inventory:
+Update the pgedge group in your inventory:
 
 ```yaml
 pgedge:
@@ -363,7 +398,7 @@ pgedge:
     backup_repo_type: ssh
 ```
 
-Run backup setup on all relevant hosts:
+In the following example, the playbook configures backup on all relevant hosts:
 
 ```yaml
 # Populate all server variables
@@ -390,9 +425,20 @@ Run backup setup on all relevant hosts:
 
 ## Customization Examples
 
-### Custom PostgreSQL Version
+The pgEdge Ansible collection provides extensive flexibility for tailoring 
+deployments to specific requirements. These examples demonstrate how to modify 
+core parameters such as Postgres version, database configuration, network 
+settings, and replication behavior. Whether adjusting for compliance needs, 
+performance optimization, or integration with existing infrastructure, the 
+collection's modular design allows precise control over deployment aspects. 
+Each customization builds upon the foundation established in earlier examples, 
+showing how to extend base configurations while maintaining the integrity of 
+replication, high availability, and backup mechanisms.
 
-Use the latest and greatest Postgres version.
+### Custom Postgres Version
+
+In the following example, the inventory specifies a different Postgres
+version:
 
 ```yaml
 pgedge:
@@ -402,7 +448,8 @@ pgedge:
 
 ### Custom Database Configuration
 
-Install and set up Spock clusters in three different databases.
+In the following example, the inventory creates multiple databases with custom
+users:
 
 ```yaml
 pgedge:
@@ -419,7 +466,8 @@ pgedge:
 
 ### Custom Ports
 
-Set up HAProxy on the same node as Postgres by assigning the standard Postgres port (5432) to HAProxy, and moving Postgres to another port.
+In the following example, the inventory configures HAProxy on the standard
+Postgres port while moving Postgres to another port:
 
 ```yaml
 pgedge:
@@ -430,7 +478,8 @@ pgedge:
 
 ### Strict Synchronous Replication
 
-Enable synchronous replication, and enforce it by preventing writes on the Primary if there are no online synchronous replicas.
+In the following example, the inventory enables strict synchronous replication
+that prevents writes when replicas become unavailable:
 
 ```yaml
 pgedge:
@@ -442,7 +491,21 @@ pgedge:
 
 ## Testing Your Deployment
 
-### Verify PostgreSQL
+Ensuring deployment health requires systematic verification of all cluster 
+components. This section provides essential checks for Postgres instances, 
+replication status, HA infrastructure, and backup systems. Regular testing 
+identifies configuration issues early and confirms that critical failover 
+mechanisms operate correctly. These verification techniques apply to simple 
+clusters, HA configurations, and Ultra-HA deployments, offering targeted 
+commands for each scenario. By implementing these tests as part of routine 
+maintenance, administrators can proactively address potential problems and 
+validate that the cluster behaves as expected under various operational 
+conditions.
+
+### Verify Postgres
+
+In the following example, commands verify Postgres installation and
+connectivity:
 
 ```bash
 # Check service status on RHEL
@@ -457,6 +520,8 @@ psql -U admin -d myapp -c "SELECT version();"
 
 ### Verify Replication
 
+In the following example, commands verify Spock replication status:
+
 ```bash
 # Check Spock status
 psql -x -U admin -d myapp -c "SELECT * FROM spock.node;"
@@ -467,6 +532,8 @@ psql -x -U admin -d myapp -c "SELECT * FROM spock.lag_tracker;"
 ```
 
 ### Verify HA Cluster
+
+In the following example, commands verify HA cluster health:
 
 ```bash
 # Check etcd health
@@ -481,12 +548,14 @@ systemctl status haproxy
 
 ### Verify Backups
 
+In the following example, commands verify backup configuration:
+
 ```bash
 # Check backup info
 pgbackrest --stanza=pgedge-demo-1 info
 
 # List backups
-pgbackrest --stanza=pgedge-demo-1 info --output=json 
+pgbackrest --stanza=pgedge-demo-1 info --output=json
 
 # Verify latest backup
 pgbackrest --stanza=pgedge-demo-1 check
@@ -494,51 +563,88 @@ pgbackrest --stanza=pgedge-demo-1 check
 
 ## Common Workflows
 
+Cluster management involves recurring operations that extend beyond initial 
+deployment. This section covers essential procedures for modifying existing 
+clusters, including adding new nodes, scaling HA zones, and handling 
+configuration changes. Understanding these workflows helps administrators 
+maintain clusters as requirements evolve.
+
+The examples demonstrate best practices for each operation while highlighting 
+potential limitations and recommended approaches to ensure cluster stability 
+during modifications. Mastery of these workflows enables organizations to adapt 
+their deployments seamlessly as workloads grow or architectural needs change.
+
 ### Adding a New Node to Simple Cluster
 
-1. Add node to inventory:
+Adding a new node to a cluster should only be performed when database activity
+is at a minimum or altogether absent. This Ansible collection does not yet 
+leverage 
+[Zero-Downtime Add Node](https://docs.pgedge.com/spock-v5/development/modify/zodan/zodan_readme/)
+functionality.
 
-```yaml
-pgedge:
-  hosts:
-    # existing nodes...
-    node4.example.com:
-      zone: 4
-```
+1. Add the node to your inventory file:
 
-2. Run playbook again to reconfigure cluster:
+    ```yaml
+    pgedge:
+      hosts:
+        # existing nodes...
+        node4.example.com:
+          zone: 4
+    ```
 
-```bash
-ansible-playbook playbook.yaml
-```
+2. Run the playbook again to reconfigure the cluster:
 
-3. Verify replication to new node
+    ```bash
+    ansible-playbook playbook.yaml
+    ```
+
+3. Verify replication to the new node using the verification commands above.
 
 ### Expanding an HA Zone
 
 !!! warning "Complex Operation"
-    Adding nodes to an existing Patroni cluster requires careful coordination. This is not fully supported by the current roles.
+    Adding nodes to an existing Patroni cluster requires careful coordination.
+    Current roles do not fully support this operation.
 
-Currently, the best approach is:
+The recommended approach includes the following steps:
 
-1. Plan for final node count during initial deployment
-2. Add nodes to inventory before first run
-3. Deploy entire cluster together
+- Plan for the final node count during initial deployment.
+- Add all nodes to the inventory before the first run.
+- Deploy the entire cluster together to ensure proper initialization.
 
 ### Changing Configuration
 
-1. Update variables in inventory
-2. Re-run playbook
+In most cases, modifying configuration parameters for the cluster simply 
+consists of the following steps:
+
+1. Update variables in the inventory file.
+2. Re-run the playbook to apply changes.
+
+Each role will make changes to managed configuration files and restart services 
+where necessary.
 
 !!! note "Limited Re-entrancy"
-    The roles have limited re-entrancy. Some configuration changes may require manual intervention or cluster rebuild.
+    The roles have limited re-entrancy; some configuration changes may require
+    manual intervention or cluster rebuild.
 
 ### Disaster Recovery
 
+When failures occur, having a well-defined recovery process minimizes downtime 
+and data loss. This section outlines procedures for restoring Postgres 
+instances from backups and handling zone failures in Ultra-HA configurations. 
+The recovery strategies emphasize using dedicated recovery nodes to prevent 
+cluster corruption and ensure clean rejoining of recovered nodes. Understanding 
+these processes enables administrators to respond effectively to critical 
+incidents, maintaining data integrity and service availability even in complex 
+multi-zone environments where replication metadata must remain consistent 
+across all nodes.
+
 #### Restore from Backup
 
+In the following example, commands restore a Postgres instance from backup:
+
 ```bash
-# Stop PostgreSQL
+# Stop Postgres
 systemctl stop postgresql-17
 
 # Remove data directory
@@ -547,42 +653,47 @@ rm -rf /var/lib/pgsql/17/data/*
 # Restore from backup
 pgbackrest --stanza=pgedge-1 --delta restore
 
-# Start PostgreSQL
+# Start Postgres
 systemctl start postgresql-17
 ```
 
 !!! important "Separate Recovery Node"
-    Recovery should be done in an explicitly provisioned "recovery node" separate from the existing cluster. Then an external tool like pgEdge ACE can recover lost data into one of the remaining nodes. It is not currently possible for a recovered node to re-join a multi-master Spock cluster due to mismatched node metadata. Doing so manually could result in corruption of the other remaining cluster nodes.
+    Perform recovery on an explicitly provisioned recovery node that remains
+    separate from the existing cluster. External tools like pgEdge ACE can
+    recover lost data into one of the remaining nodes. A recovered node cannot
+    rejoin a multi-master Spock cluster due to mismatched node metadata;
+    attempting to do so manually could corrupt the other cluster nodes.
 
 #### Zone Failure in Ultra-HA
 
-If an entire zone fails:
+When an entire zone fails, the following sequence occurs:
 
-1. Remaining zone continues operating
-2. Applications fail over to surviving zone
-3. Once failed zone recovers, Patroni restores local HA
-4. Spock re-synchronizes data automatically
+1. The remaining zone continues operating without interruption.
+2. Applications fail over to the surviving zone.
+3. Once the failed zone recovers, Patroni restores local HA.
+4. Spock re-synchronizes data automatically between zones.
 
 ## Best Practices
 
+Follow these recommendations for successful deployments:
+
 - Use Ansible Vault for all passwords and sensitive data.
-- Test your configuration in a staging environment before deploying to production.
-- Document your inventory files with clear comments explaining each setting.
-- Store your playbooks and inventory files in version control systems.
-- Implement regular backups and test your restore procedures periodically.
+- Test configurations in a staging environment before deploying to production.
+- Document inventory files with clear comments explaining each setting.
+- Store playbooks and inventory files in version control systems.
+- Implement regular backups and test restore procedures periodically.
 - Monitor replication lag between zones to ensure data synchronization.
-- Plan capacity according to your expected workload and growth.
+- Plan capacity according to expected workload and growth.
 - Use tags to enable partial playbook runs for specific components.
 - Keep detailed notes documenting any manual changes to the cluster.
 - Review deployment logs after each playbook run to catch issues.
 
 ## Next Steps
 
-- Review [roles documentation](roles/index.md) for detailed information on each component.
-- Understand [configuration options](configuration.md) for customization.
+- Review [roles documentation](roles/index.md) for detailed role information.
+- Understand [configuration options](configuration/index.md) for customization.
 - Study [architecture patterns](architecture.md) for design considerations.
-- Consult the [troubleshooting guide](troubleshooting.md) for solutions to common issues.
-- Join the pgEdge community for support and discussion.
+- Consult the [troubleshooting guide](troubleshooting/index.md) for common issues.
 
 ## Additional Resources
 

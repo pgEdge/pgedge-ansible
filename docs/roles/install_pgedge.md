@@ -1,26 +1,31 @@
 # install_pgedge
 
-## Overview
+The `install_pgedge` role installs pgEdge Enterprise Postgres packages on
+target systems. The role installs Postgres server binaries, the Spock
+logical replication extension, Snowflake extension, and Python Postgres
+drivers.
 
-The `install_pgedge` role installs pgEdge Enterprise Postgres packages on target systems. This includes Postgres server binaries, the Spock logical replication extension, Snowflake extension, and Python Postgres drivers.
+The role performs the following tasks on inventory hosts:
 
-## Purpose
-
-This role performs the following tasks:
-
-- Installs pgEdge Enterprise Postgres server packages.
-- Installs pgEdge extensions (Spock, Snowflake).
-- Installs the Python Postgres adapter (psycopg2).
-- Ensures all components match the configured Postgres version.
+- Install pgEdge Enterprise Postgres server packages.
+- Install pgEdge extensions including Spock and Snowflake.
+- Install the Python Postgres adapter for database connectivity.
+- Ensure all components match the configured Postgres version.
 
 ## Role Dependencies
 
-- `role_config`: Provides Postgres version and configuration
-- `install_repos`: You must run this role first to configure package repositories
+This role requires the following roles for normal operation:
+
+- `role_config` provides Postgres version and configuration variables.
+- `install_repos` configures pgEdge package repositories before installation.
 
 ## When to Use
 
-Execute this role on **all pgedge hosts** after configuring repositories and before setting up Postgres instances:
+Execute this role on all pgedge hosts after configuring repositories and
+before setting up Postgres instances.
+
+In the following example, the playbook installs pgEdge packages after
+repository configuration:
 
 ```yaml
 - hosts: pgedge
@@ -31,73 +36,70 @@ Execute this role on **all pgedge hosts** after configuring repositories and bef
     - install_pgedge
 ```
 
-## Parameters
+## Configuration
 
-This role uses the following configuration parameters:
+This role utilizes the collection-wide configuration parameter for Postgres
+version as described in the [Configuration section](../configuration/index.md).
 
-* `pg_version`
+Set the parameter in the inventory file as shown in the following example:
 
-## Tasks Performed
+```yaml
+pgedge:
+  vars:
+    pg_version: 17
+```
 
-### 1. Package Installation
+Below is a complete list of valid parameters that affect the operation of
+this role:
 
-Installs Postgres server and client binaries, along with supplementary packages.
+| Option | Use Case |
+|--------|----------|
+| `pg_version` | Specify the Postgres version to install. |
 
-**pgEdge software and extensions:**
+## How It Works
 
-- The lolor extension provides Large Object (LOB) support in logical replication.
-- The Snowflake extension provides unique ID generation.
-- The Spock extension provides bidirectional logical replication.
+The role installs the pgEdge Enterprise meta-package which includes all
+components that a pgEdge deployment needs.
 
-**Community and other popular tools:**
+1. Install the pgEdge Enterprise package.
+    - Install the meta-package containing Postgres server and client binaries.
+    - Include pgEdge extensions: Spock, Snowflake, and lolor.
+    - Include community tools: pgAdmin, PGAudit, PgBouncer, pgvector, and
+      PostGIS.
+    - Install the `pgedge-python3-psycopg2` Python database adapter.
 
-- [pgAdmin](https://www.pgadmin.org/) GUI administration tool
-- [PGAudit](https://www.pgaudit.org/) query and session auditing extension
-- [PgBouncer](https://www.pgbouncer.org/) connection pooler
-- [pgvector](https://github.com/pgvector/pgvector) Vector database extension
-- [PostGIS](https://postgis.net/) geospatial extension for Geographic Information Systems
+2. Apply retry logic for reliability.
+    - Attempt installation up to 5 times to handle transient failures.
+    - Wait 20 seconds between retries.
+    - Handle transient network or repository issues gracefully.
 
-**Python Postgres Adapter:**
+3. Maintain version consistency.
+    - Install packages matching the specified `pg_version` parameter.
+    - Ensure consistency across all nodes in the cluster.
 
-- `pgedge-python3-psycopg2` - Python database adapter
+The pgEdge Enterprise package includes these components:
 
-### 2. Retry Logic
+- **lolor** provides Large Object (LOB) support in logical replication.
+- **Snowflake** provides unique ID generation across cluster nodes.
+- **Spock** provides bidirectional logical replication for multi-master.
+- **pgAdmin** provides GUI administration for Postgres.
+- **PGAudit** provides query and session auditing.
+- **PgBouncer** provides connection pooling.
+- **pgvector** provides vector database capabilities.
+- **PostGIS** provides geospatial extensions.
 
-The role includes robust retry logic:
+!!! note "Automatic Updates"
+    This role uses `state: latest` to ensure packages update to the newest
+    version. Package updates may restart the Postgres service.
 
-- attempts installation up to 5 times.
-- waits 20 seconds between retries.
-- handles transient network or repository issues.
-- Ensures successful installation before proceeding
+## Usage Examples
 
-### 3. Version Pinning
+Here are a few examples of how to use this role in an Ansible playbook.
 
-- Always installs the latest available packages for the specified Postgres version
-- Maintains consistency across all nodes in the cluster
+### Basic Usage
 
-## Files Generated
-
-This role does not modify any files during execution aside from those the package installation generates.
-
-## Platform-Specific Behavior
-
-### Debian-Family
-
-- Package name: `pgedge-enterprise-all-{{ pg_version }}`
-- Uses APT package manager
-- Packages install to `/usr/lib/postgresql/{{ pg_version }}/`
-- Creates systemd service: `postgresql`
-
-### RHEL-Family
-
-- Package name: `pgedge-enterprise-all_{{ pg_version }}`
-- Uses DNF package manager
-- Installs to `/usr/pgsql-{{ pg_version }}/`
-- Creates systemd service: `postgresql-{{ pg_version }}`
-
-## Example Usage
-
-### Basic Installation
+In the following example, the playbook installs pgEdge packages using the
+default Postgres version:
 
 ```yaml
 - hosts: pgedge
@@ -108,43 +110,81 @@ This role does not modify any files during execution aside from those the packag
     - install_pgedge
 ```
 
-### Install Specific Postgres Version
+### Specific Postgres Version
+
+In the following example, the playbook installs Postgres 16:
 
 ```yaml
 - hosts: pgedge
   collections:
     - pgedge.platform
   vars:
-    pg_version: 16  # Install Postgres 16
+    pg_version: 16
   roles:
     - install_repos
     - install_pgedge
 ```
 
-### Install on Multiple Node Groups
+### Multiple Node Groups
+
+In the following example, the playbook installs pgEdge on primary nodes and
+a backup server:
 
 ```yaml
 # Install on primary cluster nodes
 - hosts: pgedge
+  collections:
+    - pgedge.platform
   roles:
     - install_repos
     - install_pgedge
 
-# Install on backup server (for verification/restoration)
+# Install on backup server for verification and restoration
 - hosts: backup
+  collections:
+    - pgedge.platform
   roles:
     - install_repos
     - install_pgedge
 ```
 
+## Artifacts
+
+This role installs system packages that create files based on the operating
+system. The role does not modify additional files during execution.
+
+## Platform-Specific Behavior
+
+The role adapts its behavior based on the operating system family.
+
+### Debian Family
+
+On Debian-based systems, the role uses these packages and paths:
+
+| Setting | Value |
+|---------|-------|
+| Package name | `pgedge-enterprise-all-{{ pg_version }}` |
+| Package manager | APT |
+| Install path | `/usr/lib/postgresql/{{ pg_version }}/` |
+| Service name | `postgresql` |
+
+### RHEL Family
+
+On RHEL-based systems, the role uses these packages and paths:
+
+| Setting | Value |
+|---------|-------|
+| Package name | `pgedge-enterprise-all_{{ pg_version }}` |
+| Package manager | DNF |
+| Install path | `/usr/pgsql-{{ pg_version }}/` |
+| Service name | `postgresql-{{ pg_version }}` |
+
 ## Idempotency
 
-This role is idempotent and safe to re-run. Subsequent executions will:
+This role is idempotent and safe to re-run on inventory hosts.
 
-- update packages to latest versions if available.
-- not disrupt running Postgres instances.
+The role may update these items on subsequent runs:
 
-## Notes
+- Update packages to the latest available version when newer versions exist.
 
-!!! note "Automatic Updates"
-    This role uses `state: latest` to ensure packages are updated to the newest version. This is intentional to maintain security and stability. Package updates will restart the Postgres service.
+The role does not disrupt running Postgres instances during package updates.

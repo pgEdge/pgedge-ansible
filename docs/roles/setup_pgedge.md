@@ -1,34 +1,39 @@
 # setup_pgedge
 
-## Overview
+The `setup_pgedge` role configures Spock logical replication to initialize a
+multi-master Postgres cluster. The role establishes Spock nodes and
+subscriptions between all applicable Postgres instances, enabling bidirectional
+data synchronization across zones and nodes.
 
-The `setup_pgedge` role configures Spock logical replication to initialize a multi-master PostgreSQL cluster. It establishes Spock nodes and subscriptions between all applicable PostgreSQL instances, enabling bidirectional data synchronization across zones and nodes.
+The role performs the following tasks on inventory hosts:
 
-## Purpose
-
-The role performs the following tasks:
-
-- configures password authentication for `pgedge_user`.
-- creates Spock node metadata on each instance.
-- establishes Spock subscriptions between all nodes or zone leaders.
-- configures multi-master logical replication topology.
-- supports both direct node-to-node and proxy-based subscriptions.
-- verifies subscription synchronization.
-- enables distributed PostgreSQL deployment.
+- Configure password authentication for `pgedge_user` via `.pgpass`.
+- Create Spock node metadata on each Postgres instance.
+- Establish Spock subscriptions between all nodes or zone leaders.
+- Configure multi-master logical replication topology.
+- Support both direct node-to-node and proxy-based subscriptions.
+- Verify subscription synchronization before completing.
 
 ## Role Dependencies
 
-- `role_config`: Provides shared configuration variables
-- `setup_postgres`: You must install and configure PostgreSQL and Spock extension
-- `setup_patroni`: For Patroni management used in HA clusters (optional)
-- `setup_haproxy`: For HAProxy communication routing in HA clusters (optional)
+This role requires the following roles for normal operation:
 
-!!! information "Role Order"
-    When deploying an HA cluster, this role **must** be executed after `setup_patroni` and `setup_haproxy`. Patroni determines which cluster node is the primary writable node in a particular zone, and HAProxy ensures this node receives all Spock-related inter-node communication.
+- `role_config` provides shared configuration variables to the role.
+- `setup_postgres` installs Postgres with the Spock extension.
+- `setup_patroni` manages HA clusters (optional, for HA deployments).
+- `setup_haproxy` provides proxy routing for HA clusters (optional).
+
+!!! info "Role Order"
+    When deploying an HA cluster, execute this role after `setup_patroni` and
+    `setup_haproxy`; Patroni determines the primary writable node in each
+    zone, and HAProxy ensures this node receives Spock inter-node traffic.
 
 ## When to Use
 
-Execute this role on **all pgedge hosts** after PostgreSQL setup to establish multi-master replication:
+Execute this role on all pgedge hosts after Postgres setup to establish
+multi-master replication.
+
+In the following example, the playbook invokes the role for standalone nodes:
 
 ```yaml
 - hosts: pgedge
@@ -39,7 +44,8 @@ Execute this role on **all pgedge hosts** after PostgreSQL setup to establish mu
     - setup_pgedge
 ```
 
-For HA clusters:
+For HA clusters, the following example invokes the role after HAProxy and
+Patroni setup:
 
 ```yaml
 - hosts: haproxy
@@ -56,169 +62,130 @@ For HA clusters:
     - setup_pgedge
 ```
 
-## Parameters
+## Configuration
 
-This role uses the following configuration parameters:
+This role utilizes several of the collection-wide configuration parameters
+described in the [Configuration section](../configuration/index.md).
 
-### Database Configuration
+Set the parameters in the inventory file as shown in the following example:
 
-- `db_names`
-- `pg_port`
-- `zone`
+```yaml
+pgedge:
+  vars:
+    db_names:
+      - production
+      - analytics
+    pgedge_user: pgedge
+    pgedge_password: "{{ vault_pgedge_password }}"
+```
 
-### Node Communication Users
+Below is a complete list of valid parameters that affect the operation of
+this role:
 
-- `pgedge_user`
-- `pgedge_password`
+| Option | Use Case |
+|--------|----------|
+| `db_names` | Databases to configure for Spock replication. |
+| `pg_port` | Postgres port for direct node connections. |
+| `zone` | Zone identifier for multi-zone deployments. |
+| `pgedge_user` | pgEdge user for node communication. |
+| `pgedge_password` | Password for the pgEdge user account. |
+| `proxy_node` | Specific proxy hostname for HA deployments. |
+| `proxy_port` | Proxy port for HA deployments (default: 5432). |
 
-### Proxy Configuration (optional)
+## How It Works
 
-- `proxy_node` - If not specified, will use the first listed node in the `haproxy` group
-- `proxy_port`
+The role configures Spock replication based on the deployment type.
 
-## Tasks Performed
+### User Access Configuration
 
-### 1. User Access Configuration
+On all nodes, the role performs this initial step:
 
-- Creates `.pgpass` entry for `pgedge_user`
-- Stored in `~postgres/.pgpass` with mode 600
-- Format: `*:*:*:pgedge:password` for all potential hosts, databases, and ports
+1. Configure user access.
+    - Create a `.pgpass` entry for `pgedge_user`.
+    - Store credentials in `~postgres/.pgpass` with mode 600.
+    - Enable automated authentication for Spock connections.
 
-### 2. Deployment Type Detection
+### Standalone Deployment
 
-The role follows different workflows based on cluster configuration:
+When `is_ha_cluster` is `false`, the role creates direct node-to-node
+connections:
 
-**Standalone Deployment:**
+1. Create Spock nodes.
+    - Create a Spock node named `edge{{ zone }}` for each database.
+    - Store the connection DSN for other nodes to subscribe.
+    - DSN format: `host={{ inventory_hostname }} user={{ pgedge_user }}
+      dbname={{ db_name }} port={{ pg_port }}`.
 
-- Direct node-to-node connections
-- No HAProxy involvement
-- Subscriptions connect directly to other PostgreSQL nodes
+2. Create Spock subscriptions.
+    - Create subscriptions from the current node to all remote nodes.
+    - Subscription name format: `sub_n{{ zone }}_n{{ remote_zone }}`.
+    - Connect directly to remote Postgres instances.
+    - Exclude the current node to prevent self-subscription.
 
-**HA Deployment:**
-
-- Proxy-based connections when available
-- Verifies HAProxy connectivity before creating subscriptions
-- Subscriptions route through HAProxy for high availability
-- Supports failover and optional load balancing
-
-**Replica Nodes:**
-
-- Replica nodes are not bootstrapped as they are managed by Patroni
-- Spock replication is configured on the primary, replicas inherit via Patroni
-
-### 3. Establish Node Communication
+The result is a full mesh topology where all nodes replicate to all other
+nodes.
 
 !!! important "Full Mesh Topology"
-    This role creates a full mesh topology where every node or zone replicates to every other node or zone. This provides maximum availability but increases network traffic and complexity.
+    This role creates a full mesh topology where every node replicates to
+    every other node; this provides maximum availability but increases
+    network traffic and complexity.
 
-#### Stand-Alone Nodes
+### HA Deployment
 
-**Spock Node Creation:**
+When `is_ha_cluster` is `true`, the role creates zone-based connections
+through HAProxy:
 
-For each database in `db_names`:
+1. Verify proxy connectivity.
+    - Test connectivity to all HAProxy instances.
+    - Verify `pgedge_user` can authenticate through the proxy.
+    - Retry up to 5 times with 10-second delays.
 
-- Creates Spock node named `edge{{ zone }}`
-- Stores connection DSN for other nodes to subscribe
-- DSN format: `host={{ inventory_hostname }} user={{ pgedge_user }} dbname={{ db_name }} port={{ pg_port }}`
-- Idempotent: Checks if node exists before creating
+2. Create Spock nodes.
+    - Create a Spock node named `edge{{ zone }}` for each database.
+    - DSN points to HAProxy rather than direct nodes.
+    - DSN format: `host={{ subscribe_target }} user={{ pgedge_user }}
+      dbname={{ db_name }} port={{ proxy_port }}`.
 
-**Spock Subscription Creation:**
+3. Create Spock subscriptions.
+    - Create subscriptions to each remote zone.
+    - Subscription name format: `sub_n{{ zone }}_n{{ remote_zone }}`.
+    - Determine connection target in priority order: `proxy_node` variable,
+      first HAProxy node in remote zone, or first pgedge node as fallback.
 
-For each remote node and each database:
-
-- Creates subscription from current node to remote node
-- Subscription name format: `sub_n{{ zone }}_n{{ remote_zone }}`
-- Connects directly to remote PostgreSQL instance
-- Bidirectional: All nodes subscribe to all other nodes
-- Excludes current node (no self-subscription)
-
-Result: Full mesh topology where all nodes replicate to all other nodes.
-
-!!! warning "Subscription Names"
-    Subscription names follow the format `sub_n{{ zone }}_n{{ remote_zone }}`. Changing zone assignments after initial setup can cause subscription conflicts or render the cluster inoperable.
-
-#### Highly-Available Nodes
+The result is a zone-to-zone topology through HAProxy for failover protection.
 
 !!! info "Zone-Based Replication"
-    In HA mode, replication is zone-based through HAProxy. This provides failover protection and simplifies the topology, but requires HAProxy to be properly configured.
+    In HA mode, replication is zone-based through HAProxy; this provides
+    failover protection and simplifies the topology, but requires HAProxy
+    to be properly configured.
 
-**Proxy Verification:**
+### Subscription Synchronization
 
-- Tests connectivity to all HAProxy instances
-- Verifies `pgedge_user` can authenticate through proxy
-- Retries up to 5 times with 10-second delays
-- Ensures proxy layer is functional before creating subscriptions
+After creating subscriptions, the role waits for synchronization:
 
-**Spock Node Creation:**
-
-For each database in `db_names`:
-
-- Creates Spock node named `edge{{ zone }}`
-- DSN points to HAProxy proxy (not direct node)
-- DSN format: `host={{ subscribe_target }} user={{ pgedge_user }} dbname={{ db_name }} port={{ proxy_port }}`
-- Enables high availability for incoming subscriptions
-
-**Spock Subscription Creation:**
-
-For each remote zone and each database:
-
-- Creates subscription to remote zone
-- Subscription name format: `sub_n{{ zone }}_n{{ remote_zone }}`
-- Determines connection target in priority order:
-    1. `proxy_node` variable if set for remote zone
-    2. First HAProxy node in remote zone
-    3. First pgedge node in remote zone (fallback)
-- Connects through proxy for HA benefits
-- Zone-level subscriptions (one per zone, not per node)
-
-Result: Zone-to-zone topology through HAProxy for failover protection.
-
-!!! warning "Subscription Names"
-    Subscription names follow the format `sub_n{{ zone }}_n{{ remote_zone }}`. Changing zone assignments after initial setup can cause subscription conflicts or render the cluster inoperable.
-
-### 4. Subscription Synchronization
-
-- Waits for all subscriptions to complete initial sync
-- Uses `spock.sub_wait_for_sync()` function
-- Ensures data consistency before completing
-- Blocks until all subscriptions are ready
+1. Wait for initial sync.
+    - Use the `spock.sub_wait_for_sync()` function.
+    - Ensure data consistency before completing.
+    - Block until all subscriptions are ready.
 
 !!! warning "Initial Sync"
-    The role waits for subscriptions to complete initial synchronization. For large databases, this can take considerable time. Ensure sufficient network bandwidth and disk I/O. It is best to use this role on an empty cluster to establish initial architecture.
+    The role waits for subscriptions to complete initial synchronization;
+    for large databases, this can take considerable time, so ensure
+    sufficient network bandwidth and disk I/O.
 
-## Files Generated
+!!! warning "Subscription Names"
+    Subscription names follow the format `sub_n{{ zone }}_n{{ remote_zone }}`;
+    changing zone assignments after initial setup can cause subscription
+    conflicts or render the cluster inoperable.
 
-### Authentication Files
+## Usage Examples
 
-- `~postgres/.pgpass` - Password file for pgedge user (mode 600)
-
-### Database Objects
-
-**Spock Nodes:**
-
-Created in each database in `spock.node` table:
-
-- `node_id` - Unique node identifier
-- `node_name` - `edge{{ zone }}` for each Spock node
-
-**Spock Subscriptions:**
-
-Created in each database in `spock.subscription` table:
-
-- `sub_id` - Unique subscription identifier
-- `sub_name` - `sub_n{{ zone }}_n{{ remote_zone }}` for active subscriptions
-
-**Spock Replication Slots:**
-
-Created automatically on provider nodes:
-
-- Logical replication slots for each subscription
-- Named based on subscription and database
-- Track replication position and lag
-
-## Example Usage
+Here are a few examples of how to use this role in an Ansible playbook.
 
 ### Standalone Multi-Master Cluster
+
+In the following example, the playbook deploys a standalone multi-master
+cluster with two databases:
 
 ```yaml
 - hosts: pgedge
@@ -233,9 +200,12 @@ Created automatically on provider nodes:
     - setup_pgedge
 ```
 
-Creates full mesh replication between all nodes for both databases.
+This creates full mesh replication between all nodes for both databases.
 
 ### HA Multi-Master with HAProxy
+
+In the following example, the playbook deploys an HA multi-master cluster
+with HAProxy for failover:
 
 ```yaml
 - hosts: haproxy
@@ -254,9 +224,12 @@ Creates full mesh replication between all nodes for both databases.
     - setup_pgedge
 ```
 
-Creates zone-based replication through HAProxy.
+This creates zone-based replication through HAProxy.
 
 ### Custom Proxy Configuration
+
+In the following example, the playbook specifies a custom proxy for
+replication connections:
 
 ```yaml
 - hosts: pgedge
@@ -270,33 +243,40 @@ Creates zone-based replication through HAProxy.
     - setup_pgedge
 ```
 
-Uses specific proxy for replication connections instead of HAProxy.
+## Artifacts
+
+This role generates and modifies files on inventory hosts during execution.
+
+| File | New / Modified | Explanation |
+|------|----------------|-------------|
+| `~postgres/.pgpass` | Modified | Password file entry for pgedge user authentication. |
+
+The role also creates database objects in each configured database:
+
+| Object | Location | Purpose |
+|--------|----------|---------|
+| Spock nodes | `spock.node` table | Node metadata with `node_id` and `node_name`. |
+| Spock subscriptions | `spock.subscription` table | Subscription metadata with `sub_id` and `sub_name`. |
+| Replication slots | System catalog | Logical replication slots for each subscription. |
+
+## Platform-Specific Behavior
+
+This role behaves identically on all supported platforms including Debian 12
+and Rocky Linux 9.
 
 ## Idempotency
 
-This role is idempotent and safe to re-run. Subsequent executions will:
+This role is idempotent and safe to re-run on inventory hosts.
 
-- only modify specific lines in the `.pgpass` file.
-- check if spock nodes exist before creation.
-- check if subscriptions exist before creation.
+The role skips these operations when the target already exists:
+
+- Check if Spock nodes exist before creation.
+- Check if subscriptions exist before creation.
+
+The role may update these items on subsequent runs:
+
+- Modify specific lines in the `.pgpass` file.
 
 !!! warning "Subscription Changes"
-    Adding new nodes or databases requires re-running this role on all nodes to establish new subscriptions.
-
-## Notes
-
-You can monitor Spock replication health:
-
-```bash
-# Check node status
-sudo -u postgres psql -d dbname -c "SELECT * FROM spock.node;"
-
-# Check subscriptions
-sudo -u postgres psql -d dbname -c "SELECT * FROM spock.subscription;"
-
-# Check subscription status
-sudo -u postgres psql -d dbname -c "SELECT * FROM spock.sub_show_status();"
-
-# Check replication lag
-sudo -u postgres psql -d dbname -c "SELECT * FROM spock.lag_tracker;"
-```
+    Adding new nodes or databases requires re-running this role on all nodes
+    to establish new subscriptions.

@@ -1,8 +1,12 @@
 # Inventory Structure
 
+The inventory file defines the hosts and groups that participate in your
+pgEdge cluster deployment. This page describes the inventory format and the
+host groups that the collection recognizes.
+
 ## Basic Inventory Format
 
-You typically write inventories in YAML format:
+You typically write inventories in YAML format.
 
 ```yaml
 pgedge:
@@ -21,11 +25,12 @@ pgedge:
 
 ## Host Groups
 
-The collection recognizes the following inventory groups:
+The collection recognizes the following inventory groups.
 
 ### pgedge (Required)
 
-This group contains PostgreSQL nodes that participate in distributed replication.
+This group contains Postgres nodes that participate in distributed
+replication.
 
 ```yaml
 pgedge:
@@ -38,7 +43,8 @@ pgedge:
 
 ### haproxy (Optional - HA Only)
 
-This group contains load balancer nodes for high-availability clusters. The group is only relevant when you enable the `is_ha_cluster` parameter.
+This group contains load balancer nodes for high-availability clusters. The
+group is only relevant when you enable the `is_ha_cluster` parameter.
 
 ```yaml
 haproxy:
@@ -51,7 +57,8 @@ haproxy:
 
 ### backup (Optional)
 
-This group contains dedicated backup servers when using SSH backup mode.
+This group contains dedicated backup servers when using SSH backup mode. You
+must define this group when you set `backup_repo_type` to `ssh`.
 
 ```yaml
 backup:
@@ -63,6 +70,9 @@ backup:
 ```
 
 ## Complete Inventory Example
+
+The following example shows a complete inventory for an Ultra-HA cluster with
+dedicated backup servers in two zones.
 
 ```yaml
 # Ultra-HA cluster with backups

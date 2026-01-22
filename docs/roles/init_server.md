@@ -1,28 +1,31 @@
 # init_server
 
-## Overview
+The `init_server` role performs initial server preparation for pgEdge cluster
+deployments. It installs required system packages, configures system settings,
+creates necessary users, and sets up SSH keys for inter-node communication.
 
-The `init_server` role performs initial server preparation, installing required system packages, configuring system settings, creating necessary users, and setting up SSH keys for inter-node communication.
+This role performs the following tasks on inventory hosts:
 
-## Purpose
-
-This role performs the following tasks:
-
-- Installs required system packages on all hosts.
-- Configures SELinux settings according to deployment needs.
-- Establishes core dump handling for debugging purposes.
-- Manages `/etc/hosts` entries for all cluster nodes.
-- Creates the Postgres system user and group.
-- Creates a backup system user for SSH backup mode.
-- Generates and distributes SSH keys among nodes.
+- Install required system packages for Ansible and cluster operations.
+- Configure SELinux settings according to deployment needs.
+- Establish core dump handling for debugging purposes.
+- Manage `/etc/hosts` entries for all cluster nodes.
+- Create the Postgres system user and group.
+- Create a backup system user for SSH backup mode.
+- Generate and distribute SSH keys among cluster nodes.
 
 ## Role Dependencies
 
-- `role_config`: Provides shared configuration variables
+This role requires the following roles for normal operation:
+
+- `role_config` provides shared configuration variables.
 
 ## When to Use
 
-Execute this role on **all hosts** in your cluster as the first step of any deployment:
+Execute this role on all hosts in your cluster as the first step of any
+deployment.
+
+In the following example, the playbook runs `init_server` on all hosts:
 
 ```yaml
 - hosts: all
@@ -33,146 +36,126 @@ Execute this role on **all hosts** in your cluster as the first step of any depl
 ```
 
 !!! important "Execution Order"
-    Always run `init_server` before any other roles. It establishes the foundation for the entire deployment.
+    Always run `init_server` before any other roles; it establishes the
+    foundation for the entire deployment.
 
-## Parameters
+## Configuration
 
-This role uses the following configuration parameters:
+This role utilizes several of the collection-wide configuration parameters
+described in the [Configuration section](../configuration/index.md).
 
-### Role Configuration
+Set the parameters in the inventory file as shown in the following example:
 
-* `debug_pgedge`
-* `disable_selinux`
-* `manage_host_file`
+```yaml
+pgedge:
+  vars:
+    debug_pgedge: true
+    disable_selinux: true
+```
 
-### pgEdge Server Related
+Below is a complete list of valid parameters that affect the operation of
+this role:
 
-* `pg_home`
+| Option | Use Case |
+|--------|----------|
+| `debug_pgedge` | Enable core dump collection for debugging. |
+| `disable_selinux` | Disable SELinux on RHEL-based systems. |
+| `manage_host_file` | Manage `/etc/hosts` entries for cluster nodes. |
+| `pg_home` | Home directory path for the Postgres user. |
+| `backup_repo_path` | Home directory path for the backup user. |
+| `backup_repo_user` | Username for the backup system account. |
 
-### Backup Server Related
+## How It Works
 
-* `backup_repo_path`
-* `backup_repo_user`
+This role operates in several phases to prepare servers for cluster deployment.
 
-## Tasks Performed
+### Package Installation
 
-### 1. Package Installation
+This role installs required system packages on all target hosts. The following
+common packages apply to all systems:
 
-The role installs the following required system packages:
+- `acl` provides access control lists for Ansible temporary files.
+- `jq` provides JSON processing for status checks.
+- `nano` provides a text editor for configuration management.
+- `less` provides a pager utility for viewing output.
+- `rsync` provides file synchronization for backup operations.
+- `python3-cryptography` provides cryptography support for Ansible.
 
-**Common packages (all systems):**
+On RHEL-based systems, this role also installs these packages:
 
-- `acl` - Access control lists necessary for Ansible temporary files
-- `jq` - JSON processor for useful status checks
-- `nano` - Common text editor
-- `less` - "Less is more"
-- `rsync` - File synchronization
-- `python3-cryptography` - Ansible dependency
+- `kernel-modules-extra` provides additional kernel modules for core dumps.
 
-**RHEL-specific:**
+On Debian-based systems, this role also installs these packages:
 
-- `kernel-modules-extra` - Additional kernel modules for core dumps
+- `systemd-coredump` provides core dump management.
 
-**Debian-specific:**
+### SELinux Configuration
 
-- `systemd-coredump` - Core dump management
+When you enable the `disable_selinux` parameter, this role performs these
+SELinux configuration tasks:
 
-### 2. SELinux Configuration
+1. Check the current SELinux status.
+    - Query the current SELinux enforcement mode.
+    - Determine if a configuration change is required.
 
-The role performs the following SELinux configuration tasks:
+2. Disable SELinux when required.
+    - Modify the SELinux configuration file.
+    - Set the enforcement mode to disabled.
 
-- checks the current SELinux status.
-- disables SELinux when you enable the `disable_selinux` parameter.
-- reboots the system if necessary.
-- waits for the system to come back online.
+3. Reboot the system.
+    - Reboot the system to apply the SELinux changes.
+    - Wait for the system to return to an available state.
 
-### 3. Core Dump Configuration
+### Core Dump Configuration
 
-When you enable the `debug_pgedge` parameter, the role:
+When you enable the `debug_pgedge` parameter, this role configures the system
+for core dump collection:
 
-- configures `systemd-coredump` settings.
-- sets kernel parameters for core file generation.
-- ensures unlimited core dump sizes.
-- configures core file naming patterns.
+1. Configure `systemd-coredump` settings.
+    - Set appropriate storage limits for core files.
+    - Configure core file naming patterns.
 
-### 4. Host File Management
+2. Set kernel parameters.
+    - Enable unlimited core dump sizes.
+    - Configure process limits for core generation.
 
-When you enable the `manage_host_file` parameter, the role:
+### Host File Management
 
-- collects facts about all hosts in the cluster.
-- adds entries to `/etc/hosts` for each host.
-- maps hostnames to IP addresses.
-- ensures all nodes can resolve each other.
+When you enable the `manage_host_file` parameter, this role manages the
+`/etc/hosts` file:
 
-### 5. User Creation
+1. Collect cluster host facts.
+    - Gather facts about all hosts in the cluster.
+    - Map hostnames to IP addresses.
 
-**Postgres User:**
+2. Update the hosts file.
+    - Add entries to `/etc/hosts` for each host.
+    - Ensure all nodes can resolve each other by hostname.
 
-The role performs the following tasks for the postgres user:
+### User Creation
 
-- creates the `postgres` user and group.
-- sets up the home directory.
-- generates an ed25519 SSH key pair.
-- configures SSH authorized keys and known hosts.
-- stores SSH public keys on the Ansible controller.
+This role creates system users required for cluster operations.
 
-**Backup User (SSH mode only):**
+1. Create the Postgres user.
+    - Create the `postgres` user and group.
+    - Set up the home directory at the specified path.
+    - Generate an ed25519 SSH key pair.
+    - Configure SSH authorized keys and known hosts.
+    - Store SSH public keys on the Ansible controller.
 
-The role performs the following tasks for the backup user for hosts in the `backup` group:
+2. Create the backup user when hosts are in the `backup` group.
+    - Create the backup user with the configured username.
+    - Set up the home directory at the specified path.
+    - Generate an ed25519 SSH key pair.
+    - Configure SSH authorized keys and known hosts.
 
-- creates the backup user (default: `backrest`).
-- sets up the home directory.
-- generates an ed25519 SSH key pair.
-- configures SSH authorized keys and known hosts.
+## Usage Examples
 
-## Files Generated
-
-### On Target Hosts
-
-On servers in the `pgedge` group:
-
-- `{{ pg_home }}/.ssh/id_ed25519` - Postgres user SSH private key
-- `{{ pg_home }}/.ssh/id_ed25519.pub` - Postgres user SSH public key
-- `{{ pg_home }}/.ssh/authorized_keys` - Authorized keys for Postgres user
-
-On servers in the `backup` group:
-
-- `{{ backup_repo_path }}/.ssh/id_ed25519` - Backup user SSH private key
-- `{{ backup_repo_path }}/.ssh/id_ed25519.pub` - Backup user SSH public key
-- `{{ backup_repo_path }}/.ssh/authorized_keys` - Authorized keys for Backup user
-
-### On Ansible Controller
-
-- `host-keys/{{ inventory_hostname }}` - Principle host key for the listed server
-
-These keys are used by later roles to set up SSH trust relationships.
-
-## Files Modified
-
-- `/etc/hosts` - Updated with cluster node entries
-- `/etc/systemd/logind.conf` - Disables `RemoveIPC` setting to prevent service disruption
-
-When Core dumps are enabled:
-
-- `/etc/security/limits.conf` - Instructs PAM to allow unlimited core files
-- `/etc/systemd/coredump.conf` - Limits total stored core files to 64GB
-- `/etc/systemd/system.conf` - Set systemd to allow unlimited core files
-
-## Platform-Specific Behavior
-
-### Debian
-
-- Uses `apt` package manager
-- Installs `systemd-coredump` package
-
-### RHEL
-
-- Uses `dnf` package manager
-- Installs `kernel-modules-extra` package
-
-## Example Usage
+Here are a few examples of how to use this role in an Ansible playbook.
 
 ### Basic Initialization
+
+In the following example, the playbook initializes all hosts with defaults:
 
 ```yaml
 - hosts: all
@@ -182,7 +165,9 @@ When Core dumps are enabled:
     - init_server
 ```
 
-### With Custom Parameters
+### Custom Parameters
+
+In the following example, the playbook disables optional features:
 
 ```yaml
 - hosts: all
@@ -197,6 +182,8 @@ When Core dumps are enabled:
 ```
 
 ### Initialization for Different Groups
+
+In the following example, the playbook initializes different host groups:
 
 ```yaml
 # Initialize all pgEdge nodes
@@ -215,19 +202,64 @@ When Core dumps are enabled:
     - init_server
 ```
 
+## Artifacts
+
+During execution, this role generates and modifies the following files on
+inventory hosts.
+
+| File | New / Modified | Explanation |
+|------|----------------|-------------|
+| `{{ pg_home }}/.ssh/id_ed25519` | New | SSH private key for the Postgres user. |
+| `{{ pg_home }}/.ssh/id_ed25519.pub` | New | SSH public key for the Postgres user. |
+| `{{ pg_home }}/.ssh/authorized_keys` | New | Authorized keys file for SSH access. |
+| `{{ backup_repo_path }}/.ssh/id_ed25519` | New | SSH private key for the backup user. |
+| `{{ backup_repo_path }}/.ssh/id_ed25519.pub` | New | SSH public key for the backup user. |
+| `{{ backup_repo_path }}/.ssh/authorized_keys` | New | Authorized keys file for backup user SSH access. |
+| `host-keys/{{ inventory_hostname }}` | New | Host key stored on the Ansible controller. |
+| `/etc/hosts` | Modified | Updated with cluster node entries. |
+| `/etc/systemd/logind.conf` | Modified | Disables `RemoveIPC` setting to prevent disruption. |
+| `/etc/security/limits.conf` | Modified | Configures PAM to allow unlimited core files. |
+| `/etc/systemd/coredump.conf` | Modified | Limits total stored core files to 64GB. |
+| `/etc/systemd/system.conf` | Modified | Sets systemd to allow unlimited core files. |
+
+## Platform-Specific Behavior
+
+This role adapts its behavior based on the operating system family.
+
+### Debian Family
+
+On Debian-based systems, this role performs these actions:
+
+- Uses the `apt` package manager for package installation.
+- Installs the `systemd-coredump` package for core dump management.
+
+### RHEL Family
+
+On RHEL-based systems, this role performs these actions:
+
+- Uses the `dnf` package manager for package installation.
+- Installs the `kernel-modules-extra` package for core dumps.
+- Manages SELinux configuration when enabled.
+
 ## Idempotency
 
-This role is idempotent and safe to re-run. Subsequent executions will:
+This role operates idempotently; you can safely re-run it on inventory hosts.
 
-- skip package installation if packages are present.
-- not regenerate SSH keys if they exist.
-- update `/etc/hosts` if new nodes are added.
-- not reboot if SELinux is already in the desired state.
+This role skips these operations when the target already exists:
 
-## Notes
+- Package installation when packages are already present.
+- SSH key generation when keys already exist.
+- User creation when users already exist.
+
+This role may update these items on subsequent runs:
+
+- Update `/etc/hosts` when new nodes are added to the cluster.
+- Reboot only when SELinux state requires a change.
 
 !!! info "SSH Keys"
-    SSH keys generated by this role are used by `setup_backrest` to establish trust between nodes for backup operations.
+    The `setup_backrest` role uses SSH keys generated by this role to establish
+    trust between nodes for backup operations.
 
 !!! warning "Reboots"
-    This role may trigger system reboots when changing SELinux settings. Ensure your Ansible SSH connection can survive reboots.
+    This role may trigger system reboots when changing SELinux settings. Ensure
+    your Ansible SSH connection can survive reboots.
