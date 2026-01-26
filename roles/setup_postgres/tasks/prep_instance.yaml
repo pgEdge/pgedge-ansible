@@ -16,11 +16,11 @@
 
 - name: Include Debian Postgres setup steps
   include_tasks: debian_pg_setup.yaml
-  when: ansible_facts.os_family == 'Debian'
+  when: ansible_os_family == 'Debian'
 
 - name: Include RedHat Postgres setup steps
   include_tasks: rhel_pg_setup.yaml
-  when: ansible_facts.os_family == 'RedHat'
+  when: ansible_os_family == 'RedHat'
 
 # With the PGDATA folder established, it's safe to generate server certificates
 # for SSL needs.
@@ -46,7 +46,6 @@
       max_worker_processes = 12
       max_replication_slots = 16
       max_wal_senders = 16
-      wal_level = 'logical'
       hot_standby_feedback = 'on'
       track_commit_timestamp = 'on'
       shared_preload_libraries = 'spock, snowflake, pg_stat_statements'

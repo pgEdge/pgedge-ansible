@@ -1,7 +1,7 @@
 ---
 
-# Try to connect to connect to all proxy nodes to ensure they're all
-# working properly, as our subscriptions will route through them.
+# Try to connect to all proxy nodes to ensure they're all working 
+# properly, as our subscriptions will route through them.
 
 - name: Verify this host can contact Postgres through known proxies
   community.postgresql.postgresql_ping:

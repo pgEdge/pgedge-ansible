@@ -30,23 +30,23 @@ pg_port: 5432
 
 pg_home: >-
   {{ 
-    "/var/lib/pgsql" if ansible_facts.os_family == "RedHat" 
+    "/var/lib/pgsql" if ansible_os_family == "RedHat" 
     else
-    "/var/lib/postgresql" if ansible_facts.os_family == 'Debian'
+    "/var/lib/postgresql" if ansible_os_family == 'Debian'
   }}
 
 pg_path: >-
   {{
-    "/usr/pgsql-" + pg_version|string if ansible_facts.os_family == "RedHat"
+    "/usr/pgsql-" + pg_version|string if ansible_os_family == "RedHat"
      else
-    "/usr/lib/postgresql/" + pg_version|string if ansible_facts.os_family == 'Debian'
+    "/usr/lib/postgresql/" + pg_version|string if ansible_os_family == 'Debian'
   }}
 
 pg_data: >-
   {{ 
-    pg_home + "/" + pg_version|string + "/data" if ansible_facts.os_family == "RedHat"
+    pg_home + "/" + pg_version|string + "/data" if ansible_os_family == "RedHat"
     else
-    pg_home + "/" + pg_version|string + "/main" if ansible_facts.os_family == 'Debian' 
+    pg_home + "/" + pg_version|string + "/main" if ansible_os_family == 'Debian' 
   }}
 
 backup_host: ""

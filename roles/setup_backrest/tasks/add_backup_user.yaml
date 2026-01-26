@@ -26,7 +26,9 @@
     login_port: "{{ pg_port }}"
   become: true
   become_user: postgres
-  when: inventory_hostname == first_node_in_zone
+  when:
+  - inventory_hostname == first_node_in_zone
+  - pg_version | int > 14
 
 # We need to patch the pg_hba.conf file to include the backup user and host as
 # an allowed connection target. We only need to do this for a regular cluster,

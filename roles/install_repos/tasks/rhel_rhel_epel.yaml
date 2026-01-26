@@ -12,17 +12,17 @@
     name: "codeready-builder-for-rhel-{{ os_version }}-rhui-rpms"
     state: enabled
   vars:
-    os_version: "{{ ansible_facts.distribution_major_version }}"
+    os_version: "{{ ansible_distribution_major_version }}"
   become: true
   when:
-  - ansible_facts.distribution_major_version in (8, 9)
+  - ansible_distribution_major_version | int in (8, 9)
 
 # Just to be different, RHEL 10 has a completely different CRB command:
 
 - name: Enable CRB on RHEL 10 Linux systems
   community.general.rhsm_repository:
-    name: codeready-builder-for-rhel-10-x86_64-rpms
+    name: "codeready-builder-for-rhel-10-{{ ansible_architecture }}-rpms"
     state: enabled
   become: true
   when:
-  - ansible_facts.distribution_major_version == 10
+  - ansible_distribution_major_version | int == 10

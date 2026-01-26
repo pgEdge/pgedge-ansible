@@ -4,7 +4,7 @@
   package:
     name:
     - pgedge-pgbackrest
-    - "{{ 'cronie' if ansible_facts.os_family == 'RedHat' else 'cron' }}"
+    - "{{ 'cronie' if ansible_os_family == 'RedHat' else 'cron' }}"
     state: present
     lock_timeout: 300
     update_cache: true

@@ -9,7 +9,7 @@
     - less
     - rsync
     - python3-cryptography # Needed for Ansible openssl commands
-    - "{{ 'kernel-modules-extra' if ansible_facts.os_family == 'RedHat' else 'systemd-coredump' }}"
+    - "{{ 'kernel-modules-extra' if ansible_os_family == 'RedHat' else 'systemd-coredump' }}"
     state: present
     lock_timeout: 300
     update_cache: true

@@ -2,8 +2,8 @@
 
 # The standard setup for PgBackRest is to transmit WAL files to the defined
 # repo endpoint. We also want to be able to pull WAL files from the backup
-# repo in case of restores. Put these in the auto.conf to ensure they get
-# loaded.
+# repo in case of restores. Put these in the Postgres config to ensure they
+# get loaded.
 
 - name: Configure cluster to integrate with PgBackRest
   lineinfile:

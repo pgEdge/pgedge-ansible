@@ -7,7 +7,7 @@
     - pgedge-python3-psycopg2
     state: latest
   vars:
-    separator: "{{ '_' if ansible_facts.os_family == 'RedHat' else '-' }}"
+    separator: "{{ '_' if ansible_os_family == 'RedHat' else '-' }}"
   retries: 5
   delay: 20
   register: result

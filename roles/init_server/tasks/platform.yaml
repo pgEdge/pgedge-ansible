@@ -10,6 +10,7 @@
   lineinfile:
     path: /etc/systemd/logind.conf
     line: RemoveIPC=no
+    regexp: '^#?RemoveIPC='
   become: true
 
 - name: Reload systemd login service for new IPC setting

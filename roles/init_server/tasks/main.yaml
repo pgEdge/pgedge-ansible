@@ -25,4 +25,4 @@
 - include_tasks: backup_user.yaml
   when: 
   - backup_type == 'ssh'
-  - inventory_hostname in groups.backup | default()
+  - inventory_hostname in groups.backup | default([])

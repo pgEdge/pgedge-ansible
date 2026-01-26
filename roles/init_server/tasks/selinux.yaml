@@ -6,11 +6,11 @@
   become: true
   register: selinux_state
   when:
-  - "ansible_facts['selinux']['status'] == 'enabled'"
+  - ansible_selinux == 'enabled'
 
 - name: Reboot after modifying SELinux
   reboot:
   become: true
   when:
-  - "ansible_facts['selinux']['status'] == 'enabled'"
+  - ansible_selinux == 'enabled'
   - selinux_state.changed
