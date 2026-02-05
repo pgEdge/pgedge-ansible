@@ -44,9 +44,9 @@ Postgres setup:
 ```
 
 !!! note "HA Clusters Only"
-    This role is only required for high availability deployments when you
-    enable the `is_ha_cluster` parameter; standalone Postgres instances do
-    not use Patroni.
+    Only high availability deployments require this role when you enable the
+    `is_ha_cluster` parameter; standalone Postgres instances do not use
+    Patroni.
 
 ## Configuration
 
@@ -123,9 +123,9 @@ When the role runs on pgedge hosts, it performs these steps:
     - Use `patronictl restart` to clear the "Pending restart" flag.
 
 !!! info "Configuration Management"
-    Patroni manages most Postgres configuration; direct edits to
-    `postgresql.conf` may be overwritten, so use the `patronictl` utility
-    for cluster-wide settings.
+    Patroni manages most Postgres configuration and may overwrite direct edits
+    to `postgresql.conf`, so use the `patronictl` utility for cluster-wide
+    settings.
 
 ### Configuration Details
 
@@ -181,7 +181,7 @@ Patroni manages pg_hba.conf with rules for:
 - Custom HBA rules from inventory.
 
 !!! warning "pg_hba.conf"
-    Patroni manages `pg_hba.conf`; manual changes will be overwritten, so use
+    Patroni manages `pg_hba.conf` and will overwrite manual changes, so use
     `custom_hba_rules` or `patronictl` instead.
 
 ## Usage Examples

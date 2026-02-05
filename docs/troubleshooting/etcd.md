@@ -17,7 +17,7 @@ For problems not covered by this guide, please refer to the
 
 ## Download Fails from GitHub
 
-**Symptom:** Failed to download etcd tarball from GitHub
+**Symptom:** The role Fails to download the etcd tarball from GitHub.
 
 **Solution:**
 
@@ -39,7 +39,7 @@ etcd_base_url: "https://your-mirror.com/etcd/v{{ etcd_version }}"
 
 ## Checksum Verification Fails
 
-**Symptom:** Download fails with checksum mismatch error
+**Symptom:** The etcd download fails with a checksum mismatch error.
 
 **Solution:**
 
@@ -96,7 +96,7 @@ id etcd
 
 ## Architecture Mismatch
 
-**Symptom:** The binary fails to run with "cannot execute binary file" error
+**Symptom:** The binary fails to run with a "cannot execute binary file" error.
 
 **Solution:**
 
@@ -115,7 +115,7 @@ etcd_package: "etcd-v{{ etcd_version }}-linux-arm64"
 
 ## Service File Installation Fails
 
-**Symptom:** The role failed to create the systemd service file.
+**Symptom:** The role fails to create the systemd service file.
 
 **Solution:**
 
@@ -189,7 +189,7 @@ ping hostname2
 
 ## "cluster ID mismatch" Error
 
-**Symptom:** Etcd fails with cluster ID mismatch error.
+**Symptom:** Etcd fails with a cluster ID mismatch error.
 
 **Solution:**
 
@@ -206,7 +206,7 @@ Ensure that all nodes start fresh or that all nodes share a consistent state.
 
 ## "member already exists" Error
 
-**Symptom:** Node fails to join with "member already exists".
+**Symptom:** A node join fails and returns a "member already exists" error.
 
 **Solution:**
 
@@ -232,7 +232,7 @@ sudo systemctl start etcd
 
 ## Slow Performance or Timeouts
 
-**Symptom:** Etcd operations are slow or timing out.
+**Symptom:** Etcd operations are slow or frequently time out.
 
 **Solution:**
 

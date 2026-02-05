@@ -38,7 +38,7 @@ The following topologies are available:
 
 ## Quick Start
 
-To get started with the pgEdge Ansible Collection:
+The best way to get started with this collection is to follow these steps:
 
 1. Install the collection by following the 
    [installation guide](installation.md).
@@ -50,7 +50,8 @@ To get started with the pgEdge Ansible Collection:
 
 ## Documentation Structure
 
-The documentation is organized into the following sections:
+This collection documentation provides several curated topic areas to assist in 
+successful cluster deployment:
 
 - [Installation](installation.md) covers prerequisites and installation steps.
 - [Architecture](architecture.md) describes cluster design patterns and types.

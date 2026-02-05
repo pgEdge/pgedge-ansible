@@ -253,7 +253,7 @@ This role skips these operations when the target already exists:
 
 This role may update these items on subsequent runs:
 
-- Update `/etc/hosts` when new nodes are added to the cluster.
+- Update `/etc/hosts` when you add new nodes to the cluster.
 - Reboot only when SELinux state requires a change.
 
 !!! info "SSH Keys"

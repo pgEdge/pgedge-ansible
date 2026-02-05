@@ -25,7 +25,7 @@ See the
 for detailed information about exception handling behavior.
 
 In the following example, the inventory sets the exception behavior to
-transaction discard:
+discard transactions:
 
 ```yaml
 pgedge:

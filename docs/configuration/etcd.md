@@ -11,6 +11,8 @@ operational DCS layer for Patroni.
 - Description: This parameter specifies the etcd version to download and
   install.
 
+In the following example, the inventory specifies etcd version 3.6.7:
+
 ```yaml
 etcd_version: "3.6.7"
 ```
@@ -21,6 +23,8 @@ etcd_version: "3.6.7"
 - Default: `https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}`
 - Description: This parameter specifies the base URL for etcd downloads. You
   can customize this parameter for air-gapped environments or local mirrors.
+
+In the following example, the inventory specifies a local mirror:
 
 ```yaml
 etcd_base_url: "https://my-mirror.local/etcd/v{{ etcd_version }}"
@@ -40,6 +44,8 @@ etcd_base_url: "https://my-mirror.local/etcd/v{{ etcd_version }}"
 - Description: This parameter specifies the etcd package filename. The value
   is architecture-specific.
 
+In the following example, the inventory specifies the ARM64 package:
+
 ```yaml
 etcd_package: etcd-v{{ etcd_version }}-linux-arm64
 ```
@@ -51,6 +57,8 @@ etcd_package: etcd-v{{ etcd_version }}-linux-arm64
 - Description: This parameter specifies the system user for running the etcd
   service.
 
+In the following example, the inventory specifies a custom etcd user:
+
 ```yaml
 etcd_user: etcd-sys
 ```
@@ -60,6 +68,8 @@ etcd_user: etcd-sys
 - Type: String
 - Default: `etcd`
 - Description: This parameter specifies the system group for the etcd service.
+
+In the following example, the inventory specifies a custom etcd group:
 
 ```yaml
 etcd_group: etcd-sys
@@ -72,6 +82,9 @@ etcd_group: etcd-sys
 - Description: This parameter specifies the directory where the roles install
   etcd binaries.
 
+In the following example, the inventory specifies a custom installation
+directory:
+
 ```yaml
 etcd_install_dir: /opt/etcd
 ```
@@ -83,6 +96,9 @@ etcd_install_dir: /opt/etcd
 - Description: This parameter specifies the directory for etcd configuration
   files.
 
+In the following example, the inventory specifies a custom configuration
+directory:
+
 ```yaml
 etcd_config_dir: /usr/local/etc/etcd
 ```
@@ -93,6 +109,8 @@ etcd_config_dir: /usr/local/etc/etcd
 - Default: `/var/lib/etcd`
 - Description: This parameter specifies the directory for etcd data storage
   and cluster state.
+
+In the following example, the inventory specifies a custom data directory:
 
 ```yaml
 etcd_data_dir: /data/etcd

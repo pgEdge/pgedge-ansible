@@ -10,6 +10,8 @@ listening ports, and similar settings.
 - Default: `17`
 - Description: This parameter specifies the Postgres major version to install.
 
+In the following example, the inventory specifies Postgres version 17:
+
 ```yaml
 pg_version: 17
 ```
@@ -20,6 +22,8 @@ pg_version: 17
 - Default: `5432`
 - Description: This parameter specifies the port where Postgres listens for
   connections.
+
+In the following example, the inventory specifies the default Postgres port:
 
 ```yaml
 pg_port: 5432
@@ -36,8 +40,10 @@ pg_port: 5432
     - For RHEL-family systems, the default is `/var/lib/pgsql`.
     - For Debian-family systems, the default is `/var/lib/postgresql`.
 
+In the following example, the inventory specifies a custom home directory:
+
 ```yaml
-pg_home: `/home/postgres`
+pg_home: /home/postgres
 ```
 
 ## pg_path
@@ -52,6 +58,8 @@ pg_home: `/home/postgres`
 - Description: This parameter specifies the directory containing Postgres
   binaries and libraries. You can specify this parameter for custom
   installations.
+
+In the following example, the inventory specifies a custom binary path:
 
 ```yaml
 pg_path: /opt/postgresql/17
@@ -69,6 +77,8 @@ pg_path: /opt/postgresql/17
 
 - Description: This parameter specifies the Postgres data directory. You can
   specify this parameter for custom locations.
+
+In the following example, the inventory specifies a custom data directory:
 
 ```yaml
 pg_data: /data/postgresql
@@ -93,6 +103,9 @@ pg_data: /data/postgresql
       connections; the default is `127.0.0.1/32`.
 
 - Since: 1.0.0
+
+In the following example, the inventory adds a custom HBA rule for SSL
+connections:
 
 ```yaml
 custom_hba_rules:

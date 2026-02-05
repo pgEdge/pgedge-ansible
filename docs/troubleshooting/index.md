@@ -1,10 +1,10 @@
 # Troubleshooting
 
-This guide provides solutions to common issues encountered when deploying and
-managing pgEdge clusters with the Ansible Collection. The troubleshooting
-documentation is organized by component and deployment phase; this structure
-allows administrators to quickly locate solutions for specific problems during
-cluster provisioning and operation.
+This guide provides solutions to common issues encountered when deploying and 
+managing pgEdge clusters with the Ansible Collection. We've organized the 
+troubleshooting documentation to address problem categories rather than 
+individual roles. This structure allows administrators to quickly locate 
+solutions for specific problems during cluster provisioning and operation.
 
 Each section addresses a distinct layer of the pgEdge stack, from foundational
 Ansible setup through service-specific configuration. These guides provide

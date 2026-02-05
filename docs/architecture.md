@@ -71,11 +71,10 @@ Use this cluster type for the following scenarios:
 - Low impact regional databases with active-active requirements work well.
 
 !!! warning "Important"
-    This cluster type is not recommended for production use. Since no nodes
-    are protected by a physical replica, data loss can occur during node
-    failure.
+    This cluster type is not recommended for production use. Without the
+    protection of a physical replica, data loss can occur during node failure.
 
-In the following example, each node is assigned to a separate zone:
+The following example assigns each node to a separate zone:
 
 ```yaml
 pgedge:
@@ -145,7 +144,7 @@ Use this cluster type for the following scenarios:
 - Multi-region deployments benefit from local write speeds.
 - Environments requiring the highest HA guarantee use this topology.
 
-In the following example, nodes are distributed across two zones with HAProxy
+The following example distributes two nodes across two zones with HAProxy
 in each zone:
 
 ```yaml

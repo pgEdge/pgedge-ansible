@@ -21,7 +21,7 @@ successful deployment of pgEdge components.
 Check the following items to resolve the issue:
 
 - Verify the `install_repos` role completed successfully.
-- Check that the package cache is updated with the following commands:
+- Refresh the package cache with the following commands:
 
 ```bash
 # Debian/Ubuntu

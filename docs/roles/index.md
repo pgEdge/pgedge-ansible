@@ -6,7 +6,10 @@ page provides an overview of all roles, their purposes, and execution order.
 
 ## Role Categories
 
-The roles are organized into four functional categories.
+This collection deploys software using a provided Ansible inventory file to 
+initialize each inventory host before installing and then configuring the 
+software. In order to simplify cluster deployment, each role inhabits one of 
+four functional categories described in this section.
 
 ### Configuration Foundation
 
@@ -194,8 +197,9 @@ sample playbooks demonstrate this principle.
 
 ### Role Variables
 
-Most configuration is handled through inventory variables. See the
-[Configuration](../configuration/index.md) page for details.
+Variables determine how Ansible roles operate. Please refer to the
+[Configuration](../configuration/index.md) page for a list of all accepted
+role variables for this collection.
 
 Some roles accept role-specific parameters.
 
@@ -211,10 +215,11 @@ In the following example, the playbook passes a variable directly to the role:
         proxy_node: custom-proxy.example.com
 ```
 
-For cluster consistency, set parameters through the inventory file when
-possible.
+For cluster consistency, we recommend setting parameters through the inventory 
+file when possible.
 
-In the following example, the inventory file sets a variable for all hosts:
+In the following example, the inventory file sets a variable for all hosts
+in the `pgedge` node group:
 
 ```yaml
 pgedge:
@@ -230,10 +235,12 @@ features address critical concerns like system state consistency,
 cross-platform compatibility, and operational visibility. By incorporating 
 standardized patterns for idempotent operations, operating system detection, 
 and comprehensive logging, the roles deliver repeatable deployments while 
-minimizing manual intervention. Whether provisioning a standalone Postgres 
-instance or constructing a multi-region high-availability cluster, these 
-capabilities form the foundation for robust, maintainable infrastructure 
-automation that adapts seamlessly to different environments and requirements.
+minimizing manual intervention.
+
+Whether provisioning a standalone Postgres instance or constructing a 
+multi-region high-availability cluster, these capabilities form the foundation 
+for robust, maintainable infrastructure automation that adapts seamlessly to 
+different environments and requirements.
 
 ### Idempotency
 
@@ -243,21 +250,22 @@ execute them after a partial failure.
 
 !!! warning "Re-running After Failures"
     The collection is in early development and not fully re-entrant after
-    errors. Manual cleanup may be required before re-running failed playbooks.
+    errors. You may need to perform manual cleanup before re-running failed
+    playbooks.
 
 ### OS Support
 
-All roles support both Debian and RHEL-based distributions:
+All roles support both Debian and RHEL-based distributions, including:
 
-- Debian 12 (Bookworm)
-- Rocky Linux 9
+- Debian 12 (Bookworm).
+- Rocky Linux 9.
 
-Roles automatically detect the OS family and adjust these items:
+Roles automatically detect the OS family and adjust items such as:
 
-- Package names
-- File paths
-- Service names
-- Configuration locations
+- package names.
+- file paths.
+- service names.
+- configuration locations.
 
 ### Logging and Output
 
@@ -281,4 +289,5 @@ ansible-playbook playbook.yml -vv
 - Review individual role documentation for detailed information.
 - Examine [sample playbooks](../usage.md) for complete examples.
 - Understand [configuration variables](../configuration/index.md) for roles.
-- Consult the [troubleshooting guide](../troubleshooting/index.md) for solutions.
+- Consult the [troubleshooting guide](../troubleshooting/index.md) for
+  solutions.

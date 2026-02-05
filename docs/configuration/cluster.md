@@ -5,6 +5,11 @@ These settings define the basic operation and user accounts for the cluster.
 
 ## Basic Operation
 
+These parameters are operational in nature, defining how to organize and label 
+cluster resources. While they have functional defaults, we strongly recommend
+either changing them in most cases, or including them in host inventories
+explicitly to prevent mistakes.
+
 ### db_names
 
 - Type: List
@@ -12,9 +17,11 @@ These settings define the basic operation and user accounts for the cluster.
 - Description: Database names for the Spock cluster. You must specify at least
   one database. The roles create any missing databases automatically.
 
+In the following example, the inventory specifies database names:
+
 ```yaml
 # Single database
-db_names: 
+db_names:
   - myapp
 
 # Multiple databases
@@ -29,6 +36,8 @@ db_names:
 - Default: `demo`
 - Description: Canonical name for the cluster. The collection uses this name
   for descriptive items and generated values.
+
+In the following example, the inventory specifies a production cluster name:
 
 ```yaml
 cluster_name: production-cluster
@@ -47,7 +56,11 @@ cluster_name: production-cluster
 
 !!! important
     In simple clusters, use one node per zone. In HA clusters, assign multiple
-    nodes to the same zone.
+    nodes to the same zone. Zone assignment determines the behavior of several
+    roles in this collection, so we strongly encourage setting this parameter
+    for each individual inventory host to avoid ambiguity.
+
+In the following example, the inventory assigns each node to a separate zone:
 
 ```yaml
 hosts:
@@ -73,6 +86,8 @@ creates and maintains these roles automatically.
 - Description: Primary database username. This username must differ from the
   OS user running Ansible.
 
+In the following example, the inventory specifies a custom database user:
+
 ```yaml
 db_user: appuser
 ```
@@ -82,6 +97,9 @@ db_user: appuser
 - Type: String
 - Default: `secret`
 - Description: Password for the database user.
+
+In the following example, the inventory retrieves the password from Ansible
+Vault:
 
 ```yaml
 db_password: "{{ vault_db_password }}"
@@ -94,6 +112,8 @@ db_password: "{{ vault_db_password }}"
 - Description: Database username for pgEdge inter-node logical replication.
   The cluster uses this account for Spock operations.
 
+In the following example, the inventory specifies the pgEdge replication user:
+
 ```yaml
 pgedge_user: pgedge
 ```
@@ -103,6 +123,9 @@ pgedge_user: pgedge
 - Type: String
 - Default: `secret`
 - Description: Password for the pgEdge replication user.
+
+In the following example, the inventory retrieves the password from Ansible
+Vault:
 
 ```yaml
 pgedge_password: "{{ vault_pgedge_password }}"
@@ -115,6 +138,8 @@ pgedge_password: "{{ vault_pgedge_password }}"
 - Description: Username for Patroni streaming replication. This setting only
   applies to HA clusters.
 
+In the following example, the inventory specifies the replication user:
+
 ```yaml
 replication_user: replicator
 ```
@@ -124,6 +149,9 @@ replication_user: replicator
 - Type: String
 - Default: `secret`
 - Description: Password for the Patroni replication user.
+
+In the following example, the inventory retrieves the password from Ansible
+Vault:
 
 ```yaml
 replication_password: "{{ vault_replication_password }}"
@@ -141,6 +169,8 @@ cluster or per zone.
 - Description: This parameter enables high availability features including
   etcd, Patroni, and HAProxy.
 
+In the following example, the inventory enables high availability mode:
+
 ```yaml
 is_ha_cluster: true
 ```
@@ -151,6 +181,8 @@ is_ha_cluster: true
 - Default: `false`
 - Description: This parameter enables Patroni management of
   `synchronous_commit` and `synchronous_standby_names` based on cluster state.
+
+In the following example, the inventory enables synchronous replication:
 
 ```yaml
 synchronous_mode: true
@@ -163,6 +195,8 @@ synchronous_mode: true
 - Description: This parameter enforces synchronous commit when you enable
   synchronous mode, even if no synchronous replicas are available. This setting
   can prevent writes during replica failures.
+
+In the following example, the inventory disables strict synchronous mode:
 
 ```yaml
 synchronous_mode_strict: false

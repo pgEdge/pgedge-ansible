@@ -87,5 +87,7 @@ The collection validates certain variables:
 ## Next Steps
 
 - Review [sample playbooks](../usage.md) for complete configuration examples.
-- Understand [role-specific parameters](../roles/index.md) for advanced options.
-- Learn about [architecture patterns](../architecture.md) to inform your choices.
+- Understand [role-specific parameters](../roles/index.md) for advanced 
+  options.
+- Learn about [architecture patterns](../architecture.md) to inform your 
+  choices.

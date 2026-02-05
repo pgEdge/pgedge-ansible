@@ -576,8 +576,8 @@ their deployments seamlessly as workloads grow or architectural needs change.
 
 ### Adding a New Node to Simple Cluster
 
-Adding a new node to a cluster should only be performed when database activity
-is at a minimum or altogether absent. This Ansible collection does not yet 
+Add new nodes to a cluster only when database activity is at a minimum or
+altogether absent. This Ansible collection does not yet 
 leverage 
 [Zero-Downtime Add Node](https://docs.pgedge.com/spock-v5/development/modify/zodan/zodan_readme/)
 functionality.

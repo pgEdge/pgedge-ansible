@@ -16,6 +16,8 @@ The following settings define how Patroni operates. The `install_patroni` and
 - Description: This parameter specifies the directory where the roles install
   Patroni binaries via the pipx install location.
 
+In the following example, the inventory specifies the Patroni binary directory:
+
 ```yaml
 patroni_bin_dir: "/var/lib/pgsql/.local/bin"
 ```
@@ -26,6 +28,9 @@ patroni_bin_dir: "/var/lib/pgsql/.local/bin"
 - Default: `/etc/patroni`
 - Description: This parameter specifies the directory for Patroni configuration
   files.
+
+In the following example, the inventory specifies the Patroni configuration
+directory:
 
 ```yaml
 patroni_config_dir: "/etc/patroni"

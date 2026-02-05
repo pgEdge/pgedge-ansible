@@ -164,8 +164,8 @@ setup tasks plus additional high availability configuration.
 
 !!! note "Postgres Service Management"
     If the Patroni service is running, the role assumes the bootstrapping
-    process has already been executed and skips these steps. The role does
-    not stop Postgres or erase the data directory in this case.
+    process is complete and skips these steps. The role does not stop Postgres
+    or erase the data directory in this case.
 
 ## Usage Examples
 

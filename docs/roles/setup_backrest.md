@@ -299,9 +299,9 @@ The role may update these items on subsequent runs:
 - Update cron job schedules when parameters change.
 
 !!! warning "Encryption Keys"
-    The `backup_repo_cipher` is auto-generated based on cluster name and zone.
-    Losing this key makes backups unrecoverable; store the key securely.
+    The role auto-generates `backup_repo_cipher` based on cluster name and
+    zone. Losing this key makes backups unrecoverable; store the key securely.
 
 !!! note "HA Cluster Integration"
     For HA clusters, this role integrates with Patroni to configure archiving
-    cluster-wide; manual changes to archive_command may be overwritten.
+    cluster-wide; Patroni may overwrite manual changes to archive_command.

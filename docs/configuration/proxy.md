@@ -12,6 +12,8 @@ collection.
   can set this parameter to differ from the `pg_port` parameter to run HAProxy
   on the same host as Postgres.
 
+In the following example, the inventory specifies the default proxy port:
+
 ```yaml
 proxy_port: 5432
 ```
@@ -24,6 +26,9 @@ proxy_port: 5432
 - Description: This parameter explicitly specifies the proxy endpoint to use
   for Spock subscriptions in HA clusters. The collection uses the first HAProxy
   node in the same zone when you do not set this parameter.
+
+In the following example, the inventory specifies a custom proxy endpoint for
+a node:
 
 ```yaml
 hosts:
@@ -54,6 +59,9 @@ hosts:
   Each route requires a `port` value; you can optionally specify a `lag` value
   for maximum replication lag. The collection uses the route key as the check
   type.
+
+In the following example, the inventory configures replica and synchronous
+replica routes:
 
 ```yaml
 haproxy_extra_routes:

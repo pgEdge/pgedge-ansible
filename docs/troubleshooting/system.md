@@ -14,7 +14,7 @@ successfully perform required system modifications.
 
 ## SELinux Reboot Issues
 
-**Symptom:** The system fails to come back online after SELinux configuration
+**Symptom:** The system fails to come back online after SELinux configuration.
 
 **Solution:**
 
@@ -25,7 +25,7 @@ successfully perform required system modifications.
 
 ## SSH Key Problems
 
-**Symptom:** The role failed to generate or distribute SSH keys properly
+**Symptom:** The role failed to generate or distribute SSH keys properly.
 
 **Solution:**
 
@@ -37,7 +37,7 @@ successfully perform required system modifications.
 
 ## Host File Issues
 
-**Symptom:** Nodes fail to resolve each other's hostnames
+**Symptom:** Nodes fail to resolve each other's hostnames.
 
 **Solution:**
 

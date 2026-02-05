@@ -38,9 +38,8 @@ In the following example, the playbook invokes the role after installing etcd:
 ```
 
 !!! important "HA Clusters Only"
-    This role is only required for high availability deployments when you
-    enable the `is_ha_cluster` parameter; standalone Postgres instances do
-    not need etcd.
+    Only high availability deployments require this role when you enable the
+    `is_ha_cluster` parameter; standalone Postgres instances do not need etcd.
 
 ## Configuration
 
@@ -95,13 +94,12 @@ When the role runs on pgedge hosts, it performs these steps:
     - Start the etcd service to begin cluster formation.
 
 !!! info "Zone Isolation"
-    etcd clusters are isolated per zone; each zone has its own independent
-    etcd cluster for Patroni coordination within that zone.
+    Each zone maintains its own independent etcd cluster for Patroni
+    coordination within that zone.
 
 !!! important "Cluster Formation"
-    All nodes in the etcd cluster must be started within a reasonable time
-    window to form quorum; if nodes are started too far apart, cluster
-    formation may fail.
+    Start all nodes in the etcd cluster within a reasonable time window to
+    form quorum; if you start nodes too far apart, cluster formation may fail.
 
 ### Configuration Details
 
@@ -245,12 +243,12 @@ The role skips these operations when the target already exists:
 The role may update these items on subsequent runs:
 
 - Regenerate configuration files to incorporate inventory changes.
-- Ensure the etcd service is enabled and running.
+- Start and enable the etcd service within Systemd.
 
 !!! warning "Configuration Changes"
     Changing etcd cluster membership after initial setup requires special
-    procedures; adding or removing nodes should be done using `etcdctl` rather
-    than by re-running this role.
+    procedures; use `etcdctl` to add or remove nodes rather than re-running
+    this role.
 
 !!! warning "Data Directory"
     The etcd data directory contains critical cluster state; back up this
