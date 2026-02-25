@@ -12,10 +12,8 @@
         archive_command: "pgbackrest {{ push_args }}"
         restore_command: "pgbackrest {{ pull_args }}"
     EOF
-  args:
-    chdir: "{{ patroni_bin_dir }}"
   vars:
-    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
+    ctl: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
     stanza: "pgedge-{{ cluster_name }}-{{ zone }}"
     push_args: "--stanza={{ stanza }} archive-push %p"
     pull_args: "--stanza={{ stanza }} archive-get %f %p"
@@ -24,11 +22,16 @@
   when: inventory_hostname == first_node_in_zone
 
 - name: Reload the Postgres service to incorporate changes
-  shell: |
-    {{ ctl }} reload -r any --force pgedge {{ ansible_hostname }}
-  args:
-    chdir: "{{ patroni_bin_dir }}"
-  vars:
-    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - reload
+    - -r
+    - any
+    - --force
+    - "{{ pg_version }}-{{ cluster_name }}"
+    - "{{ ansible_hostname }}"
   become: true
   become_user: postgres

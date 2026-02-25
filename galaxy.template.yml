@@ -26,7 +26,7 @@ dependencies:
 
 repository: https://github.com/pgEdge/pgedge-ansible
 
-documentation: https://github.com/pgEdge/pgedge-ansible/README.md
+documentation: https://github.com/pgEdge/pgedge-ansible/blob/main/README.md
 
 #homepage: http://example.com
 

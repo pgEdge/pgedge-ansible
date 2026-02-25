@@ -36,6 +36,8 @@
 # bootstrap backup.
 
 - include_tasks: first_backup.yaml
+  vars:
+    os_user: postgres
   when:
   - backup_type != 'ssh'
   - inventory_hostname == first_node_in_zone

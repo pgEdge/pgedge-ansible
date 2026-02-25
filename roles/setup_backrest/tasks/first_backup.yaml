@@ -7,6 +7,8 @@
     stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
   environment:
     LD_LIBRARY_PATH: "{{ pg_path }}/lib"
+  become: true
+  become_user: "{{ os_user }}"
 
 # We should be able to run this command on every host, as PgBackRest will
 # automatically ignore replicas since we haven't configured it to allow
@@ -19,3 +21,5 @@
     stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
   environment:
     LD_LIBRARY_PATH: "{{ pg_path }}/lib"
+  become: true
+  become_user: "{{ os_user }}"

@@ -10,7 +10,7 @@
 
 - name: Create configuration file for PgBackRest
   template:
-    src: files/pgbackrest.conf.j2
+    src: templates/pgbackrest.conf.j2
     dest: /etc/pgbackrest/pgbackrest.conf
     mode: "0600"
   become: true

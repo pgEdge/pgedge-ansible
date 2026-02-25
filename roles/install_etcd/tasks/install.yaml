@@ -64,8 +64,9 @@
 
 - name: Install the etcd Systemd service file
   template:
-    src: files/etcd.service.j2
+    src: templates/etcd.service.j2
     dest: /etc/systemd/system/etcd.service
-    owner: "{{ etcd_user }}"
-    group: "{{ etcd_group }}"
+    owner: "root"
+    group: "root"
+    mode: "0644"
   become: true

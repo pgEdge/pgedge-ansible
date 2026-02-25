@@ -4,6 +4,30 @@
   include_tasks: rhel_prep.yaml
   when: ansible_os_family == 'RedHat'
 
+# If the pg_data directory is in a non-default location, the Postgres user may
+# not be able to create it. Downstream tools will have problems with this so
+# this will be a universal step.
+
+- name: Ensure Postgres data directory exists and is owned by postgres user
+  file:
+    path: "{{ pg_data }}"
+    state: directory
+    owner: postgres
+    mode: "0700"
+  become: true
+
+- name: Ensure Postgres configuration path exists and is owned by postgres user
+  file:
+    path: "{{ pg_config_dir }}"
+    state: directory
+    owner: postgres
+    mode: "0700"
+  become: true
+
+# This code branches to either normal setup or HA setup. In the case of HA
+# setup, the primary node and replicas have divergent steps, so those are also
+# explicit branches.
+
 - include_tasks: setup.yaml
   when:
   - not is_ha_cluster
@@ -11,9 +35,3 @@
 - include_tasks: ha_setup.yaml
   when:
   - is_ha_cluster
-  - inventory_hostname == first_node_in_zone
-
-- include_tasks: replica_setup.yaml
-  when:
-  - is_ha_cluster
-  - inventory_hostname != first_node_in_zone

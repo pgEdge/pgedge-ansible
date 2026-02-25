@@ -1,5 +1,7 @@
 ---
 
+- include_tasks: validate.yaml
+
 - include_tasks: packages.yaml
 
 - include_tasks: selinux.yaml
@@ -23,6 +25,6 @@
   - inventory_hostname in groups.pgedge
 
 - include_tasks: backup_user.yaml
-  when: 
+  when:
   - backup_type == 'ssh'
   - inventory_hostname in groups.backup | default([])

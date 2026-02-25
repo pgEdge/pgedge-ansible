@@ -2,3 +2,4 @@
 
 synchronous_mode: false
 synchronous_mode_strict: false
+patroni_tls_dir: "/etc/patroni/tls"

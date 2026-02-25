@@ -2,7 +2,7 @@
       ansible_default_ipv4.netmask) |
       ansible.utils.ipaddr('host/prefix') %}
 {%- set db_list = (db_names + ['postgres']) | join(',') %}
-scope: pgedge
+scope: "{{ pg_version }}-{{ cluster_name }}"
 namespace: /db/
 name: {{ ansible_hostname }}
 replication_slot_name: {{ ansible_hostname | regex_replace('[\W-]', '_') }}
@@ -14,9 +14,18 @@ restapi:
 etcd3:
   host: {{ inventory_hostname }}:2379
   ttl: 30
-  protocol: http
+  protocol: https
+  cacert: {{ patroni_tls_dir }}/ca.crt
+  cert: {{ patroni_tls_dir }}/patroni.crt
+  key: {{ patroni_tls_dir }}/patroni.key
 
 bootstrap:
+{% if ansible_os_family == 'Debian' %}
+  method: pg_createcluster
+  pg_createcluster:
+    command: /usr/share/patroni/pg_createcluster_patroni
+{% endif %}
+
   dcs:
     ttl: 30
     loop_wait: 10
@@ -61,6 +70,13 @@ bootstrap:
       plugin: spock_output
 
 postgresql:
+{% if ansible_os_family == 'Debian' %}
+  create_replica_method:
+    - pg_clonecluster
+  pg_clonecluster:
+    command: /usr/share/patroni/pg_clonecluster_patroni
+{% endif %}
+
   listen: 0.0.0.0:{{ pg_port }}
   connect_address: {{ inventory_hostname }}:{{ pg_port }}
   config_dir: {{ pg_config_dir }}
@@ -123,3 +139,11 @@ postgresql:
     superuser:
       username: {{ db_user }}
       password: {{ db_password }}
+
+{% if ansible_os_family == 'Debian' %}
+  parameters:
+    unix_socket_directories: '/var/run/postgresql/'
+    logging_collector: 'on'
+    log_directory: '/var/log/postgresql'
+    log_filename: 'postgresql-{{ pg_version }}-{{ cluster_name }}.log'
+{% endif %}

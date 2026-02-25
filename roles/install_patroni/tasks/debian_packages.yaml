@@ -1,13 +1,9 @@
 ---
 
-# On Debian systems, it's better to just install pipx rather than python3-pip.
-# This is because the latter is considered a dev environment, so it also pulls
-# in a bunch of build tools we don't need.
-
-- name: Install pipx to handle all of the heavy lifting
+- name: Install Patroni and DCS Python dependencies
   package:
     name:
-    - pipx
+    - patroni
     state: present
     lock_timeout: 300
   retries: 5
@@ -15,9 +11,3 @@
   register: result
   until: result is success
   become: true
-
-- name: Make sure pipx is in the user's path
-  shell: |
-    pipx ensurepath
-  become: true
-  become_user: postgres

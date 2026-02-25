@@ -8,9 +8,11 @@
     group: "{{ etcd_group }}"
   become: true
 
+- include_tasks: tls.yaml
+
 - name: Create configuration file for etcd node
   template:
-    src: files/etcd.yaml.j2
+    src: templates/etcd.yaml.j2
     dest: "{{ etcd_config_dir }}/etcd.yaml"
     owner: "{{ etcd_user }}"
     group: "{{ etcd_group }}"

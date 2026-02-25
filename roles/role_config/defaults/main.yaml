@@ -6,6 +6,7 @@ repo_prefix: ""
 zone: 1
 pg_version: 17
 spock_version: "5.0.4"
+tls_validity_days: 3560
 
 db_names:
 - demo
@@ -57,5 +58,4 @@ backup_repo_type: ssh
 backup_repo_user: "{{ ansible_user_id }}"
 backup_repo_path: "/home/{{ ansible_user_id }}"
 
-patroni_bin_dir: "{{ pg_home }}/.local/bin"
 patroni_config_dir: "/etc/patroni"

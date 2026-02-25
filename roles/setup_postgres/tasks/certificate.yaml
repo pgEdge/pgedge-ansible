@@ -1,20 +1,30 @@
 ---
 
+# All certificate generation is delegated to the Ansible controller so the
+# cryptography Python package is only required there, not on remote nodes.
+# Remember, this only happens on the primary node, as the certificate is
+# inherited by other nodes in the cluster due to Patroni.
+
+- name: Create local TLS staging directory for Postgres certs
+  file:
+    path: "tls/postgres"
+    state: directory
+    mode: '0700'
+  delegate_to: localhost
+  run_once: true
+
 - name: Create an SSL private key for the server
   community.crypto.openssl_privatekey:
-    path: "{{ pg_data }}/server.key"
+    path: "tls/postgres/server.key"
     type: RSA
     size: 4096
     mode: "0600"
-  become: true
-  become_user: postgres
-
-# Create the CSR file to avoid rerunning by using openssl_csr_pipe.
+  delegate_to: localhost
 
 - name: Create a Certificate Signing Request for the server
   community.crypto.openssl_csr:
-    path: "{{ pg_data }}/server.csr"
-    privatekey_path: "{{ pg_data }}/server.key"
+    path: "tls/postgres/server.csr"
+    privatekey_path: "tls/postgres/server.key"
     common_name: localhost
     country_name: US
     locality_name: Alexandria
@@ -28,16 +38,26 @@
     extended_key_usage:
       - serverAuth
     mode: "0600"
-  become: true
-  become_user: postgres
+  delegate_to: localhost
 
 - name: Create an X509 SSL cert for the server
   community.crypto.x509_certificate:
-    path: "{{ pg_data }}/server.crt"
-    privatekey_path: "{{ pg_data }}/server.key"
-    csr_path: "{{ pg_data }}/server.csr"
+    path: "tls/postgres/server.crt"
+    privatekey_path: "tls/postgres/server.key"
+    csr_path: "tls/postgres/server.csr"
     provider: selfsigned
-    selfsigned_not_after: +365d
+    selfsigned_not_after: "+{{ tls_validity_days }}d"
     mode: "0600"
+  delegate_to: localhost
+
+- name: Copy Postgres TLS cert and key from Ansible controller
+  copy:
+    src: "tls/postgres/{{ item }}"
+    dest: "{{ pg_data }}/{{ item }}"
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  loop:
+  - server.crt
+  - server.key
   become: true
-  become_user: postgres

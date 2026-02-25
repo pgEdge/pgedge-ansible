@@ -1,12 +1,5 @@
 ---
 
-# This file is basically a fork to install pipx depending on OS.
-#
-# Why pipx? Because Debian systems have effectively made it impossible for
-# pip to add system software anymore if it isn't packaged. Patroni packaging
-# is extremely hit or miss, while the pypi resources are almost always recent,
-# and pipx will handle the build and install so the service user can launch it.
-
 - include_tasks: debian_packages.yaml
   when: ansible_os_family == 'Debian'
 

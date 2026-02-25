@@ -2,12 +2,10 @@
 
 - name: Wait until Patroni cluster is established
   shell: |-
-    {{ ctl }} list pgedge -f json \
+    {{ ctl }} list {{ pg_version }}-{{ cluster_name }} -f json \
         | jq -r '.[] | select(.Host == "{{ first_node_in_zone }}") | .State'
-  args:
-    chdir: "{{ patroni_bin_dir }}"
   vars:
-    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
+    ctl: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
   register: patroni_status
   retries: 30
   delay: 10

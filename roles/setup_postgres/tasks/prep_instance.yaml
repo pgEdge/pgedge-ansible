@@ -1,16 +1,5 @@
 ---
 
-# The pg_data location may not exist yet, or it may not be owned by the 
-# postgres user, so make sure that's the case before bootstrapping Postgres.
-
-- name: Ensure Postgres data directory is owned by postgres user
-  file:
-    path: "{{ pg_data }}"
-    state: directory
-    owner: postgres
-    mode: "0700"
-  become: true
-
 # Debian and RHEL systems have _vastly_ different bootstrap processes. They
 # are separated here for simplicity.
 

@@ -1,13 +1,4 @@
 ---
 
 - include_tasks: packages.yaml
-
-- name: Check for Patroni software
-  stat:
-    path: "{{ patroni_bin_dir }}/patroni"
-  register: patroni_bin
-  become: true
-  become_user: postgres
-
 - include_tasks: install.yaml
-  when: not patroni_bin.stat.exists

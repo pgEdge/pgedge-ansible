@@ -1,4 +1,1 @@
 ---
-
-patroni_bin_dir: "{{ pg_home }}/.local/bin"
-patroni_config_dir: "/etc/patroni"

@@ -1,0 +1,140 @@
+---
+
+# All certificate generation is delegated to the Ansible controller so the
+# cryptography Python package is only required there, not on remote nodes.
+
+- name: Create local TLS staging directory
+  file:
+    path: "tls/etcd"
+    state: directory
+    mode: '0700'
+  delegate_to: localhost
+  run_once: true
+
+- name: Generate CA private key
+  community.crypto.openssl_privatekey:
+    path: "tls/etcd/ca.key"
+    size: 4096
+  delegate_to: localhost
+  run_once: true
+
+- name: Generate CA certificate signing request
+  community.crypto.openssl_csr:
+    path: "tls/etcd/ca.csr"
+    privatekey_path: "tls/etcd/ca.key"
+    common_name: "etcd-ca"
+    use_common_name_for_san: false
+    basic_constraints:
+      - 'CA:TRUE'
+    basic_constraints_critical: true
+    key_usage:
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Generate CA self-signed certificate
+  community.crypto.x509_certificate:
+    path: "tls/etcd/ca.crt"
+    privatekey_path: "tls/etcd/ca.key"
+    csr_path: "tls/etcd/ca.csr"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ tls_validity_days }}d"
+  delegate_to: localhost
+  run_once: true
+
+- name: Generate peer private key for {{ inventory_hostname }}
+  community.crypto.openssl_privatekey:
+    path: "tls/etcd/{{ inventory_hostname }}-peer.key"
+    size: 4096
+  delegate_to: localhost
+
+- name: Generate peer certificate signing request
+  community.crypto.openssl_csr:
+    path: "tls/etcd/{{ inventory_hostname }}-peer.csr"
+    privatekey_path: "tls/etcd/{{ inventory_hostname }}-peer.key"
+    common_name: "{{ ansible_hostname }}"
+    use_common_name_for_san: false
+    subject_alt_name:
+      - "DNS:{{ ansible_hostname }}"
+      - "DNS:{{ inventory_hostname }}"
+      - "IP:{{ ansible_default_ipv4.address }}"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - serverAuth
+      - clientAuth
+  delegate_to: localhost
+
+- name: Sign peer certificate
+  community.crypto.x509_certificate:
+    path: "tls/etcd/{{ inventory_hostname }}-peer.crt"
+    csr_path: "tls/etcd/{{ inventory_hostname }}-peer.csr"
+    ownca_path: "tls/etcd/ca.crt"
+    ownca_privatekey_path: "tls/etcd/ca.key"
+    provider: ownca
+    ownca_not_after: "+{{ tls_validity_days }}d"
+  delegate_to: localhost
+
+- name: Generate server private key for {{ inventory_hostname }}
+  community.crypto.openssl_privatekey:
+    path: "tls/etcd/{{ inventory_hostname }}-server.key"
+    size: 4096
+  delegate_to: localhost
+
+- name: Generate server certificate signing request
+  community.crypto.openssl_csr:
+    path: "tls/etcd/{{ inventory_hostname }}-server.csr"
+    privatekey_path: "tls/etcd/{{ inventory_hostname }}-server.key"
+    common_name: "{{ ansible_hostname }}"
+    use_common_name_for_san: false
+    subject_alt_name:
+      - "DNS:{{ ansible_hostname }}"
+      - "DNS:{{ inventory_hostname }}"
+      - "IP:{{ ansible_default_ipv4.address }}"
+      - "IP:127.0.0.1"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - serverAuth
+      - clientAuth
+  delegate_to: localhost
+
+- name: Sign server certificate
+  community.crypto.x509_certificate:
+    path: "tls/etcd/{{ inventory_hostname }}-server.crt"
+    csr_path: "tls/etcd/{{ inventory_hostname }}-server.csr"
+    ownca_path: "tls/etcd/ca.crt"
+    ownca_privatekey_path: "tls/etcd/ca.key"
+    provider: ownca
+    ownca_not_after: "+{{ tls_validity_days }}d"
+  delegate_to: localhost
+
+# Distribute certificates and keys to the node.
+
+- name: Create TLS directory on etcd node
+  file:
+    path: "{{ etcd_tls_dir }}"
+    state: directory
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: '0750'
+  become: true
+
+- name: Copy etcd TLS CA, certs, and keys from Ansible controller
+  copy:
+    src: "tls/etcd/{{ item.local }}"
+    dest: "{{ etcd_tls_dir }}/{{ item.remote }}"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: '0640'
+  loop:
+  - { local: ca.crt, remote: ca.crt }
+  - { local: "{{ inventory_hostname }}-peer.crt", remote: peer.crt }
+  - { local: "{{ inventory_hostname }}-peer.key", remote: peer.key }
+  - { local: "{{ inventory_hostname }}-server.crt", remote: server.crt }
+  - { local: "{{ inventory_hostname }}-server.key", remote: server.key }
+  become: true

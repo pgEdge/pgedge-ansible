@@ -47,6 +47,8 @@
 # With configuration complete, attempt to take the initial bootstrap backup:
 
 - include_tasks: first_backup.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"
 
 # If the bootstrap backup succeeds, it's safe to set up automated backups.
 

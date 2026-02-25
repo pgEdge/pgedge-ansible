@@ -4,7 +4,7 @@ nodes_in_zone: >-
   {{ groups['pgedge'] |
   map('extract', hostvars) |
   selectattr('zone', 'eq', zone) |
-  map(attribute='inventory_hostname') }}
+  map(attribute='inventory_hostname') | list }}
 
 proxies_in_zone: >-
   {{ groups['haproxy'] | default([]) |
@@ -37,4 +37,10 @@ pg_config_dir: >-
   {{ 
     '/etc/postgresql/' + pg_version|string + '/' + cluster_name if ansible_os_family == 'Debian'
     else pg_data
+  }}
+
+patroni_service_name: >-
+  {{
+    'patroni@' + pg_version|string + '-' + cluster_name if ansible_os_family == 'Debian'
+    else 'patroni'
   }}

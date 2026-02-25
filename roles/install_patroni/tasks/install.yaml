@@ -1,26 +1,8 @@
 ---
 
-- name: Install Patroni and any dependencies
-  shell: |
-    [ -f ~/.bashrc ] && source ~/.bashrc
-    [ -f ~/.bash_profile ] && source ~/.bash_profile
-    pipx install patroni[psycopg2-binary,etcd]
-  become: true
-  become_user: postgres
-
-# The service file is being installed here, but is not being enabled.
-# The setup_etcd role should do that.
-
-- name: Install the Patroni Systemd service file
-  template:
-    src: files/patroni.service.j2
-    dest: /etc/systemd/system/patroni.service
-    owner: postgres
-  become: true
-
-- name: Ensure Patroni config directory exists owned by the postgres user
+- name: Ensure Patroni TLS directory exists owned by the postgres user
   file:
-    path: "{{ patroni_config_dir }}"
+    path: "{{ patroni_tls_dir }}"
     state: directory
     owner: postgres
     group: postgres

@@ -1,10 +1,9 @@
 ---
 
-# The RemoveIPC setting is probably the most idiotic systemd feature to date.
-# By simply logging out of a shell, it will deallocate any shared memory used
-# by that user, as if they couldn't possibly have launched a daemon of some
-# kind. Even worse, it's enabled by DEFAULT on Debian systems. It could be
-# set anywhere, so just burn it with fire.
+# The RemoveIPC setting in systemd is dangerous for databases. When enabled
+# (which is the DEFAULT on Debian systems), logging out of a shell will trigger
+# systemd to deallocate all shared memory segments owned by that user. This can
+# instantly crash Postgres, so we must ensure this is disabled globally.
 
 - name: Ensure RemoveIPC setting is disabled system-wide
   lineinfile:

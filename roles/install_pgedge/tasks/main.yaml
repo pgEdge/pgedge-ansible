@@ -5,7 +5,7 @@
     name:
     - "pgedge-enterprise-all{{ separator }}{{ pg_version }}"
     - pgedge-python3-psycopg2
-    state: latest
+    state: present
   vars:
     separator: "{{ '_' if ansible_os_family == 'RedHat' else '-' }}"
   retries: 5

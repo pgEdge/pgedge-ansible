@@ -1,9 +1,11 @@
 ---
 
+- include_tasks: tls.yaml
+
 - name: Create configuration file for Patroni node
   template:
-    src: files/patroni.yaml.j2
-    dest: "{{ patroni_config_dir }}/patroni.yaml"
+    src: templates/patroni.yml.j2
+    dest: "{{ patroni_config_dir }}/{{ patroni_config_file }}"
     mode: 0600
     owner: postgres
     group: postgres
@@ -22,7 +24,7 @@
 - name: Enable and start the Patroni service
   systemd_service:
     daemon_reload: true
-    name: patroni
+    name: "{{ patroni_service_name }}"
     enabled: true
     state: started
   become: true
@@ -34,7 +36,7 @@
 - name: Enable and start the Patroni service
   systemd_service:
     daemon_reload: true
-    name: patroni
+    name: "{{ patroni_service_name }}"
     enabled: true
     state: started
   become: true
@@ -45,11 +47,16 @@
 # "Pending restart" flag in the Patroni cluster status.
 
 - name: Restart Postgres service to incorporate configuration changes
-  shell: |
-    {{ ctl }} restart -r any --force pgedge {{ ansible_hostname }}
-  args:
-    chdir: "{{ patroni_bin_dir }}"
-  vars:
-    ctl: "./patronictl -c {{ patroni_config_dir }}/patroni.yaml"
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - restart
+    - -r
+    - any
+    - --force
+    - "{{ pg_version }}-{{ cluster_name }}"
+    - "{{ ansible_hostname }}"
   become: true
   become_user: postgres

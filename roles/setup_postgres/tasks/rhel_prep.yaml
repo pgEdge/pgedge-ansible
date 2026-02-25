@@ -4,9 +4,9 @@
 # So we need to install one. The important part is that the PGDATA location
 # is set in the template.
 
-- name: Install service file for Postgres 
+- name: Install service file for Postgres
   template:
-    src: files/pgedge-postgres.service.j2
+    src: templates/pgedge-postgres.service.j2
     dest: "/etc/systemd/system/{{ pg_service_name }}.service"
   become: true
 

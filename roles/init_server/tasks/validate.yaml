@@ -1,0 +1,54 @@
+# There are some Best Practices and basic sanity-checks we'd like to enforce
+# before any bootstrapping steps take place. Those take place here under the
+# assumption this role is required for all hosts managed by this collection.
+
+---
+
+# Do not allow multiple pgEdge nodes to exist in a single zone. The Spock
+# subscription wiring and snowflake node ID are derived from this value. In
+# this case, a zone is an artificial construct not related to cloud
+# availability zones or regions.
+
+- name: Ensure only one pgEdge node exists per Zone in non-HA clusters
+  assert:
+    that:
+    - zone_map | unique | count == zone_map | count
+    fail_msg: >-
+      Non-HA clusters cannot have more than one pgEdge node per zone. Zones
+      define node-to-node communication channels and must be unique across the
+      cluster.
+  run_once: true
+  vars:
+    zone_map: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='zone', default='') | list }}
+  when:
+  - not is_ha_cluster
+  - inventory_hostname in groups.pgedge
+
+# Begin by disallowing the use of default passwords. This should go without
+# saying, but there are several of these and it's easy to miss one.
+
+- name: Ensure default passwords have been changed
+  assert:
+    that:
+    - db_password != 'secret'
+    - pgedge_password != 'secret'
+    - replication_password != 'secret'
+    - backup_password != 'secret'
+    fail_msg: >-
+      One or more passwords are still set to the default value 'secret'. Please
+      make sure to specify the following variables:
+      db_password, pgedge_password, replication_password, backup_password
+  run_once: true
+  when: inventory_hostname in groups.pgedge | union(groups.backup | default([]))
+
+# Don't let backup servers and pgEdge servers overlap. The intention here is
+# that there's a dedicated backup server.
+
+- name: Ensure no host is in both the pgedge and backup groups
+  assert:
+    that:
+    - groups.pgedge | default([]) | intersect(groups.backup | default([])) | length == 0
+    fail_msg: "A host cannot be in both the 'pgedge' and 'backup' groups."
+  run_once: true

@@ -1,12 +1,10 @@
 ---
 
-# RHEL variants have a minimal pip install. This makes it easy to use for
-# installing pipx and nothing else.
-
-- name: Install pip to facilitate installation of pipx
+- name: Install Patroni and DCS Python dependencies
   package:
     name:
-    - python3-pip
+    - patroni
+    - patroni-etcd
     state: present
     lock_timeout: 300
   retries: 5
@@ -14,10 +12,3 @@
   register: result
   until: result is success
   become: true
-
-- name: Install pipx and make sure it's in the user's path
-  shell: |
-    python3 -m pip install --user pipx
-    python3 -m pipx ensurepath
-  become: true
-  become_user: postgres

@@ -15,3 +15,19 @@
   register: result
   until: result is success
   become: true
+
+# There seems to be some kind of issue specifically with the Rocky 9 PGDG repo
+# file GPG signature, so in that single instance, disable GPG key validation.
+
+- name: Install the PGDG repo package
+  dnf:
+    name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}/pgdg-redhat-repo-latest.noarch.rpm
+    state: present
+    disable_gpg_check: >-
+      {{ true if ansible_distribution == 'Rocky' and
+         ansible_distribution_major_version | int == 9 else false }}
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true

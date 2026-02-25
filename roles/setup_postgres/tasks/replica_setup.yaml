@@ -1,27 +1,16 @@
 ---
 
-# A replica node should have no running Postgres. For Debian systems, that
-# means we need to stop the Postgres service so Patroni can take over. We
-# don't need to actually erase the data directory, as Patroni should also
-# take care of that for us if necessary. Only do this if Patroni isn't
-# running, as that means this task has been re-run at some later time.
+# Debian systems likely already have a "main" cluster that's using the port
+# assigned to this new cluster, so stop and disable it. Patroni should sync
+# over the necessary configuration files and clone the primary.
 
-- name: Populate service facts to check for required services
-  ansible.builtin.service_facts:
-
-- name: Ensure Postgres instance is stopped during bootstrap on replicas
-  service:
-    name: "{{ pg_service_name }}"
+- name: Stop and disable existing Postgres if it's blocking the new cluster
+  service: 
+    name: "postgresql@{{ pg_version }}-main"
     state: stopped
     enabled: false
-  become: true
   when:
-  - ansible_facts.services['patroni.service']['state'] | default('') != 'running'
-
-- name: Erase existing Postgres data directory during bootstrap on replicas
-  file:
-    path: "{{ pg_data }}"
-    state: absent
+  - cluster_name != 'main'
+  - pg_port == 5432
+  - ansible_os_family == 'Debian'
   become: true
-  when:
-  - ansible_facts.services['patroni.service']['state'] | default('') != 'running'
