@@ -213,13 +213,21 @@ Ensure that all nodes start fresh or that all nodes share a consistent state.
 Check the existing cluster members with the following command:
 
 ```bash
-/usr/local/etcd/etcdctl member list
+/usr/local/etcd/etcdctl \
+    --cacert=/etc/etcd/tls/ca.crt \
+    --cert=/etc/etcd/tls/server.crt \
+    --key=/etc/etcd/tls/server.key \
+    member list
 ```
 
 Remove the old member with the following command:
 
 ```bash
-/usr/local/etcd/etcdctl member remove <member-id>
+/usr/local/etcd/etcdctl \
+    --cacert=/etc/etcd/tls/ca.crt \
+    --cert=/etc/etcd/tls/server.crt \
+    --key=/etc/etcd/tls/server.key \
+    member remove <member-id>
 ```
 
 Clear the data directory and restart the service:

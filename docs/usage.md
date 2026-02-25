@@ -211,11 +211,11 @@ psql -h proxy1.example.com -U admin -d demo
 
 # Check cluster status
 sudo su - postgres
-patronictl -c /etc/patroni/patroni.yaml list
+patronictl -c /etc/patroni/patroni.yml list
 
 # Trigger failover
 sudo su - postgres
-patronictl -c /etc/patroni/patroni.yaml failover
+patronictl -c /etc/patroni/patroni.yml failover
 ```
 
 ## Ultra-HA Multi-Zone Cluster
@@ -540,7 +540,7 @@ In the following example, commands verify HA cluster health:
 etcdctl endpoint health
 
 # Check Patroni status
-patronictl -c /etc/patroni/patroni.yaml list
+patronictl -c /etc/patroni/patroni.yml list
 
 # Check HAProxy status
 systemctl status haproxy

@@ -7,6 +7,7 @@ orchestrates the startup sequence to ensure proper cluster formation.
 
 The role performs the following tasks on inventory hosts:
 
+- Produce TLS certificates for secure communication.
 - Generate the Patroni configuration file with cluster settings.
 - Configure etcd connection for distributed consensus.
 - Set up Postgres parameters managed by Patroni.
@@ -67,6 +68,7 @@ this role:
 
 | Option | Use Case |
 |--------|----------|
+| `custom_hba_rules` | Additional rules applied to `pg_hba.conf` on all nodes. |
 | `db_names` | Databases to configure for the cluster. |
 | `pg_port` | Postgres port for client connections. |
 | `pg_data` | Postgres data directory path. |
@@ -79,11 +81,11 @@ this role:
 | `pgedge_user` | pgEdge user for node communication. |
 | `replication_user` | User for Patroni streaming replication. |
 | `replication_password` | Password for the replication user. |
-| `patroni_bin_dir` | Directory containing Patroni binaries. |
-| `patroni_config_dir` | Directory for Patroni configuration files. |
+| `patroni_tls_dir` | Set the directory for Patroni TLS certificate files. |
 | `spock_exception_behaviour` | Spock replication exception handling behavior. |
 | `synchronous_mode` | Enable synchronous replication mode. |
 | `synchronous_mode_strict` | Require synchronous replica for commits. |
+| `tls_validity_days` | The number of days TLS certificates remain valid. |
 
 ## How It Works
 
@@ -91,10 +93,17 @@ The role configures Patroni and orchestrates cluster formation.
 
 ### Patroni Configuration
 
-When the role runs on pgedge hosts, it performs these steps:
+This role performs the following steps on target pgedge hosts:
 
-1. Generate the Patroni configuration file.
-    - Create `{{ patroni_config_dir }}/patroni.yaml` with cluster settings.
+1. Produce TLS certificates for secure communication.
+    - Copies CA certificate (`ca.crt`) from `{{ etcd_tls_dir }}`.
+    - Creates a new client key named `patroni.key`.
+    - Uses the `patroni.key` key to generate a `patroni.crt` certificate.
+
+2. Generate the Patroni configuration file.
+    - Create a configuration file in `/etc/patroni` with cluster settings.
+      - RHEL systems use `patroni.yml`.
+      - Debian systems use `{{ pg_version }}-{{ cluster_name }}.yml`.
     - Configure cluster identification with scope, namespace, and node name.
     - Set REST API endpoints for health checks and management.
     - Configure etcd connection details for distributed consensus.
@@ -103,22 +112,22 @@ When the role runs on pgedge hosts, it performs these steps:
     - Set up `pg_hba.conf` rules for authentication.
     - Configure replication and superuser credentials.
 
-2. Disable the native Postgres service.
+3. Disable the native Postgres service.
     - Disable the systemd Postgres service.
     - Ensure Patroni has exclusive control of the Postgres lifecycle.
 
-3. Start the Patroni service on the primary node.
-    - Start Patroni on `first_node_in_zone` immediately.
+4. Start the Patroni service on the primary node.
+    - Start Patroni on the designated bootstrap primary node immediately.
     - Establish the cluster scope and initialize etcd keys.
     - The primary node becomes the cluster leader.
 
-4. Start the Patroni service on replica nodes.
+5. Start the Patroni service on replica nodes.
     - Wait for the primary to establish the cluster.
     - Check for primary availability before starting.
     - Start Patroni to bootstrap from the primary.
     - Join the cluster as a replica.
 
-5. Apply configuration changes.
+6. Apply configuration changes.
     - Restart Postgres through Patroni to apply settings.
     - Use `patronictl restart` to clear the "Pending restart" flag.
 
@@ -169,7 +178,7 @@ Patroni manages these parameters cluster-wide:
 
 **pg_hba.conf Management:**
 
-Patroni manages pg_hba.conf with rules for:
+Patroni manages `pg_hba.conf` with rules for:
 
 - Local postgres peer access.
 - Localhost connections.
@@ -180,7 +189,7 @@ Patroni manages pg_hba.conf with rules for:
 - Backup server access when configured.
 - Custom HBA rules from inventory.
 
-!!! warning "pg_hba.conf"
+!!! warning `pg_hba.conf`
     Patroni manages `pg_hba.conf` and will overwrite manual changes, so use
     `custom_hba_rules` or `patronictl` instead.
 
@@ -275,27 +284,36 @@ This role generates and modifies files on inventory hosts during execution.
 
 | File | New / Modified | Explanation |
 |------|----------------|-------------|
-| `/etc/patroni/patroni.yaml` | New | Main Patroni configuration file with cluster settings, etcd connection, and Postgres parameters. |
+| `/etc/patroni/[NAME].yml` | New | Main Patroni configuration file with cluster settings, etcd connection, and Postgres parameters. NAME is `patroni` on RHEL systems and `{{ pg_version }}-{{ cluster_name }}` on Debian systems. |
+| `/etc/patroni/tls/ca.crt` | New | Certificate authority file used to validate etcd server certificates. |
+| `/etc/patroni/tls/patroni.key` | New | Private key necessary to encrypt traffic to etcd. |
+| `/etc/patroni/tls/patroni.crt` | New | Certificate for communicating with etcd as a client. |
 | `{{ pg_home }}/.patroni_pgpass` | New | Password file for Patroni database connections with mode 600. |
 
-The role also creates etcd keys under `/db/pgedge/`:
+The role also creates etcd keys under `/db/{{ pg_version }}-{{ cluster_name }}/`:
 
 | Key | Purpose |
 |-----|---------|
-| `/db/pgedge/leader` | Current cluster leader. |
-| `/db/pgedge/members/<hostname>` | Member metadata. |
-| `/db/pgedge/config` | Cluster configuration. |
-| `/db/pgedge/initialize` | Initialization key. |
+| `leader` | Current cluster leader. |
+| `members/<hostname>` | Member metadata. |
+| `config` | Cluster configuration. |
+| `initialize` | Initialization key. |
 
 ## Platform-Specific Behavior
 
-This role behaves identically on all supported platforms including Debian 12
-and Rocky Linux 9.
+This role adapts its behavior based on the operating system family.
 
-Variables handle platform differences:
+### Debian Family
 
-- `pg_service_name` specifies the OS-specific service name.
-- `pg_path`, `pg_config_dir`, and `pg_data` specify OS-specific paths.
+On Debian-based systems, this role performs these actions:
+
+- Names the configuration file `{{ pg_version }}-{{ cluster_name }}.yml`. For example, default settings produce a file named `/etc/patroni/17-demo.yml`.
+
+### RHEL Family
+
+On RHEL-based systems, this role performs these actions:
+
+- Names the configuration file `patroni.yml`.
 
 ## Idempotency
 

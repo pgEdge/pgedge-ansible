@@ -15,104 +15,6 @@ that prevent proper HA operation.
 For problems not covered by this guide, please refer to the 
 [Patroni documenation](https://patroni.readthedocs.io/en/latest/README.html).
 
-## pipx Installation Fails
-
-**Symptom:** Ansible fails to install pipx on RHEL systems.
-
-**Solution:**
-
-Verify that Python 3 and pip are installed:
-
-```bash
-python3 --version
-pip3 --version
-```
-
-Manually install pipx as the `postgres` user:
-
-```bash
-sudo -u postgres python3 -m pip install --user pipx
-sudo -u postgres python3 -m pipx ensurepath
-```
-
-Verify that the PATH includes pipx:
-
-```bash
-pipx --version
-```
-
-## Patroni Installation Fails
-
-**Symptom:** Pipx fails to install patroni.
-
-**Solution:**
-
-Check the `postgres` user's environment:
-
-```bash
-sudo -u postgres pipx list
-```
-
-Verify that pipx has initialized the environment:
-
-```bash
-sudo -u postgres pipx ensurepath
-```
-
-Check for compilation errors caused by missing development packages and install
-the necessary dependencies:
-
-```bash
-# Debian/Ubuntu
-sudo apt install python3-dev libpq-dev
-
-# RHEL/Rocky
-sudo dnf install python3-devel postgresql-devel
-```
-
-## Binary Not Found After Installation
-
-**Symptom:** The shell cannot find the `patroni` command.
-
-**Solution:**
-
-Verify the installation location with the following command:
-
-```bash
-sudo -i -u postgres ls -la .local/bin/
-```
-
-Check that the PATH includes the `patroni_bin_dir` directory:
-
-```bash
-sudo -i -u postgres printenv | grep PATH
-```
-
-Manually add the path to the `.profile`, `.bash_profile`, or `.bashrc` files:
-
-```bash
-export PATH="$PATH:/var/lib/pgsql/.local/bin"
-```
-
-## Permission Denied on Config Directory
-
-**Symptom:** Ansible cannot write to the `/etc/patroni` directory.
-
-**Solution:**
-
-Verify the directory ownership with the following command:
-
-```bash
-sudo ls -la /etc/patroni
-```
-
-Fix the permissions with the following commands:
-
-```bash
-sudo chown postgres:postgres /etc/patroni
-sudo chmod 700 /etc/patroni
-```
-
 ## Patroni Service Fails to Start
 
 **Symptom:** The Patroni service won't start.
@@ -128,13 +30,17 @@ sudo journalctl -u patroni -n 50 -f
 Verify the configuration syntax with the following command:
 
 ```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patroni --validate-config /etc/patroni/patroni.yaml
+sudo -u postgres patroni --validate-config /etc/patroni/17-demo.yml
 ```
 
 Check the etcd connectivity with the following command:
 
 ```bash
-curl http://localhost:2379/health
+sudo -u postgres /usr/local/etcd/etcdctl \
+     --cacert=/etc/patroni/tls/ca.crt \
+     --cert=/etc/patroni/tls/patroni.crt \
+     --key=/etc/patroni/tls/patroni.key \
+     endpoint health
 ```
 
 ## etcd Connection Fails
@@ -152,10 +58,14 @@ sudo systemctl status etcd
 Test the etcd connectivity with the following command:
 
 ```bash
-curl http://localhost:2379/v3/cluster/member/list
+sudo -u postgres /usr/local/etcd/etcdctl \
+     --cacert=/etc/patroni/tls/ca.crt \
+     --cert=/etc/patroni/tls/patroni.crt \
+     --key=/etc/patroni/tls/patroni.key \
+     member list
 ```
 
-- Check that the firewall allows traffic on port 2379.
+- Check that any firewalls allow traffic on port 2379.
 - Verify that the etcd hostname resolves correctly on all nodes.
 
 ## Cluster Formation Fails
@@ -167,7 +77,11 @@ curl http://localhost:2379/v3/cluster/member/list
 Check the etcd keys for the cluster:
 
 ```bash
-/usr/local/etcd/etcdctl get --prefix /db/pgedge/
+sudo -u postgres /usr/local/etcd/etcdctl \
+     --cacert=/etc/patroni/tls/ca.crt \
+     --cert=/etc/patroni/tls/patroni.crt \
+     --key=/etc/patroni/tls/patroni.key \
+     get --prefix /db
 ```
 
 - Verify that all nodes can see each other in etcd.
@@ -184,13 +98,13 @@ Check the etcd keys for the cluster:
 Restart a specific node using `patronictl`:
 
 ```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patronictl -c /etc/patroni/patroni.yaml restart pgedge <hostname>
+sudo -u postgres patronictl -c /etc/patroni/patroni.yml restart 17-demo <hostname>
 ```
 
 Alternatively, restart all nodes in the cluster:
 
 ```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patronictl -c /etc/patroni/patroni.yaml restart pgedge
+sudo -u postgres patronictl -c /etc/patroni/patroni.yml restart 17-demo
 ```
 
 ## Replication Not Working
@@ -202,7 +116,7 @@ sudo -u postgres /var/lib/pgsql/.local/bin/patronictl -c /etc/patroni/patroni.ya
 Check the Patroni cluster status:
 
 ```bash
-sudo -u postgres /var/lib/pgsql/.local/bin/patronictl -c /etc/patroni/patroni.yaml list
+sudo -u postgres patronictl -c /etc/patroni/patroni.yml list
 ```
 
 - Verify that the replication user credentials match the configuration.

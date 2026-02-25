@@ -115,3 +115,15 @@ In the following example, the inventory specifies a custom data directory:
 ```yaml
 etcd_data_dir: /data/etcd
 ```
+
+## etcd_tls_dir
+
+- Type: String
+- Default: `/etc/etcd/tls`
+- Description: Defines the full path where etcd stores TLS certificates and keys.
+
+In the following example, the inventory specifies a custom TLS directory:
+
+```yaml
+etcd_tls_dir: /etc/ssl/etcd
+```

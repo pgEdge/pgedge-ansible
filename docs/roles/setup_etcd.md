@@ -8,6 +8,7 @@ nodes in a zone.
 The role performs the following tasks on inventory hosts:
 
 - Generate the etcd cluster configuration file with node membership.
+- Produce TLS certificates for secure communication.
 - Configure cluster membership for all nodes within each zone.
 - Set appropriate network endpoints and peer URLs.
 - Enable and start the etcd service for cluster formation.
@@ -65,6 +66,7 @@ this role:
 | `etcd_install_dir` | Directory containing etcd binaries. |
 | `etcd_config_dir` | Directory for etcd configuration files. |
 | `etcd_data_dir` | Directory for etcd cluster data storage. |
+| `etcd_tls_dir` | Directory for etcd TLS certificate storage. |
 
 ## How It Works
 
@@ -82,14 +84,21 @@ When the role runs on pgedge hosts, it performs these steps:
     - Create `etcd_config_dir` directory with proper ownership.
     - Set ownership to `etcd:etcd` for the service user.
 
-3. Generate the cluster configuration file.
+3. Produce TLS certificates for secure communication.
+    - Produces a new certificate authority named `ca.crt`.
+    - Creates a new peer key named `peer.key`.
+    - Uses the `peer.key` key to generate a `peer.crt` certificate.
+    - Creates a new communication key named `server.key`.
+    - Uses the `server.key` key to generate a `server.crt` certificate.
+
+4. Generate the cluster configuration file.
     - Create `{{ etcd_config_dir }}/etcd.yaml` with cluster settings.
     - Configure node identity with hostname and advertise URLs.
     - Set initial cluster membership for all nodes in the zone.
     - Configure network endpoints for client and peer communication.
     - Set the data directory to `{{ etcd_data_dir }}/postgresql`.
 
-4. Start the etcd service.
+5. Start the etcd service.
     - Enable the etcd service for automatic startup.
     - Start the etcd service to begin cluster formation.
 
@@ -224,6 +233,11 @@ This role generates and modifies files on inventory hosts during execution.
 | File | New / Modified | Explanation |
 |------|----------------|-------------|
 | `/etc/etcd/etcd.yaml` | New | Main etcd configuration file with cluster membership and network settings. |
+| `/etc/etcd/tls/ca.crt` | New | Certificate authority file used to validate etcd server certificates. |
+| `/etc/etcd/tls/peer.key` | New | Private key necessary to encrypt traffic to other etcd nodes. |
+| `/etc/etcd/tls/peer.crt` | New | Certificate for etcd node-to-node communication. |
+| `/etc/etcd/tls/server.key` | New | Private key necessary to encrypt traffic to other etcd nodes on the client interface. |
+| `/etc/etcd/tls/server.crt` | New | Certificate for etcd client communication from this server. |
 | `{{ etcd_data_dir }}/postgresql/` | New | Cluster data directory containing member data and WAL logs. |
 
 ## Platform-Specific Behavior

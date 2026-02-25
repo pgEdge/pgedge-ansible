@@ -129,7 +129,7 @@ primary node.
 Check the current Patroni cluster status to identify the primary node:
 
 ```bash
-sudo -i -u postgres patronictl -c /etc/patroni/patroni.yaml list
+sudo -i -u postgres patronictl -c /etc/patroni/patroni.yml list
 ```
 
 - Verify that the HAProxy configuration specifies the correct health check

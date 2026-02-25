@@ -3,35 +3,15 @@
 The following settings define how Patroni operates. The `install_patroni` and
 `setup_patroni` roles use these settings to configure the HA management layer.
 
-## patroni_bin_dir
+## patroni_tls_dir
 
 - Type: String
-- Default: `{{ pg_home }}/.local/bin`
-
-    - For RHEL-family systems, the default is 
-      `/var/lib/pgsql/.local/bin`.
-    - For Debian-family systems, the default is 
-      `/var/lib/postgresql/.local/bin`.
-
+- Default: `/etc/patroni/tls`
 - Description: This parameter specifies the directory where the roles install
-  Patroni binaries via the pipx install location.
+  Patroni TLS certificates necessary for communicating with etcd.
 
-In the following example, the inventory specifies the Patroni binary directory:
-
-```yaml
-patroni_bin_dir: "/var/lib/pgsql/.local/bin"
-```
-
-## patroni_config_dir
-
-- Type: String
-- Default: `/etc/patroni`
-- Description: This parameter specifies the directory for Patroni configuration
-  files.
-
-In the following example, the inventory specifies the Patroni configuration
-directory:
+In the following example, the inventory specifies the Patroni TLS directory:
 
 ```yaml
-patroni_config_dir: "/etc/patroni"
+patroni_tls_dir: "/etc/ssl/certs/patroni"
 ```
