@@ -39,6 +39,8 @@ pg_config_dir: >-
     else pg_data
   }}
 
+patroni_config_dir: "/etc/patroni"
+
 patroni_service_name: >-
   {{
     'patroni@' + pg_version|string + '-' + cluster_name if ansible_os_family == 'Debian'

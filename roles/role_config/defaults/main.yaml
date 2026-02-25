@@ -57,5 +57,3 @@ backup_password: secret
 backup_repo_type: ssh
 backup_repo_user: "{{ ansible_user_id }}"
 backup_repo_path: "/home/{{ ansible_user_id }}"
-
-patroni_config_dir: "/etc/patroni"
