@@ -6,7 +6,7 @@
     - curl
     - gnupg2
     - lsb-release
-    state: latest
+    state: present
   retries: 5
   delay: 20
   register: result
@@ -36,7 +36,7 @@
   apt:
     name:
     - pgedge-postgresql-common
-    state: latest
+    state: present
   retries: 5
   delay: 20
   register: result

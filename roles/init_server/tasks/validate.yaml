@@ -43,6 +43,18 @@
   run_once: true
   when: inventory_hostname in groups.pgedge | union(groups.backup | default([]))
 
+# These roles simply won't work on anything but RHEL / Debian systems right
+# now. There may be workarounds, but for now it's best to fail early.
+
+- name: These roles currently only work on Debian and RHEL family systems
+  assert:
+    that:
+    - ansible_facts['os_family'] in ('Debian', 'RedHat')
+    fail_msg: >-
+      These roles make many assumptions based on OS distribution. Currently
+      only distributions in the RedHat and Debian families are supported.
+  run_once: true
+
 # Don't let backup servers and pgEdge servers overlap. The intention here is
 # that there's a dedicated backup server.
 

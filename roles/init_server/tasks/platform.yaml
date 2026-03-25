@@ -10,6 +10,7 @@
     path: /etc/systemd/logind.conf
     line: RemoveIPC=no
     regexp: '^#?RemoveIPC='
+  register: ipc_status
   become: true
 
 - name: Reload systemd login service for new IPC setting
@@ -17,3 +18,4 @@
     name: systemd-logind
     state: restarted
   become: true
+  when: ipc_status.changed

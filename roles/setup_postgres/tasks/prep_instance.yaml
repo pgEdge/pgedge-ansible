@@ -44,7 +44,7 @@
       spock.include_ddl_repset = 'on'
       spock.exception_behaviour = '{{ spock_exception_behaviour }}'
       spock.save_resolutions = 'on'
-      snowflake.zone = {{ zone }}
+      snowflake.node = {{ zone }}
     state: present
     marker: "# {mark} pgEdge ANSIBLE MANAGED BLOCK"
     insertafter: EOF
