@@ -47,6 +47,7 @@ example deploys a simple three-node cluster:
 
   roles:
     - init_server
+    - install_repos
     - install_pgedge
     - setup_postgres
     - setup_pgedge

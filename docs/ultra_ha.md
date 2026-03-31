@@ -77,12 +77,13 @@ Create a playbook that applies roles in the correct order. The following
 example playbook deploys the full Ultra-HA topology:
 
 ```yaml
-- hosts: pgedge, haproxy, backup
+- hosts: all
 
   collections:
     - pgedge.platform
 
-  roles: []
+  roles:
+    - init_server
 
 - hosts: pgedge
 
@@ -90,7 +91,7 @@ example playbook deploys the full Ultra-HA topology:
     - pgedge.platform
 
   roles:
-    - init_server
+    - install_repos
     - install_pgedge
     - setup_postgres
     - install_etcd
@@ -98,6 +99,7 @@ example playbook deploys the full Ultra-HA topology:
     - install_backrest
     - setup_etcd
     - setup_patroni
+    - setup_backrest
 
 - hosts: haproxy
 
@@ -105,7 +107,6 @@ example playbook deploys the full Ultra-HA topology:
     - pgedge.platform
 
   roles:
-    - init_server
     - setup_haproxy
 
 - hosts: pgedge
@@ -115,7 +116,6 @@ example playbook deploys the full Ultra-HA topology:
 
   roles:
     - setup_pgedge
-    - setup_backrest
 
 - hosts: backup
 
@@ -123,8 +123,7 @@ example playbook deploys the full Ultra-HA topology:
     - pgedge.platform
 
   roles:
-    - init_server
-    - install_pgedge
+    - install_repos
     - install_backrest
     - setup_backrest
 ```

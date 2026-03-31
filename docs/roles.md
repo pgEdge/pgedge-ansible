@@ -10,25 +10,27 @@ The following list shows the correct execution sequence:
 
 1. [`init_server`](#the-init_server-role) - Prepares all servers in the
    cluster.
-2. [`install_pgedge`](#the-install_pgedge-role) - Installs the pgEdge CLI on
+2. [`install_repos`](#the-install_repos-role) - Installs the pgEdge and PGDG
+   package repositories.
+3. [`install_pgedge`](#the-install_pgedge-role) - Installs pgEdge packages on
    pgEdge nodes.
-3. [`setup_postgres`](#the-setup_postgres-role) - Initializes PostgreSQL on
+4. [`setup_postgres`](#the-setup_postgres-role) - Initializes PostgreSQL on
    pgEdge nodes.
-4. [`install_etcd`](#the-install_etcd-role) - Installs etcd on pgEdge nodes
+5. [`install_etcd`](#the-install_etcd-role) - Installs etcd on pgEdge nodes
    (HA only).
-5. [`install_patroni`](#the-install_patroni-role) - Installs Patroni on pgEdge
+6. [`install_patroni`](#the-install_patroni-role) - Installs Patroni on pgEdge
    nodes (HA only).
-6. [`install_backrest`](#the-install_backrest-role) - Installs PgBackRest on
+7. [`install_backrest`](#the-install_backrest-role) - Installs PgBackRest on
    backup-capable nodes.
-7. [`setup_etcd`](#the-setup_etcd-role) - Configures and starts etcd
+8. [`setup_etcd`](#the-setup_etcd-role) - Configures and starts etcd
    (HA only).
-8. [`setup_patroni`](#the-setup_patroni-role) - Configures Patroni and starts
+9. [`setup_patroni`](#the-setup_patroni-role) - Configures Patroni and starts
    the HA cluster (HA only).
-9. [`setup_haproxy`](#the-setup_haproxy-role) - Configures HAProxy on haproxy
-   nodes (HA only).
-10. [`setup_pgedge`](#the-setup_pgedge-role) - Creates Spock nodes and
+10. [`setup_haproxy`](#the-setup_haproxy-role) - Configures HAProxy on haproxy
+    nodes (HA only).
+11. [`setup_pgedge`](#the-setup_pgedge-role) - Creates Spock nodes and
     establishes subscriptions.
-11. [`setup_backrest`](#the-setup_backrest-role) - Configures PgBackRest and
+12. [`setup_backrest`](#the-setup_backrest-role) - Configures PgBackRest and
     runs the first backup.
 
 ## The init_server Role
@@ -38,76 +40,100 @@ Apply this role to every host group before running any other roles.
 
 The role performs the following actions:
 
-- Installs base packages: jq, nano, less, and rsync.
-- Creates a `.bashrc.d` directory for modular environment configuration.
+- Validates configuration, confirming that required parameters are set and
+  that the target distribution is Debian or RHEL.
+- Installs base packages: acl, jq, nano, less, and rsync.
+- Disables `RemoveIPC` in systemd-logind to prevent shared memory segments
+  from being removed when a user session ends. Restart of logind only occurs
+  if the setting was changed.
 - Adds all cluster nodes to `/etc/hosts` on every node when
   `manage_host_file` is true.
 - Configures SELinux settings on RHEL-based systems.
 - Enables core file retention when `debug_pgedge` is true.
-- Retrieves the public SSH key from each node and stores the keys in a
-  `host-keys` directory on the Ansible controller.
+- On pgEdge nodes in SSH backup mode, generates an SSH key pair for the
+  `postgres` OS user and retrieves the public key to the Ansible controller.
+- On dedicated backup nodes in SSH backup mode, creates the `backup_repo_user`
+  OS account that owns the PgBackRest repository.
+
+## The install_repos Role
+
+The `install_repos` role installs the pgEdge and PGDG package repositories
+on each target node. Apply this role to pgEdge nodes and backup nodes
+immediately after `init_server` and before any software installation role.
+
+The role performs the following actions on Debian systems:
+
+- Installs the pgEdge release package to configure the pgEdge apt repository.
+- Installs the PGDG apt repository for the target PostgreSQL version.
+
+The role performs the following actions on RHEL systems:
+
+- Installs the pgEdge release RPM to configure the pgEdge dnf repository.
+- Installs EPEL and the PGDG dnf repository for the target PostgreSQL version.
 
 ## The install_pgedge Role
 
-The `install_pgedge` role downloads and installs the pgEdge CLI. Apply this
-role to all pgEdge nodes and any backup nodes that require the CLI.
+The `install_pgedge` role installs pgEdge software packages. Apply this role
+to all pgEdge nodes after `install_repos` has completed.
 
 The role performs the following actions:
 
-- Downloads the pgEdge installer from the configured repository.
-- Runs the Python-based installation script.
-- Adds the pgEdge CLI to the PATH environment for the Ansible user.
+- Installs `pgedge-enterprise-all` and the psycopg2 package from the pgEdge
+  repository using the system package manager.
 
 ## The setup_postgres Role
 
-The `setup_postgres` role initializes PostgreSQL using the pgEdge CLI and
-installs the Spock and Snowflake extensions. Apply this role to all pgEdge
-nodes.
+The `setup_postgres` role initializes the PostgreSQL instance and installs the
+Spock and Snowflake extensions. Apply this role to all pgEdge nodes.
 
 The role performs the following actions:
 
-- Runs `pgedge setup` to initialize the PostgreSQL instance.
-- Creates all databases listed in `db_names`.
-- Installs Spock and Snowflake extensions on each database.
-- In HA clusters, stops PostgreSQL and wipes the data directory on all nodes
-  except the first node in each zone. Those nodes are prepared as streaming
-  replicas for Patroni.
+- Ensures the PostgreSQL data directory and configuration directory exist with
+  the correct ownership.
+- On RHEL, runs `postgresql-VERSION-setup initdb` to initialize the data
+  directory.
+- On Debian, uses `pg_createcluster` to create a named cluster.
+- Creates all databases listed in `db_names` and installs Spock and Snowflake
+  extensions on each database.
+- Configures `pg_hba.conf` with least-privilege rules for known users and
+  databases. Additional rules can be specified via `custom_hba_rules`.
+- Generates a self-signed TLS certificate for PostgreSQL connections.
+- In HA clusters, designates the first node in each zone as the Patroni
+  primary and prepares all remaining nodes in the zone as streaming replicas.
 
 ## The install_etcd Role
 
-The `install_etcd` role downloads and installs etcd. Apply this role to all
-pgEdge nodes in an HA cluster. The etcd service is not started during this
-role.
+The `install_etcd` role installs etcd from system packages. Apply this role
+to all pgEdge nodes in an HA cluster. The etcd service is not started during
+this role.
 
 The role performs the following actions:
 
-- Downloads etcd from the upstream release archive on GitHub.
-- Installs the etcd binaries to `/usr/local/etcd`.
+- Installs the etcd package from the pgEdge repository.
 - Creates the etcd system user and data directory.
 - Registers the etcd systemd service without starting it.
 
 ## The install_patroni Role
 
-The `install_patroni` role installs Patroni using pipx. Apply this role to all
-pgEdge nodes in an HA cluster. The Patroni service is not started during this
-role.
+The `install_patroni` role installs Patroni from system packages. Apply this
+role to all pgEdge nodes in an HA cluster. The Patroni service is not started
+during this role.
 
 The role performs the following actions:
 
 - Installs OS-specific prerequisite packages for Debian or RHEL.
-- Installs Patroni via pipx to isolate Python dependencies.
+- Installs the Patroni package from the pgEdge repository.
 - Creates the Patroni configuration directory at `/etc/patroni`.
 - Registers the Patroni systemd service without starting it.
 
 ## The install_backrest Role
 
-The `install_backrest` role installs PgBackRest using the pgEdge CLI. Apply
+The `install_backrest` role installs PgBackRest from system packages. Apply
 this role to pgEdge nodes and backup nodes where backup is required.
 
 The role performs the following actions:
 
-- Downloads and installs PgBackRest via the pgEdge CLI.
-- Adds the PgBackRest binary directory to the PATH environment.
+- Installs the PgBackRest package from the pgEdge repository.
 
 ## The setup_etcd Role
 
@@ -116,6 +142,7 @@ to all pgEdge nodes in an HA cluster after `install_etcd` has completed.
 
 The role performs the following actions:
 
+- Generates TLS certificates for etcd peer and client communication.
 - Generates the etcd configuration file from a template, listing all nodes in
   the same zone as cluster peers.
 - Starts the etcd systemd service if the data directory does not already
@@ -129,11 +156,12 @@ completed.
 
 The role performs the following actions:
 
+- Generates TLS certificates for Patroni REST API communication.
 - Generates the `patroni.yaml` configuration file from a template.
 - Starts the Patroni systemd service.
+- Waits for the cluster primary to become available before proceeding.
 - Waits for the cluster to reach a running state (up to 30 retries with a
   10-second delay between attempts).
-- Restarts PostgreSQL via patronictl to apply configuration changes.
 
 Patroni configures PostgreSQL with the following settings for Spock
 compatibility:
@@ -177,8 +205,11 @@ The role performs the following actions:
 - Subscribes to every other zone in the cluster.
 
 In HA clusters, the role runs only on the first node in each zone.
-Subscriptions target the HAProxy node in the remote zone when one is available.
-When `proxy_node` is set, that value is used instead.
+Subscriptions target the HAProxy node in the remote zone when one is
+available. The `proxy_port` parameter controls the port used for these
+connections, allowing HAProxy to run on a pgEdge node rather than a dedicated
+host. When `proxy_node` is set, that value is used instead of automatic
+selection.
 
 ## The setup_backrest Role
 
@@ -188,10 +219,12 @@ completed.
 
 The role performs the following actions:
 
+- Creates the `backup_user` PostgreSQL role with `pg_checkpoint` privileges
+  and configures `pg_hba.conf` to allow backup connections.
 - Generates `pgbackrest.conf` from a template, configuring the repository
   type, path, encryption, and retention settings.
 - For SSH repositories, configures SSH access between the pgEdge node and the
-  backup server.
+  backup server using the `postgres` OS user.
 - Configures PostgreSQL to archive WAL files to the PgBackRest repository and
   to retrieve WAL files from the repository during recovery.
 - Initializes the backup repository stanza for each zone.
