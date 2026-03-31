@@ -3,7 +3,7 @@
 The pgEdge Ansible Collection provides a set of Ansible roles for
 deploying and configuring pgEdge Distributed Postgres clusters. The
 collection automates the provisioning of single-zone clusters and
-multi-zone High Availability clusters with optional load balancing
+multi-zone high-availability clusters with optional load balancing
 and automated backup.
 
 ## Overview

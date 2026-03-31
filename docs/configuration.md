@@ -1,20 +1,20 @@
 # Configuration Reference
 
-This page lists all parameters recognized by the pgEdge Ansible
-Collection roles. Parameters are set as inventory variables or
-playbook variables and apply across roles unless noted otherwise.
+This page lists all parameters recognized by the pgEdge Ansible collection
+roles. Parameters are set as inventory variables or playbook variables and
+apply across roles unless noted otherwise.
 
-## Cluster Identification
+## Cluster Identification Parameters
 
-The following table describes parameters that identify the cluster
-and its nodes:
+The following table describes parameters that identify the cluster and its
+nodes:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | cluster_name | demo | Canonical name for the cluster, used for descriptive items and generated values. |
 | zone | 1 | Zone or region for a node. Zones also serve as Snowflake node IDs; each node must have a distinct integer value. |
 
-## Repository Configuration
+## Repository Configuration Parameters
 
 The following table describes parameters that control which software
 repository the collection uses:
@@ -24,10 +24,10 @@ repository the collection uses:
 | repo_name | download | Repository source. Accepted values are download, upstream, and devel. |
 | repo_prefix | (none) | Custom or automated build prefix. Contact pgEdge staff for valid values. |
 
-## Installation
+## Installation Parameters
 
-The following table describes parameters that control software
-installation paths and versions:
+The following table describes parameters that control software installation
+paths and versions:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -35,10 +35,10 @@ installation paths and versions:
 | pg_version | 17 | PostgreSQL version to install. |
 | spock_version | 5.0.0 | Version of the Spock extension to install. |
 
-## Database Configuration
+## Database Configuration Parameters
 
-The following table describes parameters that control database
-creation and access:
+The following table describes parameters that control database creation and
+access:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -46,10 +46,10 @@ creation and access:
 | db_user | admin | Database superuser username. Must differ from the OS user running the installation. |
 | db_password | secret | Password for db_user. |
 
-## High Availability
+## High Availability Parameters
 
-The following table describes parameters that control HA behavior.
-These parameters apply only when `is_ha_cluster` is `true`:
+The following table describes parameters that control HA behavior. These
+parameters apply only when `is_ha_cluster` is `true`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -60,29 +60,27 @@ These parameters apply only when `is_ha_cluster` is `true`:
 | synchronous_mode_strict | false | When synchronous_mode is enabled, Patroni disables synchronous replication if no synchronous replicas are available. Set this to true to always enforce synchronous commit regardless of replica availability. |
 | proxy_node | (none) | Overrides automatic HAProxy target selection for Spock subscriptions. When unset, subscriptions target the first HAProxy node in the same zone as the remote pgEdge node, or the first pgEdge node in that zone if no HAProxy node is present. |
 
-## HAProxy
+## HAProxy Parameters
 
-The following table describes parameters that control HAProxy
-configuration:
+The following table describes parameters that control HAProxy configuration:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | haproxy_extra_routes | {replica: {port: 5433}} | Additional HAProxy listeners corresponding to [Patroni REST endpoint](https://patroni.readthedocs.io/en/latest/rest_api.html) check types. Each entry requires a port sub-key and accepts an optional lag sub-key for maximum replica lag. |
 
-## Server Configuration
+## Server Configuration Parameters
 
-The following table describes parameters that control server-level
-behavior:
+The following table describes parameters that control server-level behavior:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | debug_pgedge | true | When true, configures kernel settings to retain core files produced during a process crash. |
 | manage_host_file | true | When true, adds all cluster nodes to the /etc/hosts file on every node. Set to false when external DNS is in use or when inventory hostnames are IP addresses. |
 
-## Backup Configuration
+## Backup Configuration Parameters
 
-The following table describes parameters that control PgBackRest
-backup behavior:
+The following table describes parameters that control PgBackRest backup
+behavior:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -97,8 +95,8 @@ backup behavior:
 | diff_backup_schedule | 10 0 * * 1-6 | Cron schedule for differential backups. The default runs Monday through Saturday at 00:10 UTC. |
 | backup_repo_params | (see below) | Dictionary of S3 repository parameters. Required when backup_repo_type is s3. |
 
-The `backup_repo_params` dictionary accepts the following keys with
-the defaults shown:
+The `backup_repo_params` dictionary accepts the following keys with the
+defaults shown:
 
 ```yaml
 backup_repo_params:
@@ -109,7 +107,7 @@ backup_repo_params:
   secret_key: ''
 ```
 
-## Spock Configuration
+## Spock Configuration Parameters
 
 The following table describes parameters that control Spock logical
 replication behavior:
@@ -118,11 +116,11 @@ replication behavior:
 |-----------|---------|-------------|
 | exception_behaviour | transdiscard | How Spock handles replication exceptions. Accepted values are discard, transdiscard, and sub_disable. See the [pgEdge exception documentation](https://docs.pgedge.com/platform/exception#spockexception_behaviour) for details. |
 
-## Internal Variables
+## Internal Variables Parameters
 
-The following table describes internal variables computed by the
-`role_config` role. These variables are available for reference when
-modifying or extending the collection roles:
+The following table describes internal variables computed by the `role_config`
+role. These variables are available for reference when modifying or extending
+the collection roles:
 
 | Variable | Value | Description |
 |----------|-------|-------------|

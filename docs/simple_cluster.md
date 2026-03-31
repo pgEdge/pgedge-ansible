@@ -1,21 +1,18 @@
 # Deploying a Simple Cluster
 
-This guide describes how to deploy a standard three-node pgEdge
-Distributed Postgres cluster using the sample playbook included with
-the collection.
+This guide describes how to deploy a standard three-node pgEdge Distributed
+Postgres cluster using the sample playbook included with the collection.
 
-## Overview
+Our simple cluster consists of three pgEdge nodes, each in a separate zone.
+Spock logical replication runs between all nodes so that writes on any node
+are replicated to every other node. This topology does not include HA
+components such as etcd, Patroni, or HAProxy.
 
-A simple cluster consists of three pgEdge nodes, each in a separate
-zone. Spock logical replication runs between all nodes so that writes
-on any node are replicated to every other node. This topology does not
-include HA components such as etcd, Patroni, or HAProxy.
+## Creating an Inventory File
 
-## Inventory
-
-Create an inventory file that defines your three nodes and assigns
-each to a distinct zone. The following example inventory uses IP
-addresses as host identifiers:
+Create an inventory file that defines your three nodes and assigns each to a
+distinct zone. The following example inventory uses IP addresses as host
+identifiers:
 
 ```yaml
 all:
@@ -34,14 +31,13 @@ pgedge:
       zone: 3
 ```
 
-The `zone` variable must be unique per node. Zones also serve as
-Snowflake node IDs, so each node in the cluster must have a distinct
-integer value.
+The `zone` variable must be unique per node. Zones also serve as Snowflake
+node IDs, so each node in the cluster must have a distinct integer value.
 
-## Playbook
+## Creating a Playbook
 
-Create a playbook file that applies the required roles in order. The
-following example playbook deploys a simple three-node cluster:
+Create a playbook file that applies the required roles in order. The following
+example deploys a simple three-node cluster:
 
 ```yaml
 - hosts: pgedge
@@ -58,22 +54,22 @@ following example playbook deploys a simple three-node cluster:
 
 ## Running the Playbook
 
-Run the playbook with the following command, substituting your
-inventory file path:
+Run the playbook with the following command, substituting your inventory file
+path:
 
 ```bash
 ansible-playbook -i inventory.yaml playbook.yaml
 ```
 
 After the playbook completes, each node will have a running PostgreSQL
-instance with Spock and Snowflake extensions installed. All nodes will
-be subscribed to each other for bidirectional logical replication.
+instance with Spock and Snowflake extensions installed. All nodes will be
+subscribed to each other for bidirectional logical replication.
 
 ## Configuring the Cluster
 
-Override default parameters by setting variables in the inventory or
-playbook. The following example inventory configures PostgreSQL 17
-with a custom database name and user:
+Override default parameters by setting variables in the inventory or playbook.
+The following example inventory configures PostgreSQL 17 with a custom
+database name and user:
 
 ```yaml
 pgedge:
@@ -92,7 +88,7 @@ A complete list of parameters is available in the
 
 - The [Ultra-HA Cluster](ultra_ha.md) guide describes deploying a
   production-grade multi-zone HA cluster.
-- The [Configuration Reference](configuration.md) lists all available
-  parameters and their defaults.
-- The [Role Reference](roles.md) describes what each role does and
-  when to use it.
+- The [Configuration Reference](configuration.md) lists all available parameters
+  and their defaults.
+- The [Role Reference](roles.md) describes what each role does and when to use
+  it.
