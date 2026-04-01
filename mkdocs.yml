@@ -50,16 +50,16 @@ copyright: Copyright &copy; 2025 - 2026 pgEdge, Inc
 repo_url: https://github.com/pgEdge/pgedge-ansible
 
 nav:
-  - Getting Started:
+  - Overview:
       - Overview: index.md
-      - Installation: installation.md
-  - Deploying a Cluster:
       - Architecture: architecture.md
-      - Simple Cluster: simple_cluster.md
-      - Ultra-HA Cluster: ultra_ha.md
-      - Usage Examples: usage.md
+      - Usage Examples: usage.md      
+  - Deploying a Cluster:
+      - Installing with Ansible: installation.md
+      - Tutorial - Deploying a Simple Cluster: simple_cluster.md
+      - Tutorial - Deploying an Ultra-HA Cluster: ultra_ha.md
   - Configuration Reference:
-      - Overview: configuration.md
+      - Configuration Overview: configuration.md
       - Inventory Structure: configuration/inventory.md
       - Cluster Configuration: configuration/cluster.md
       - Postgres Configuration: configuration/postgres.md
@@ -69,7 +69,7 @@ nav:
       - Backup Configuration: configuration/backup.md
       - etcd Configuration: configuration/etcd.md
   - Role Reference:
-      - Overview: roles.md
+      - Role Overview: roles.md
       - role_config: roles/role_config.md
       - init_server: roles/init_server.md
       - install_repos: roles/install_repos.md
