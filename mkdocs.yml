@@ -54,9 +54,12 @@ nav:
       - Overview: index.md
       - Installation: installation.md
   - Deploying a Cluster:
+      - Architecture: architecture.md
       - Simple Cluster: simple_cluster.md
       - Ultra-HA Cluster: ultra_ha.md
+      - Usage Examples: usage.md
   - Configuration Reference: configuration.md
   - Role Reference: roles.md
+  - Troubleshooting: troubleshooting.md
   - Changelog: changelog.md
   - License: LICENSE.md

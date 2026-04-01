@@ -21,7 +21,7 @@ repository the collection uses:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| repo_name | release | Repository tier to use. Accepted values are release and devel. |
+| repo_name | release | Repository tier to use. Accepted values are release, staging, and daily. |
 | repo_prefix | (none) | Custom or automated build prefix. Contact pgEdge staff for valid values. |
 
 ## Installation Parameters
@@ -46,7 +46,7 @@ access:
 | db_password | secret | Password for db_user. |
 | pgedge_user | pgedge | Internal user for node-to-node Spock connections. |
 | pgedge_password | secret | Password for pgedge_user. |
-| custom_hba_rules | [] | List of additional pg_hba.conf rules to append to the default rule set. The default rules only include entries for known user and database combinations. |
+| custom_hba_rules | [] | List of additional pg_hba.conf rules to append to the default rule set. Each rule is a dictionary with contype, users, databases, method, and source fields. |
 
 ## High Availability Parameters
 
@@ -79,6 +79,7 @@ The following table describes parameters that control server-level behavior:
 |-----------|---------|-------------|
 | pg_port | 5432 | Port on which PostgreSQL listens. |
 | debug_pgedge | true | When true, configures kernel settings to retain core files produced during a process crash. |
+| disable_selinux | true | When true, disables SELinux on RHEL-based nodes. A system reboot may be required for the change to take effect. |
 | manage_host_file | true | When true, adds all cluster nodes to the /etc/hosts file on every node. Set to false when external DNS is in use or when inventory hostnames are IP addresses. |
 
 ## Backup Configuration Parameters
@@ -93,7 +94,7 @@ behavior:
 | backup_password | secret | Password for backup_user. |
 | backup_repo_type | ssh | Backup repository type. Accepted values are ssh (dedicated backup server) and s3 (AWS S3 bucket). |
 | backup_repo_user | Ansible user | OS user that owns the PgBackRest repository on the backup server in SSH mode. |
-| backup_repo_path | /home/ANSIBLE_USER | Path to the PgBackRest repository on the backup server. |
+| backup_repo_path | /home/backrest | Path to the PgBackRest repository on the backup server. |
 | backup_repo_cipher_type | aes-256-cbc | Encryption algorithm for backup files stored in the PgBackRest repository. |
 | backup_repo_cipher | (generated) | Encryption password for backup files. When unset, a 20-character deterministic random string is generated from the repository name. |
 | full_backup_count | 1 | Number of full backups to retain in the repository. |
@@ -123,6 +124,18 @@ replication behavior:
 |-----------|---------|-------------|
 | exception_behaviour | transdiscard | How Spock handles replication exceptions. Accepted values are discard, transdiscard, and sub_disable. See the [pgEdge exception documentation](https://docs.pgedge.com/platform/exception#spockexception_behaviour) for details. |
 
+## Path Override Parameters
+
+The following parameters control PostgreSQL installation paths. The `role_config`
+role sets OS-specific defaults; override them only when your system uses
+non-standard locations.
+
+| Parameter | Debian default | RHEL default | Description |
+|-----------|---------------|--------------|-------------|
+| pg_home | /var/lib/postgresql | /var/lib/pgsql | Home directory for the postgres OS user. |
+| pg_path | /usr/lib/postgresql/VERSION | /usr/pgsql-VERSION | Path to PostgreSQL binaries. |
+| pg_data | pg_home/VERSION/main | pg_home/VERSION/data | Path to the PostgreSQL data directory. |
+
 ## Internal Variables
 
 The following table describes variables computed by the `role_config` role.
@@ -131,10 +144,23 @@ collection roles. The values differ by operating system family.
 
 | Variable | Debian value | RHEL value | Description |
 |----------|-------------|------------|-------------|
-| pg_home | /var/lib/postgresql | /var/lib/pgsql | Home directory for the postgres OS user. |
-| pg_path | /usr/lib/postgresql/VERSION | /usr/pgsql-VERSION | Path to PostgreSQL binaries. |
-| pg_data | pg_home/VERSION/main | pg_home/VERSION/data | Path to the PostgreSQL data directory. |
 | pg_config_dir | /etc/postgresql/VERSION/CLUSTER | pg_data | Path to the PostgreSQL configuration directory. |
 | pg_service_name | postgresql@VERSION-CLUSTER | pgedge-postgres-VERSION | Systemd service name for PostgreSQL. |
 | patroni_service_name | patroni@VERSION-CLUSTER | patroni | Systemd service name for Patroni. |
 | nodes_in_zone | (computed) | (computed) | List of all nodes in the pgedge host group that share the same zone as the current node. |
+
+## etcd Internal Parameters
+
+The following parameters control etcd installation paths and behavior. Default
+values are sufficient for most deployments.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| etcd_version | 3.6.5 | etcd version to install. |
+| etcd_user | etcd | System user that runs the etcd service. |
+| etcd_group | etcd | System group for the etcd service. |
+| etcd_install_dir | /usr/local/etcd | Directory where etcd binaries are installed. |
+| etcd_config_dir | /etc/etcd | Directory for etcd configuration files. |
+| etcd_data_dir | /var/lib/etcd | Directory for etcd data storage. |
+| etcd_tls_dir | /etc/etcd/tls | Directory for etcd TLS certificates and keys. |
+| patroni_tls_dir | /etc/patroni/tls | Directory for Patroni TLS certificates. |
