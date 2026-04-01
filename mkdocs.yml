@@ -58,7 +58,16 @@ nav:
       - Simple Cluster: simple_cluster.md
       - Ultra-HA Cluster: ultra_ha.md
       - Usage Examples: usage.md
-  - Configuration Reference: configuration.md
+  - Configuration Reference:
+      - Overview: configuration.md
+      - Inventory Structure: configuration/inventory.md
+      - Cluster Configuration: configuration/cluster.md
+      - Postgres Configuration: configuration/postgres.md
+      - Proxy Configuration: configuration/proxy.md
+      - Spock Configuration: configuration/spock.md
+      - System Configuration: configuration/system.md
+      - Backup Configuration: configuration/backup.md
+      - etcd Configuration: configuration/etcd.md
   - Role Reference:
       - Overview: roles.md
       - role_config: roles/role_config.md
