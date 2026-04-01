@@ -59,7 +59,21 @@ nav:
       - Ultra-HA Cluster: ultra_ha.md
       - Usage Examples: usage.md
   - Configuration Reference: configuration.md
-  - Role Reference: roles.md
+  - Role Reference:
+      - Overview: roles.md
+      - role_config: roles/role_config.md
+      - init_server: roles/init_server.md
+      - install_repos: roles/install_repos.md
+      - install_pgedge: roles/install_pgedge.md
+      - setup_postgres: roles/setup_postgres.md
+      - install_etcd: roles/install_etcd.md
+      - install_patroni: roles/install_patroni.md
+      - install_backrest: roles/install_backrest.md
+      - setup_etcd: roles/setup_etcd.md
+      - setup_patroni: roles/setup_patroni.md
+      - setup_haproxy: roles/setup_haproxy.md
+      - setup_pgedge: roles/setup_pgedge.md
+      - setup_backrest: roles/setup_backrest.md
   - Troubleshooting: troubleshooting.md
   - Changelog: changelog.md
   - License: LICENSE.md
