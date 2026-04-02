@@ -54,11 +54,27 @@ and configuring pgEdge Distributed Postgres clusters. The collection automates
 cluster provisioning from initial server preparation through PostgreSQL
 initialization, High Availability configuration, and backup setup.
 
+> **Note:** Version 1.x introduces breaking changes from the 0.x release
+> series. Inventory structure, role parameters, and installation behavior
+> have changed significantly. Review the [Changelog](docs/changelog.md)
+> and [Installation Overview](docs/installation.md) before upgrading.
+
+## Compatibility
+
+The collection has been verified as compatible with the following Linux
+platforms:
+
+- Debian 12 / Bookworm
+- Ubuntu 25.04 / Plucky Puffin
+- Rocky Linux 9
+
+The collection may also work with other Debian or RHEL variants, but the
+pgEdge team has not validated compatibility.
+
 ## Installation
 
 Ansible 2.12.0 or later and Python 3 with the `netaddr` package are required
-on the Ansible controller. Target nodes must run Debian 12 (Bookworm) or Rocky
-9 and the Ansible user must have `sudo` privileges.
+on the Ansible controller. Target nodes must have `sudo` privileges.
 
 Install the collection from the
 [pgEdge GitHub repository](https://github.com/pgEdge/pgedge-ansible)
@@ -78,6 +94,44 @@ collections:
   - pgedge.platform
 ```
 
+## Quick Start
+
+The following example shows the minimum inventory and playbook required to
+deploy a three-node pgEdge Distributed Postgres cluster. Each host must be
+in a separate zone:
+
+```yaml
+pgedge:
+  vars:
+    db_password: secret
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 2
+    192.168.6.12:
+      zone: 3
+```
+
+The following playbook applies all roles required for a simple cluster:
+
+```yaml
+- hosts: pgedge
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+  - install_repos
+  - install_pgedge
+  - setup_postgres
+  - setup_pgedge
+```
+
+See the [Simple Cluster](docs/simple_cluster.md) and
+[Ultra-HA Cluster](docs/ultra_ha.md) tutorials for complete deployment
+walkthroughs.
 
 ## Configuration
 
