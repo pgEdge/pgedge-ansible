@@ -1,10 +1,8 @@
 # Deploying an Ultra-HA Cluster
 
 This guide describes how to deploy a production-grade pgEdge Distributed
-Postgres cluster with High Availability using the Ultra-HA sample playbook
+Postgres cluster with high availability using the Ultra-HA sample playbook
 included with the collection.
-
-## Overview
 
 An Ultra-HA cluster organizes nodes into two or more zones. Each zone contains
 multiple pgEdge nodes managed by Patroni for automatic failover, with etcd
@@ -20,6 +18,18 @@ The standard Ultra-HA topology per zone includes:
 - One backup server (stores PgBackRest repository).
 
 A two-zone Ultra-HA deployment therefore requires ten nodes in total.
+
+After deployment, the following HA behaviors are active:
+
+- Patroni monitors PostgreSQL health in each zone and promotes a replica if
+  the primary fails.
+- HAProxy health-checks the Patroni REST API and routes connections only to
+  the current primary.
+- Spock subscriptions run through HAProxy so cross-zone replication continues
+  after a failover.
+- PgBackRest archives WAL continuously and runs scheduled full and differential
+  backups.
+
 
 ## Creating an Inventory File
 
@@ -141,24 +151,12 @@ path:
 ansible-playbook -i inventory.yaml playbook.yaml
 ```
 
-## High-Availability Behavior
-
-After deployment, the following HA behaviors are active:
-
-- Patroni monitors PostgreSQL health in each zone and promotes a replica if
-  the primary fails.
-- HAProxy health-checks the Patroni REST API and routes connections only to
-  the current primary.
-- Spock subscriptions run through HAProxy so cross-zone replication continues
-  after a failover.
-- PgBackRest archives WAL continuously and runs scheduled full and differential
-  backups.
 
 ## Adding a Backup Configuration
 
 By default, backups use SSH to transmit data to the dedicated backup server in
-each zone. To use AWS S3 instead, set `backup_repo_type` to `s3` and supply
-the required parameters:
+each zone. To use AWS S3 instead, update your configuration, setting
+`backup_repo_type` to `s3` and supplying the required parameters:
 
 ```yaml
 backup_repo_type: s3
@@ -171,12 +169,3 @@ backup_repo_params:
   secret_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 ```
 
-A complete list of backup parameters is available in the
-[Configuration Reference](configuration.md).
-
-## Next Steps
-
-- The [Configuration Reference](configuration.md) lists all available
-  parameters and their defaults.
-- The [Role Reference](roles.md) describes what each role does and when to use
-  it.

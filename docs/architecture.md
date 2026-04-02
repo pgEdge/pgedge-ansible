@@ -3,8 +3,6 @@
 This page describes the cluster architectures supported by the pgEdge
 Ansible Collection, including deployment patterns and design considerations.
 
-## Overview
-
 The pgEdge Ansible Collection supports multiple cluster topologies, from
 simple multi-node setups to complex high-availability configurations with
 geographic distribution. Understanding these patterns will help you choose
@@ -240,5 +238,5 @@ consistency and configurable conflict resolution.
   three-node deployment.
 - The [Ultra-HA Cluster](ultra_ha.md) guide covers the full production
   topology.
-- The [Configuration Reference](configuration.md) lists all available
+- The [Configuration Reference section](configuration.md) lists all available
   parameters and their defaults.

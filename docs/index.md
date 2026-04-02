@@ -35,9 +35,9 @@ compatibility with those distributions has not been validated.
 
 - The [Installation](installation.md) page describes how to install
   the collection and its prerequisites.
-- The [Simple Cluster](simple_cluster.md) guide walks through deploying
+- The [Simple Cluster](simple_cluster.md) tutorial walks through deploying
   a basic three-node pgEdge Distributed Postgres cluster.
-- The [Ultra-HA Cluster](ultra_ha.md) guide describes deploying a
+- The [Ultra-HA Cluster](ultra_ha.md) tutorial describes deploying a
   production-grade multi-zone HA cluster.
 - The [Configuration Reference](configuration.md) lists all available
   parameters and their defaults.

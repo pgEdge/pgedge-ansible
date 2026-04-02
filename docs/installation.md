@@ -79,8 +79,8 @@ that uses the collection:
 
 ## Configuring the Ansible Controller
 
-The following example `ansible.cfg` configures common options for cluster
-deployment:
+The following example (from an `ansible.cfg` file) configures common options
+for cluster deployment:
 
 ```ini
 [defaults]
@@ -109,12 +109,3 @@ cd pgedge-ansible
 git pull
 make install
 ```
-
-## Next Steps
-
-- The [Architecture](architecture.md) page describes supported cluster
-  topologies and design considerations.
-- The [Simple Cluster](simple_cluster.md) guide walks through a basic
-  three-node deployment.
-- The [Configuration Reference](configuration.md) lists all available
-  parameters and their defaults.

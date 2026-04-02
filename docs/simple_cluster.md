@@ -10,9 +10,9 @@ components such as etcd, Patroni, or HAProxy.
 
 ## Creating an Inventory File
 
-Create an inventory file that defines your three nodes and assigns each to a
-distinct zone. The following example inventory uses IP addresses as host
-identifiers:
+Before running a playbook, create an inventory file that defines your three
+nodes and assigns each to a distinct zone. The following example of an
+inventory file uses IP addresses as host identifiers:
 
 ```yaml
 all:
@@ -32,7 +32,8 @@ pgedge:
 ```
 
 The `zone` variable must be unique per node. Zones also serve as Snowflake
-node IDs, so each node in the cluster must have a distinct integer value.
+node IDs, so ensure that each node in the cluster has a distinct integer
+value.
 
 ## Creating a Playbook
 
@@ -56,7 +57,7 @@ example deploys a simple three-node cluster:
 ## Running the Playbook
 
 Run the playbook with the following command, substituting your inventory file
-path:
+name and path:
 
 ```bash
 ansible-playbook -i inventory.yaml playbook.yaml
@@ -85,11 +86,3 @@ pgedge:
 A complete list of parameters is available in the
 [Configuration Reference](configuration.md).
 
-## Next Steps
-
-- The [Ultra-HA Cluster](ultra_ha.md) guide describes deploying a
-  production-grade multi-zone HA cluster.
-- The [Configuration Reference](configuration.md) lists all available parameters
-  and their defaults.
-- The [Role Reference](roles.md) describes what each role does and when to use
-  it.
