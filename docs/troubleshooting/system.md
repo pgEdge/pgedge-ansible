@@ -1,4 +1,4 @@
-# System Configuration
+# System Configuration Issues
 
 This page covers host-level configuration issues.
 

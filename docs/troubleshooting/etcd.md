@@ -1,4 +1,4 @@
-# etcd
+# etcd Issues
 
 This page covers issues with the distributed coordination layer.
 

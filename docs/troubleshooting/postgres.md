@@ -1,4 +1,4 @@
-# Postgres
+# Postgres Issues
 
 This page covers database initialization and startup issues.
 

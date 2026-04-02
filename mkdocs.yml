@@ -85,15 +85,15 @@ nav:
       - setup_pgedge: roles/setup_pgedge.md
       - setup_backrest: roles/setup_backrest.md
   - Troubleshooting:
-      - Troubleshooting Overview: troubleshooting.md
-      - Collection Installation: troubleshooting/installation.md
-      - Package Repository: troubleshooting/repository.md
-      - System Configuration: troubleshooting/system.md
-      - Postgres: troubleshooting/postgres.md
-      - etcd: troubleshooting/etcd.md
-      - Patroni: troubleshooting/patroni.md
-      - HAProxy: troubleshooting/haproxy.md
-      - Spock Replication: troubleshooting/spock.md
-      - PgBackRest: troubleshooting/backup.md
+      - Troubleshooting: troubleshooting.md
+      - Installation Issues: troubleshooting/installation.md
+      - Repository Issues: troubleshooting/repository.md
+      - System Configuration Issues: troubleshooting/system.md
+      - PostgreSQL Issues: troubleshooting/postgres.md
+      - etcd Issues: troubleshooting/etcd.md
+      - Patroni Issues: troubleshooting/patroni.md
+      - HAProxy Issues: troubleshooting/haproxy.md
+      - Spock Replication Issues: troubleshooting/spock.md
+      - PgBackRest Issues: troubleshooting/backup.md
   - Changelog: changelog.md
   - License: LICENSE.md

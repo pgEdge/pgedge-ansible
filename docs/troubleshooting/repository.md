@@ -1,4 +1,4 @@
-# Package Repository
+# Repository Issues
 
 This page covers issues that prevent software installation.
 

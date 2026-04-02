@@ -1,4 +1,4 @@
-# PgBackRest
+# PgBackRest Issues
 
 This page covers backup and recovery issues.
 

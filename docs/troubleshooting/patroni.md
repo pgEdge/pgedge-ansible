@@ -1,6 +1,6 @@
-# Patroni
+# Patroni Issues
 
-This page covers HA controller issues.
+This page covers HA controller issues related to Patroni.
 
 ## Patroni Service Fails to Start
 

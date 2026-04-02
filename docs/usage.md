@@ -37,7 +37,7 @@ After deployment, verify each component using the commands in this section.
 
 ### Verifying Postgres
 
-The following commands verify Postgres status and connectivity:
+The following commands verify the Postgres server's status and availability:
 
 ```bash
 # Check service status on RHEL
@@ -52,7 +52,7 @@ psql -U admin -d demo -c "SELECT version();"
 
 ### Verifying Spock Replication
 
-The following commands verify Spock node and subscription status:
+The following commands verify the Spock nodes and subscription status:
 
 ```bash
 # Check node registration

@@ -1,6 +1,7 @@
-# Spock Replication
+# Spock Replication Issues
 
-This page covers multi-zone replication issues.
+This page covers [Spock](https://docs.pgedge.com/spock-v5/v5-0-6/) replication
+issues.
 
 ## Subscription Creation Fails
 

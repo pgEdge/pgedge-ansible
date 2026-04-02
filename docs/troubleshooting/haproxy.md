@@ -1,4 +1,4 @@
-# HAProxy
+# HAProxy Issues
 
 This page covers proxy routing issues.
 

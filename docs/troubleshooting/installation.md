@@ -1,4 +1,4 @@
-# Collection Installation
+# Installation Issues
 
 This page covers issues that block cluster deployment before it begins.
 
