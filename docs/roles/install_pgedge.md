@@ -61,10 +61,6 @@ The pgEdge Enterprise package includes the following components:
 - pgvector provides vector database capabilities.
 - PostGIS provides geospatial extensions.
 
-!!! note "Automatic Updates"
-    This role uses `state: latest` to ensure packages update to the newest
-    available version. Package updates may restart the Postgres service.
-
 ## Usage Examples
 
 In the following example, the playbook installs Postgres 17 using the default
