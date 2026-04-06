@@ -57,7 +57,7 @@ nav:
       - Installation Overview: installation.md
       - Tutorial - Deploying a Simple Cluster: simple_cluster.md
       - Tutorial - Deploying an Ultra-HA Cluster: ultra_ha.md
-      - Customizing a Playbook for One or More Zones: configure_playbook.md
+      - Customizing a Playbook: configure_playbook.md
   - Using the pgEdge Ansible Collection: usage.md
   - Configuration Reference:
       - Configuration Overview: configuration.md

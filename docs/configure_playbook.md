@@ -1,4 +1,4 @@
-# Configuring a Playbook
+# Customizing a Playbook
 
 The cluster deployed by a playbook may host high-availability nodes that
 reside in a single zone or in multiple zones; you can also customize a
