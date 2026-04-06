@@ -95,5 +95,5 @@ nav:
       - HAProxy Issues: troubleshooting/haproxy.md
       - Spock Replication Issues: troubleshooting/spock.md
       - PgBackRest Issues: troubleshooting/backup.md
-  - Changelog: changelog.md
+  - Changelog: CHANGELOG.md
   - License: LICENSE.md
