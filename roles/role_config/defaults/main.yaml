@@ -47,7 +47,7 @@ pg_data: >-
   {{ 
     pg_home + "/" + pg_version|string + "/data" if ansible_os_family == "RedHat"
     else
-    pg_home + "/" + pg_version|string + "/main" if ansible_os_family == 'Debian' 
+    pg_home + "/" + pg_version|string + "/" + cluster_name if ansible_os_family == 'Debian' 
   }}
 
 backup_host: ""

@@ -64,7 +64,7 @@
 
 - name: Ensure local peer access for the postgres user
   community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_data }}/pg_hba.conf"
+    dest: "{{ pg_config_dir }}/pg_hba.conf"
     contype: local
     users: postgres
     databases: all
@@ -76,7 +76,7 @@
 
 - name: Allow localhost connections from any user
   community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_data }}/pg_hba.conf"
+    dest: "{{ pg_config_dir }}/pg_hba.conf"
     contype: host
     users: all
     databases: all
@@ -87,7 +87,7 @@
 
 - name: Add access for the pgedge communication and admin/DB user
   community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_data }}/pg_hba.conf"
+    dest: "{{ pg_config_dir }}/pg_hba.conf"
     contype: host
     users: "{{ pgedge_user + ',' + db_user }}"
     databases: "{{ (db_names + ['postgres']) | join(',') }}"

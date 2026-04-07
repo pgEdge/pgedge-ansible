@@ -35,7 +35,7 @@
     source: "{{ proxy_node | ansible.utils.ipaddr('address') or lookup('dig', proxy_node) }}/32"
   become: true
   become_user: postgres
-  when: proxy_node
+  when: proxy_node | length > 0
 
 - name: Allow pgedge node-to-node communication from in-zone proxies
   community.postgresql.postgresql_pg_hba:
