@@ -12,7 +12,7 @@
 
 - name: Allow replication user access between nodes in the same zone
   community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_data }}/pg_hba.conf"
+    dest: "{{ pg_config_dir }}/pg_hba.conf"
     contype: host
     users: "{{ replication_user }}"
     databases: replication
@@ -27,7 +27,7 @@
 
 - name: Allow pgedge node-to-node communication from user-specified proxy
   community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_data }}/pg_hba.conf"
+    dest: "{{ pg_config_dir }}/pg_hba.conf"
     contype: host
     users: "{{ pgedge_user }}"
     databases: replication
@@ -39,7 +39,7 @@
 
 - name: Allow pgedge node-to-node communication from in-zone proxies
   community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_data }}/pg_hba.conf"
+    dest: "{{ pg_config_dir }}/pg_hba.conf"
     contype: host
     users: "{{ pgedge_user }}"
     databases: replication
