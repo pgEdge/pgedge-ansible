@@ -5,7 +5,7 @@
 
 - name: Configure Patroni to integrate with PgBackRest
   shell: |
-    cat<<EOF|{{ ctl }} edit-config --force --apply - pgedge
+    cat<<EOF|{{ ctl }} edit-config --force --apply - {{ pg_version }}-{{ cluster_name }}
     postgresql:
       parameters:
         hot_standby: true
