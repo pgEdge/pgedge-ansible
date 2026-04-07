@@ -1,0 +1,21 @@
+---
+
+# The RemoveIPC setting in systemd is dangerous for databases. When enabled
+# (which is the DEFAULT on Debian systems), logging out of a shell will trigger
+# systemd to deallocate all shared memory segments owned by that user. This can
+# instantly crash Postgres, so we must ensure this is disabled globally.
+
+- name: Ensure RemoveIPC setting is disabled system-wide
+  lineinfile:
+    path: /etc/systemd/logind.conf
+    line: RemoveIPC=no
+    regexp: '^#?RemoveIPC='
+  register: ipc_status
+  become: true
+
+- name: Reload systemd login service for new IPC setting
+  systemd:
+    name: systemd-logind
+    state: restarted
+  become: true
+  when: ipc_status.changed

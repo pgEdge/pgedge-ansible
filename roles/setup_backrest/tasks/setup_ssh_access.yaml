@@ -1,14 +1,23 @@
 ---
 
-- name: Make sure the backup host is an allowed SSH target
-  known_hosts:
-    name: "{{ backup_server }}"
-    state: present
-    key: "{{ lookup('pipe', 'ssh-keyscan {{ backup_server }} | grep -v ''^\\#''') }}"
-    hash_host: false
+# This isn't quite the same SSH setup as the server setup uses due to the host
+# list. It also only applies to SSH mode backups, so has been moved to an
+# optional include.
 
-- name: Make sure the backup host is authorized to connect
+- name: Make sure backup hosts are authorized to connect via SSH
   authorized_key:
-    user: "{{ ansible_user_id }}"
-    key: "{{ lookup('file', 'host-keys/' + backup_server) }}"
+    user: postgres
+    key: "{{ lookup('file', 'host-keys/' + item) }}"
     state: present
+  loop: "{{ backups_in_zone }}"
+  become: true
+
+- name: Make sure backup hosts are allowed SSH targets
+  known_hosts:
+    name: "{{ item }}"
+    state: present
+    key: "{{ lookup('pipe', 'ssh-keyscan {{ item }} | grep -v ''^\\#''') }}"
+    hash_host: false
+  loop: "{{ backups_in_zone + [backup_host] | select }}"
+  become: true
+  become_user: postgres

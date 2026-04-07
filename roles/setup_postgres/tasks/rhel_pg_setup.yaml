@@ -1,0 +1,12 @@
+---
+
+# The setup script gets the install location from the service file, which
+# should contain the correct data directory. Go ahead and execute standard
+# RHEL Postgres setup.
+
+- name: Install and set up Postgres using Postgres CLI tooling
+  command:
+    cmd: "postgresql-{{ pg_version }}-setup initdb {{ pg_service_name }}"
+  args:
+    creates: "{{ pg_data }}/PG_VERSION"
+  become: true

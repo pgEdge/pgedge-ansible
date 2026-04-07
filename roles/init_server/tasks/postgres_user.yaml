@@ -1,0 +1,23 @@
+---
+
+- name: Ensure the postgres OS group exists on the server
+  group:
+    name: postgres
+    system: yes
+  become: true
+
+- name: Ensure the postgres OS user exists on the server
+  user:
+    name: postgres
+    group: postgres
+    home: "{{ pg_home }}"
+    shell: /bin/bash
+    system: yes
+  become: true
+
+# With the user created, Set up the SSH keys for it.
+
+- include_tasks: ssh.yaml
+  vars:
+    os_user: postgres
+    os_home: "{{ pg_home }}"

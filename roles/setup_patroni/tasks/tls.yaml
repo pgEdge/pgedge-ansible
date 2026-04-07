@@ -1,0 +1,51 @@
+---
+
+# Generate a dedicated TLS client certificate for Patroni on the Ansible
+# controller (where the etcd CA already lives), then distribute it to each
+# node under patroni_tls_dir, owned by the postgres user.
+
+- name: Generate Patroni client private key for {{ inventory_hostname }}
+  community.crypto.openssl_privatekey:
+    path: "tls/etcd/{{ inventory_hostname }}-patroni.key"
+    size: 4096
+  delegate_to: localhost
+
+- name: Generate Patroni client certificate signing request for {{ inventory_hostname }}
+  community.crypto.openssl_csr:
+    path: "tls/etcd/{{ inventory_hostname }}-patroni.csr"
+    privatekey_path: "tls/etcd/{{ inventory_hostname }}-patroni.key"
+    common_name: "patroni@{{ ansible_hostname }}"
+    use_common_name_for_san: false
+    subject_alt_name:
+      - "DNS:{{ ansible_hostname }}"
+      - "DNS:{{ inventory_hostname }}"
+      - "IP:{{ ansible_default_ipv4.address }}"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - clientAuth
+  delegate_to: localhost
+
+- name: Sign Patroni client certificate for {{ inventory_hostname }}
+  community.crypto.x509_certificate:
+    path: "tls/etcd/{{ inventory_hostname }}-patroni.crt"
+    csr_path: "tls/etcd/{{ inventory_hostname }}-patroni.csr"
+    ownca_path: "tls/etcd/ca.crt"
+    ownca_privatekey_path: "tls/etcd/ca.key"
+    provider: ownca
+    ownca_not_after: "+{{ tls_validity_days }}d"
+  delegate_to: localhost
+
+- name: Copy Patroni etcd ca, client cert, and key from Ansible controller
+  copy:
+    src: "tls/etcd/{{ item.local }}"
+    dest: "{{ patroni_tls_dir }}/{{ item.remote }}"
+    owner: postgres
+    group: postgres
+    mode: '0640'
+  loop:
+  - { local: ca.crt, remote: ca.crt }
+  - { local: "{{ inventory_hostname }}-patroni.crt", remote: patroni.crt }
+  - { local: "{{ inventory_hostname }}-patroni.key", remote: patroni.key }
+  become: true

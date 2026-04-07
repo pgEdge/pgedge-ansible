@@ -1,0 +1,38 @@
+---
+
+# HA clusters are entirely managed by Patroni. As such, all nodes will always
+# disable and stop the standard Postgres service. Other steps may temporarily
+# start it or perform other actions, but Patroni takes precedence on all
+# HA node groups.
+
+- name: Explicitly disable the Postgres service in favor of Patroni
+  service:
+    name: "{{ pg_service_name }}"
+    enabled: false
+  become: true
+
+- name: Populate service facts to check for required services
+  ansible.builtin.service_facts:
+
+- name: Ensure Postgres isn't running during setup
+  service:
+    name: "{{ pg_service_name }}"
+    state: stopped
+  vars:
+    full_service_name: "{{ patroni_service_name }}.service"
+    patroni_state: >-
+      {{ ansible_facts.services[full_service_name]['state'] | default('') }}
+  become: true
+  when:
+  -  patroni_state != 'running'
+
+# Primary and replicas diverge at this point and have different bootstrap
+# procedures.
+
+- include_tasks: primary_setup.yaml
+  when:
+  - inventory_hostname == first_node_in_zone
+
+- include_tasks: replica_setup.yaml
+  when:
+  - inventory_hostname != first_node_in_zone

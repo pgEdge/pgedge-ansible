@@ -8,13 +8,17 @@
 
 - name: Create configuration file for HAProxy node
   template:
-    src: files/haproxy.cfg.j2
+    src: templates/haproxy.cfg.j2
     dest: /etc/haproxy/haproxy.cfg
+  register: config_status
   become: true
 
-- name: Enable and start the HAProxy service
+# Only restart HAProxy on subsequent runs if the config file changed.
+# Otherwise, just make sure it's up and running.
+
+- name: Ensure HAProxy is enabled and running
   service:
     name: haproxy
     enabled: true
-    state: restarted
+    state: "{{ 'restarted' if config_status.changed else 'started' }}"
   become: true

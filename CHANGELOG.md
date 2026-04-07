@@ -7,10 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+This is a major overhaul that revises every role in the collection. Switching the CLI component with standard RPM and DEB packages removes the CLI component entirely and all of the local-user installation semantics in favor of the standard postgres OS user.
+
+### Added
+
+- It's now possible to specify custom pg_hba.conf rules.
+- New backup user and password for specific access controls.
+- New backup user specific to backup repository in SSH backup mode.
+- Now possible to run HAProxy on pgEdge nodes by specifying separate port.
+
 ### Fixed
 
-- Added redundant path environment spec for pipx-based executables. (EE-19)
+- Wait for Patroni to establish cluster before performing admin operations.
 
+### Changed
+
+- Switched to pgEdge distro-specific package repositories. (EE-22)
+- Updated default etcd to 3.6.5.
+- Now always install latest Spock extension.
+- Moved several default variables into role_config role for wider use.
+- Default pg_hba.conf rules now only reflect known user/db combinations.
+- Removed cluster_path parameter and all related paths.
+- Changed multiple default values to better fit package-based installation.
 
 ## v0.2.0
 

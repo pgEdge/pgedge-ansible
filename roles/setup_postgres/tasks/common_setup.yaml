@@ -1,0 +1,47 @@
+---
+
+# Create the requested db_user for this cluster. This will be the user meant
+# to manage the rest of the cluster, as it has a supplied password for external
+# use.
+
+- name: Create configured admin user
+  community.postgresql.postgresql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+    role_attr_flags: SUPERUSER
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: Create pgedge node-communication user
+  community.postgresql.postgresql_user:
+    name: "{{ pgedge_user }}"
+    password: "{{ pgedge_password }}"
+    role_attr_flags: SUPERUSER,REPLICATION,BYPASSRLS
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+# Since we created the instance using the default 'postgres' database name,
+# create all requested databases and init the spock and snowflake extensions.
+
+- name: Create each of the requested databases
+  community.postgresql.postgresql_db:
+    name: "{{ item }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  loop: "{{ db_names }}"
+  become: true
+  become_user: postgres
+
+- name: Ensure required extensions are installed in all requested databases
+  community.postgresql.postgresql_ext:
+    name: "{{ item.0 }}"
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item.1 }}"
+    login_unix_socket: /var/run/postgresql
+  loop: "{{ ['spock', 'snowflake'] | product(db_names) | list }}"
+  become: true
+  become_user: postgres

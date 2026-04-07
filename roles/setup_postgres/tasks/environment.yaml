@@ -1,7 +1,0 @@
----
-
-- name: Add Postgres utilities to the user path
-  lineinfile:
-    path: "{{ ansible_facts['user_dir'] }}/.bashrc.d/postgres_env.sh"
-    line: "export PATH=${PATH}:{{ pg_path }}/bin"
-    create: true

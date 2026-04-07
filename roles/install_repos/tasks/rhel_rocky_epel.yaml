@@ -1,0 +1,20 @@
+---
+
+# Rocky and Alma Linux share the same install steps (for now), which is just
+# installing the EPEL package from the system repo and then enabling CRB.
+
+- name: Install EPEL repo package for Rocky and Alma Linux systems
+  dnf:
+    name: epel-release
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Enable the EPEL CRB for Rocky and Alma Linux systems
+  community.general.dnf_config_manager:
+    name: crb
+    state: enabled
+  become: true

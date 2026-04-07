@@ -1,15 +1,8 @@
 ---
 
 zone_list: >
-    {{ groups['all'] |
-    map('extract', hostvars) |
-    map(attribute='zone') | unique | list }}
-
-proxies_in_zone: >
-    {{ groups['haproxy'] | default(()) |
-    map('extract', hostvars) |
-    selectattr('zone', 'eq', zone) |
-    map(attribute='inventory_hostname') | list }}
+    {{ hostvars.values() | map(attribute='zone', default='') |
+       unique }}
 
 # This variable serves several purposes:
 # - Sets the proxy to any user-specified target.

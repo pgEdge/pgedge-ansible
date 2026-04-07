@@ -1,0 +1,63 @@
+---
+
+# All certificate generation is delegated to the Ansible controller so the
+# cryptography Python package is only required there, not on remote nodes.
+# Remember, this only happens on the primary node, as the certificate is
+# inherited by other nodes in the cluster due to Patroni.
+
+- name: Create local TLS staging directory for Postgres certs
+  file:
+    path: "tls/postgres"
+    state: directory
+    mode: '0700'
+  delegate_to: localhost
+  run_once: true
+
+- name: Create an SSL private key for the server
+  community.crypto.openssl_privatekey:
+    path: "tls/postgres/server.key"
+    type: RSA
+    size: 4096
+    mode: "0600"
+  delegate_to: localhost
+
+- name: Create a Certificate Signing Request for the server
+  community.crypto.openssl_csr:
+    path: "tls/postgres/server.csr"
+    privatekey_path: "tls/postgres/server.key"
+    common_name: localhost
+    country_name: US
+    locality_name: Alexandria
+    organization_name: self
+    organizational_unit_name: signed
+    subject:
+      ST: Virginia
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - serverAuth
+    mode: "0600"
+  delegate_to: localhost
+
+- name: Create an X509 SSL cert for the server
+  community.crypto.x509_certificate:
+    path: "tls/postgres/server.crt"
+    privatekey_path: "tls/postgres/server.key"
+    csr_path: "tls/postgres/server.csr"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ tls_validity_days }}d"
+    mode: "0600"
+  delegate_to: localhost
+
+- name: Copy Postgres TLS cert and key from Ansible controller
+  copy:
+    src: "tls/postgres/{{ item }}"
+    dest: "{{ pg_data }}/{{ item }}"
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  loop:
+  - server.crt
+  - server.key
+  become: true

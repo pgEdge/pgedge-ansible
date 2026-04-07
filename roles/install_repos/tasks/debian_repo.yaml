@@ -1,0 +1,53 @@
+---
+
+- name: Install Debian-family prerequisite packages
+  apt:
+    name:
+    - curl
+    - gnupg2
+    - lsb-release
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Install the pgEdge repo package
+  apt:
+    deb: 'https://apt.pgedge.com/repodeb/pgedge-release_latest_all.deb'
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Update APT cache to include pgEdge packages
+  apt:
+    update_cache: true
+  become: true
+
+# Some pgedge Packages (postgresql-common) conflict with PGDG packages.
+# Regardless, some packages are only available from PGDG, so we include it
+# for those cases. This includes an automatic cache refresh.
+
+- name: Install Postgres Common package for PGDG repo script
+  apt:
+    name:
+    - pgedge-postgresql-common
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Install and Activate the PGDG Repo
+  command:
+    argv:
+    - /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+    - -y
+  args:
+    creates: "/etc/apt/sources.list.d/pgdg.sources"
+  become: true
