@@ -1,23 +1,5 @@
 ---
 
-- name: Make sure cron is actually installed before trying to use it...
-  package:
-    name:
-    - "{{ 'cronie' if ansible_facts.os_family == 'RedHat' else 'cron' }}"
-    state: present
-    lock_timeout: 300
-  retries: 5
-  delay: 20
-  register: result
-  until: result is success
-  become: true
-
-- name: Set PgBackRest library path in crontab
-  cron:
-    name: LD_LIBRARY_PATH
-    job: "{{ pg_path }}/lib"
-    env: true
-
 - name: Set PgBackRest full backup schedule
   cron:
     name: "Full PgBackRest schedule"
@@ -26,9 +8,11 @@
     day: "{{ full_backup_schedule.split(' ')[2] }}"
     month: "{{ full_backup_schedule.split(' ')[3] }}"
     weekday: "{{ full_backup_schedule.split(' ')[4] }}"
-    job: '{{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=full'
+    job: 'pgbackrest {{ stanza }} backup --type=full'
   vars:
     stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
+  become: true
+  become_user: "{{ os_user }}"
   when: full_backup_schedule.split(' ') | length == 5
 
 - name: Set PgBackRest differential backup schedule
@@ -39,7 +23,9 @@
     day: "{{ diff_backup_schedule.split(' ')[2] }}"
     month: "{{ diff_backup_schedule.split(' ')[3] }}"
     weekday: "{{ diff_backup_schedule.split(' ')[4] }}"
-    job: '{{ cluster_path }}/backrest/bin/pgbackrest {{ stanza }} backup --type=diff'
+    job: 'pgbackrest {{ stanza }} backup --type=diff'
   vars:
     stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
+  become: true
+  become_user: "{{ os_user }}"
   when: diff_backup_schedule.split(' ') | length == 5

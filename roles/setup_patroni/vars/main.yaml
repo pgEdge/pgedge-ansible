@@ -1,1 +1,7 @@
 ---
+
+patroni_config_file: >-
+  {{
+    pg_version|string + '-' + cluster_name + '.yml' if ansible_os_family == 'Debian'
+    else 'patroni.yml'
+  }}

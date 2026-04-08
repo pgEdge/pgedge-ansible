@@ -1,0 +1,16 @@
+---
+
+# Debian systems likely already have a "main" cluster that's using the port
+# assigned to this new cluster, so stop and disable it. Patroni should sync
+# over the necessary configuration files and clone the primary.
+
+- name: Stop and disable existing Postgres if it's blocking the new cluster
+  service: 
+    name: "postgresql@{{ pg_version }}-main"
+    state: stopped
+    enabled: false
+  when:
+  - cluster_name != 'main'
+  - pg_port == 5432
+  - ansible_os_family == 'Debian'
+  become: true

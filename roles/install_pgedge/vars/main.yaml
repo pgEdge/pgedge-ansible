@@ -1,6 +1,1 @@
 ---
-
-repo: "{{ repo_name if repo_name in ('download', 'upstream', 'devel') else 'download' }}"
-repo_url: >-
-  {{ "https://pgedge-" + repo + ".s3.amazonaws.com/REPO" +
-  (("/stable/" + repo_prefix) if repo_prefix > "" else "") }}

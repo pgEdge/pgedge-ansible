@@ -1,0 +1,30 @@
+{%- set endpoints = [] %}
+{%- for host in nodes_in_zone %}
+{%-   set host_name = hostvars[host].ansible_hostname %}
+{%-   set inv_name = hostvars[host].inventory_hostname %}
+{%-   set _ = endpoints.append(host_name + '=https://' + inv_name + ':2380') %}
+{%- endfor %}
+name: {{ ansible_hostname }}
+advertise-client-urls: https://{{ inventory_hostname }}:2379
+data-dir: {{ etcd_data_dir }}/postgresql
+initial-advertise-peer-urls: https://{{ inventory_hostname }}:2380
+initial-cluster: {{ endpoints | join(',') }}
+initial-cluster-state: new
+initial-cluster-token: pgedge_cluster
+listen-client-urls: https://{{ ansible_default_ipv4.address }}:2379,https://127.0.0.1:2379
+listen-peer-urls: https://{{ ansible_default_ipv4.address }}:2380
+dial-timeout: 20s
+read-timeout: 20s
+write-timeout: 20s
+
+client-transport-security:
+  client-cert-auth: true
+  cert-file: {{ etcd_tls_dir }}/server.crt
+  key-file: {{ etcd_tls_dir }}/server.key
+  trusted-ca-file: {{ etcd_tls_dir }}/ca.crt
+
+peer-transport-security:
+  cert-file: {{ etcd_tls_dir }}/peer.crt
+  key-file: {{ etcd_tls_dir }}/peer.key
+  trusted-ca-file: {{ etcd_tls_dir }}/ca.crt
+  client-cert-auth: true

@@ -2,7 +2,7 @@
 
 # Allow for "infinite" core dumps
 
-- name: Configure core dumps1
+- name: Set the security core limits to "unlimited"
   blockinfile:
     path: /etc/security/limits.conf
     marker: "# {mark} ANSIBLE MANAGED"
@@ -13,7 +13,7 @@
   tags:
   - debug
 
-- name: Configure core dumps2
+- name: Limit core dump processing to 32GB each, and 64GB total
   blockinfile:
     path: /etc/systemd/coredump.conf
     marker: "# {mark} ANSIBLE MANAGED"
@@ -26,7 +26,7 @@
   tags:
   - debug
 
-- name: Configure core dumps3
+- name: Set the default systemd core limit to "infinity"
   lineinfile:
     path: /etc/systemd/system.conf
     regexp: "^#?DefaultLimitCORE="
