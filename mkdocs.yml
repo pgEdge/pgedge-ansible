@@ -1,0 +1,99 @@
+site_name: pgEdge Ansible Collection
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+
+plugins:
+  - search
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  favicon: img/favicon.ico
+
+  logo_dark_mode: 'img/logo-dark.png'
+  logo_light_mode: 'img/logo-light.png'
+
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.prune
+    - navigation.top
+    - toc.follow
+
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+extra:
+  generator: false
+
+copyright: Copyright &copy; 2025 - 2026 pgEdge, Inc
+repo_url: https://github.com/pgEdge/pgedge-ansible
+
+nav:
+  - The pgEdge Ansible Collection:
+      - Overview: index.md
+      - Architecture: architecture.md  
+  - Installing with Ansible:
+      - Installation Overview: installation.md
+      - Tutorial - Deploying a Simple Cluster: simple_cluster.md
+      - Tutorial - Deploying an Ultra-HA Cluster: ultra_ha.md
+      - Customizing a Playbook: configure_playbook.md
+  - Using the pgEdge Ansible Collection: usage.md
+  - Configuration Reference:
+      - Configuration Overview: configuration.md
+      - Inventory Structure: configuration/inventory.md
+      - Cluster Configuration: configuration/cluster.md
+      - Postgres Configuration: configuration/postgres.md
+      - Proxy Configuration: configuration/proxy.md
+      - Spock Configuration: configuration/spock.md
+      - System Configuration: configuration/system.md
+      - Backup Configuration: configuration/backup.md
+      - etcd Configuration: configuration/etcd.md
+  - Role Reference:
+      - Role Overview: roles.md
+      - role_config: roles/role_config.md
+      - init_server: roles/init_server.md
+      - install_repos: roles/install_repos.md
+      - install_pgedge: roles/install_pgedge.md
+      - setup_postgres: roles/setup_postgres.md
+      - install_etcd: roles/install_etcd.md
+      - install_patroni: roles/install_patroni.md
+      - install_backrest: roles/install_backrest.md
+      - setup_etcd: roles/setup_etcd.md
+      - setup_patroni: roles/setup_patroni.md
+      - setup_haproxy: roles/setup_haproxy.md
+      - setup_pgedge: roles/setup_pgedge.md
+      - setup_backrest: roles/setup_backrest.md
+  - Troubleshooting:
+      - Troubleshooting: troubleshooting.md
+      - Installation Issues: troubleshooting/installation.md
+      - Repository Issues: troubleshooting/repository.md
+      - System Configuration Issues: troubleshooting/system.md
+      - PostgreSQL Issues: troubleshooting/postgres.md
+      - etcd Issues: troubleshooting/etcd.md
+      - Patroni Issues: troubleshooting/patroni.md
+      - HAProxy Issues: troubleshooting/haproxy.md
+      - Spock Replication Issues: troubleshooting/spock.md
+      - PgBackRest Issues: troubleshooting/backup.md
+  - Changelog: CHANGELOG.md
+  - License: LICENSE.md

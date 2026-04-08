@@ -1,134 +1,160 @@
-# pgEdge Distributed Postgres Ansible Collection
+# pgEdge Ansible Collection
 
-Ansible is a common utility for deploying and configuring infrastructure and cluster resources. This is an ansible collection designed for managing pgEdge Distributed Postgres clusters in this same capacity. This collection provides a series of Ansible roles which will build a full pgEdge Distributed Postgres cluster when executed.
+## Table of Contents
 
-Each of these will be described here, along with any variables necessary to modify behavior or configuration characteristics.
+- [Overview](docs/index.md)
+- [Architecture](docs/architecture.md)
+- Installing with Ansible
+  - [Installation Overview](docs/installation.md)
+  - [Tutorial - Deploying a Simple Cluster](docs/simple_cluster.md)
+  - [Tutorial - Deploying an Ultra-HA Cluster](docs/ultra_ha.md)
+  - [Customizing a Playbook for One or More Zones](docs/configure_playbook.md)
+- [Using the pgEdge Ansible Collection](docs/usage.md)
+- Configuration Reference
+  - [Configuration Overview](docs/configuration.md)
+- Role Reference
+  - [Role Overview](docs/roles.md)
+- Troubleshooting
+  - [Troubleshooting Overview](docs/troubleshooting.md)
+- [Changelog](docs/changelog.md)
+- [License](docs/LICENSE.md)
+
+The pgEdge Ansible Collection provides a set of Ansible roles for deploying
+and configuring pgEdge Distributed Postgres clusters. The collection automates
+cluster provisioning from initial server preparation through PostgreSQL
+initialization, High Availability configuration, and backup setup.
+
+> **Note:** Version 1.x introduces breaking changes from the 0.x release
+> series. Inventory structure, role parameters, and installation behavior
+> have changed significantly. Review the [Changelog](docs/changelog.md)
+> and [Installation Overview](docs/installation.md) before upgrading.
+
+## Compatibility
+
+The collection has been verified as compatible with the following Linux
+platforms:
+
+- Debian 12 / Bookworm
+- Ubuntu 25.04 / Plucky Puffin
+- Rocky Linux 9
+
+The collection may also work with other Debian or RHEL variants, but the
+pgEdge team has not validated compatibility.
 
 ## Installation
 
-These roles are intended to eventually be available on Ansible Galaxy. Until then, they should be installed this way:
+Ansible 2.12.0 or later and Python 3 with the `netaddr` package are required
+on the Ansible controller. Target nodes must have `sudo` privileges.
+
+Install the collection from the
+[pgEdge GitHub repository](https://github.com/pgEdge/pgedge-ansible)
+by running the following commands:
 
 ```bash
-git clone git@github.com:pgEdge/pgedge-ansible.git
+git clone https://github.com/pgEdge/pgedge-ansible.git
 cd pgedge-ansible
 make install
 ```
 
-It will then be possible to use these roles as the user who installed them. Simply include two lines like this in any playbook:
+After installation, reference the collection in any playbook with the
+following declaration:
 
 ```yaml
 collections:
-- pgedge.platform
+  - pgedge.platform
 ```
 
-For example:
+## Quick Start
+
+The following example shows the minimum inventory and playbook required to
+deploy a three-node pgEdge Distributed Postgres cluster. Each host must be
+in a separate zone:
 
 ```yaml
-- hosts: all
+pgedge:
+  vars:
+    db_password: secret
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 2
+    192.168.6.12:
+      zone: 3
+```
+
+The following playbook applies all roles required for a simple cluster:
+
+```yaml
+- hosts: pgedge
 
   collections:
   - pgedge.platform
 
   roles:
   - init_server
+  - install_repos
+  - install_pgedge
+  - setup_postgres
+  - setup_pgedge
 ```
+
+See the [Simple Cluster](docs/simple_cluster.md) and
+[Ultra-HA Cluster](docs/ultra_ha.md) tutorials for complete deployment
+walkthroughs.
 
 ## Configuration
 
-All of the roles are meant to operate in conjunction. They are simplified to reduce complexity and add potential for more complex cluster deployments. Roles will collectively recognize the following configuration parameters:
+All roles recognize a common set of parameters set as inventory or playbook
+variables. The following table lists the most commonly used parameters:
 
-| **Parameter** | **Default** | **Description**                                     |
-|---------------|-------------|-----------------------------------------------------|
-| cluster_name | demo | Canonical name for the cluster, primarily used for descriptive items and generated values. |
-| repo_name | release | Can be one of `release`, `staging`, or `daily`. This will control which pgEdge repository is used for software installation. |
-| repo_prefix | None | If set, makes it possible to install specific custom or automated builds based on repository prefix. Consult a member of pgEdge staff for valid setting here. |
-| install_base | Ansible user home | Where the CLI should install the pgedge CLI package and related utilities. This will also be where Postgres binaries, data directory, logs, and other resources will be stored. This should be the location of the primary data mount for this server. |
-| zone | 1 | Zone or region for a node. This helps organize HA clusters. It also doubles as the snowflake ID of a node. For non-HA clusters, just use one node per zone. |
-| pg_version | 17 | Postgres version to install. Default to the most recent version. |
-| spock_version | 5.0.0 | Version of the Spock extension to install. |
-| pg_port | 5432 | Port where Postgres should listen for connections. |
-| pg_path | `/usr/pgsql-${pg_version}` on RHEL, `/usr/lib/postgresql/${pg_version} on Debian | Where Postgres binary and library directories can be found. Almost all systems are based on RHEL or Debian variants. Specify for custom location. |
-| pg_data | `/var/lib/pgsql/${pg_version}/data` on RHEL, `/var/lib/postgresql/${pg_version}/main` on Debian | Data directory where Postgres should reside. Like `pg_path`, this may differ based on distribution. Specify for custom location. |
-| db_names | demo | List of database names to use for the Spock cluster. At least one database name is expected to initialize the cluster. Any missing databases will be created and owned by `db_user`. |
-| db_user | admin | Database username. Must be something other than the OS username performing the installation. |
-| db_password | secret | Password for the `db_user` user. |
-| pgedge_user | pgedge | Database username for the pgedge inter-node communication logical replication. |
-| pgedge_password | secret | Password for the `pgedge_user` user. |
-| is_ha_cluster | false | If true, install etcd and Patroni on all nodes in the `pgedge` group. If HAProxy nodes exist, they will reflect nodes in the same zone. Subscriptions from other pgEdge nodes will also pass through the zone HAProxy. |
-| proxy_port | 5432 | Allows specifying a different port specifically for proxied connections. This enables running HAProxy on the same node as Postgres, but on a different port. |
-| proxy_node | None | If specified in an HA cluster, will be used as the pgEdge Spock subscription target instead of the inventory node itself. Otherwise, subscriptions will target the first available HAProxy node in the same zone as the inventory node, or the inventory node if no other options are available. |
-| replication_user | replicator | This user is specifically for Patroni replication purposes. |
-| replication_password | secret | Password for the `replication_user` user. |
-| synchronous_mode | false | Enable to allow Patroni to manage `synchonous_commit` and `synchronous_standby_names` parameters based on HA cluster state. |
-| synchronous_mode_strict | false | When synchronous mode is enabled, Patroni will normally disable synchronous replication if no synchronous replicas are available. Enable this parameter to always enforce synchronous commit. |
-| debug_pgedge | true | When enabled, various kernel settings will be configured to retain all core files produced during a process crash. |
-| manage_host_file | true | When enabled, all hosts in the cluster will be listed in the `/etc/hosts` file of every other host. Set to false if external DNS is in use, or inventory hostnames are IP addresses. |
-| haproxy_extra_routes | See description | Parameters to list additional HAProxy routes recognized by the [Patroni REST interface](https://patroni.readthedocs.io/en/latest/rest_api.html). The key should match the type of check being performed, and sub-keys of `port` for the HAProxy listening port and `lag` for maximum allowed lag for viable routing. The `port` field must be supplied. Default: `{ replica: { port: 5433 }` |
-| backup_user | backrest | Database login user to use for backups. Only used for `ssh` mode. |
-| backup_password | secret | Password for the `backup_user` database user. Only used for `ssh` mode. |
-| backup_host | '' | Should be set to the hostname where PgBackRest backups should be transmitted. If left empty and `backup_repo_type` is ssh, will default to the first node in the `backup` node group in the same zone. |
-| backup_repo_type | ssh | The type of PgBackRest backup repository to use. Using 'ssh' means backups are stored on a dedicated backup server as defined in the `backup` host group. Using 's3' will use a remote AWS S3 bucket and requires `backup_repo_params` to be set. Other options will be added as requested. |
-| backup_repo_user | `ansible_user_id` | When in `ssh` mode, the OS user which owns and operates the PgBackRest backup repository. |
-| backup_repo_path | `/home/backrest` | Full path to storage location of PgBackRest repository. If using S3 as a repo type, set this to something simple like `/backrest`. If this user didn't exist prior to this role, this will be set as the user's home directory. |
-| backup_repo_cipher_type | aes-256-cbc | Encryption algorithm to use for backup files stored in the PgBackRest repository. |
-| backup_repo_cipher | (random) | This should be specified and will define the encryption cipher used for backup files stored in the PgBackRest repository. If not defined, will be set to a 20-character deterministic random string based on the backup repository name. |
-| full_backup_count | 1 | Defines how many full backups to retain in the backup repository. |
-| diff_backup_count | 6 | Defines how many differential backups to retain in the backup repository. |
-| full_backup_schedule | `10 0 * * 0` | Defines a cron-style schedule for automating full PgBackRest backup operations. The default will run every Sunday at 10 minutes after midnight.
-| diff_backup_schedule | `10 0 * * 0` | Defines a cron-style schedule for automating differential PgBackRest backup operations. The default will run every Monday - Saturday at 10 minutes after midnight. |
-| backup_repo_params | See description | Parameters to remote backup repositories (S3 for now). Should be a dictionary with the following fields (defaults listed): `{ region: us-east-1, endpoint: s3.amazonaws.com, bucket: pgbackrest, access_key: '', secret_key: '' }`. |
-| exception_behaviour | transdiscard | Defines what Spock should do when it encounters an exception. Default is `transdiscard` to skip offending transaction. See [documentation](https://docs.pgedge.com/platform/exception#spockexception_behaviour). |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| cluster_name | demo | Canonical name for the cluster. |
+| zone | 1 | Zone or region for a node; also the Snowflake node ID. |
+| pg_version | 17 | PostgreSQL version to install. |
+| db_names | [demo] | List of databases to create. |
+| db_user | admin | Database superuser username. |
+| db_password | secret | Password for db_user. |
+| is_ha_cluster | false | When true, installs etcd, Patroni, and HAProxy. |
 
-Modifying other parameters will have no effect on the cluster.
+For the complete parameter list, see the
+[Configuration Reference](docs/configuration.md).
 
-## Role Variables
+## Using pgEdge Ansible Collection
 
-The roles described here often make use of shortcut variables internally. If seeking to modify these roles, these variables may prove useful. To augment configurability, some of these may be moved to be role defaults rather than variables.
+Sample playbooks are provided in the
+[sample-playbooks](./sample-playbooks) directory:
 
-Notable items are listed here:
+- [simple-cluster](./sample-playbooks/simple-cluster) - Deploys a standard
+  three-node pgEdge Distributed Postgres cluster.
+- [ultra-ha](./sample-playbooks/ultra-ha) - Deploys a two-zone Ultra-HA
+  cluster with Patroni, etcd, HAProxy, and PgBackRest.
 
-| **Variable**  | **Value**   | **Description**                                     |
-|---------------|-------------|-----------------------------------------------------|
-| repo_url | https://pgedge-$repo.s3.amazonaws.com/REPO | This is based on the sanitized value of the `repo` role parameter. |
-| nodes_in_zone | Node list | Should be a list of all nodes in the `pgedge` group which are in the same zone as this node. Used in several roles for service configuration. |
+Run a playbook with the following command, substituting your inventory file
+path:
 
-## Role List
+```bash
+ansible-playbook -i inventory.yaml playbook.yaml
+```
 
-The full list of roles is as follows, in the expected order of execution:
+## Documentation
 
-1. `init_server` - Prepares each server in the cluster to operate in the stack. It also retrieves the public SSH key for each server into a `host-keys` directory on the Ansible controller for potential use by other roles. This should be executed on every available server.
-2. `install_pgedge` - Only installs the `pgedge` CLI software, and does nothing else.
-3. `setup_postgres` - Uses the CLI software `setup` command to create a Postgres instance on each node. This will also install the snowflake and spock extensions. In HA clusters, multiple nodes can be assigned to each zone. Of these, all but the first will have the Postgres stopped, and the data directory wiped. This is a preparation step for Patroni.
-4. `install_etcd` - Only used for HA clusters. Uses the CLI to download and install the version of etcd packaged by pgEdge. The service is not yet configured or started.
-5. `install_patroni` - Only used for HA clusters. Uses the CLI to download and install the version of etcd packaged by pgEdge. The service is not yet configured or started.
-6. `setup_etcd` - Only used for HA clusters. Fully configures etcd on each node. Nodes in the `pgedge` group in same zone are configured to be part of the same etcd quorum. In zones with fewer than 3 nodes, etcd will still function, but will require all nodes to be operational to maintain quorum.
-7. `setup_patroni` - Only used for HA clusters. Fully configures patroni on each node. Nodes in the `pgedge` group in the same zone are configured to be part of the same Patroni cluster. The first node in the list is used to bootstrap Patroni itself, and Patroni will rebuild all other Postgres instances in the zone from this.
-8. `setup_haproxy` - Only used for HA clusters. This should be executed before `setup_pgedge`, as HA clusters are intended to communicate through the proxy layer so subscriptions survive failover events.
-9. `setup_pgedge` - Establishes a pgEdge node for all nodes in the `pgedge` group. Also subscribes each node to every other node. Will additionally set the snowflake node ID to be the same as the zone, so use the zone as a logical node identifier. In HA clusters, node creation only takes place once per zone. HA clusters are also subscribed to either the first HAProxy node in the same zone as the remote pgEdge node, or if this is missing, the first pgEdge node in that zone. This allows for "hybrid" clusters for simplified testing, where a single pgEdge node interacts with a Patroni-managed sub-cluster.
-10. `install_backrest` - Installs PgBackRest backup software on nodes where the role is defined.
-11. `setup_backrest` - Configures PgBackRest on each configured node with the parameter-defined repository target for long-term backup and WAL storage. Additionally:
-  * Configures Postgres to transmit archived WAL files to the PgBackRest repository, and also retrieve WAL files from this location during recovery.
-  * Initializes a backup repository for each defined zone.
-  * Invokes a single backup to bootstrap the repository for each defined zone. As a result, this is best used on new clusters or those without large amounts of data.
-  * Defines full and differential backup automation.
+Full documentation is available at [docs.pgedge.com](https://docs.pgedge.com).
+To build documentation from source, install MkDocs Material and run:
 
-## Usage
+```bash
+pip install mkdocs-material
+mkdocs serve
+```
 
+## Support & Resources
 
-Files in the [sample-playbooks](./sample-playbooks) directory provide a sample inventory and playbook to illustrate how these roles should be utilized:
+For more information, visit [docs.pgedge.com](https://docs.pgedge.com).
 
-* [simple-cluster](./sample-playbooks/simple-cluster) - Produces a standard three-node pgEdge cluster.
-* [ultra-ha](./sample-playbooks/ultra-ha) - Produces an Ultra-HA cluster with two zones, three pgEdge nodes in each zone, and one HAProxy node per zone. This is a total of eight nodes.
+To report an issue with the software, visit:
+[https://github.com/pgEdge/pgedge-ansible/issues](https://github.com/pgEdge/pgedge-ansible/issues)
 
-## Compatibility
+## License
 
-These roles have been verified as compatible with the following Linux platforms:
-
-* Debian 12 / Bookworm
-* Rocky 9
-
-They may also work with other Debian or RHEL variants as-is, but this has not been validated.
-
-## Other Notes
-
-These roles are very early in their life, and will likely undergo heavy revision as they mature. They are not fully re-entrant if they encounter an unexpected error, so re-running the playbook after a failure may result in further problems. This situation will improve with time as development continues.
+This project is licensed under the [PostgreSQL License](LICENSE.md).
