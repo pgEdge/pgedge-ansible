@@ -3,7 +3,7 @@
 - name: Install Patroni and DCS Python dependencies
   package:
     name:
-    - patroni
+    - pgedge-patroni
     state: present
     lock_timeout: 300
   retries: 5
