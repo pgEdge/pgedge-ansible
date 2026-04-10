@@ -2,7 +2,7 @@
 
 - name: Install the pgEdge repo GPG Keys
   rpm_key:
-    key: https://dnf.pgedge.com/keys/pgedge.pub
+    key: https://dnf.pgedge.com/keys/pgedge-rsa.pub
     state: present
   become: true
 
