@@ -31,7 +31,7 @@ $(TARGET): $(shell find $(DIR)/roles -name '*.yaml')
 
 clean:
 	rm -f $(DIR)/galaxy.yml
-	rm -f $(DIR)/pgedge-platform-$(VERSION).tar.gz
+	rm -f $(TARGET)
 
 install: build
-	ansible-galaxy collection install $(DIR)/pgedge-platform-$(VERSION).tar.gz --force
+	ansible-galaxy collection install $(TARGET) --force
