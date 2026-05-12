@@ -17,21 +17,21 @@
 #   make install
 #
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
-PGEDGE_ANSIBLE_VERSION ?= $(shell cat $(DIR)/VERSION | head -n 1)
-TARGET := $(DIR)/pgedge-platform-$(PGEDGE_ANSIBLE_VERSION).tar.gz
+TARGET := $(DIR)/pgedge-platform-$(VERSION).tar.gz
 
 .PHONY: build clean install
 
 build: $(TARGET)
 
 $(TARGET): $(shell find $(DIR)/roles -name '*.yaml')
-	sed -E 's/version:.*/version: "$(PGEDGE_ANSIBLE_VERSION)"/g' $(DIR)/galaxy.template.yml > $(DIR)/galaxy.yml
+	sed -E 's/version:.*/version: "$(VERSION)"/g' $(DIR)/galaxy.template.yml > $(DIR)/galaxy.yml
 	ansible-galaxy collection build --force $(DIR)
 
 clean:
 	rm -f $(DIR)/galaxy.yml
-	rm -f $(DIR)/pgedge-platform-$(PGEDGE_ANSIBLE_VERSION).tar.gz
+	rm -f $(TARGET)
 
 install: build
-	ansible-galaxy collection install $(DIR)/pgedge-platform-$(PGEDGE_ANSIBLE_VERSION).tar.gz --force
+	ansible-galaxy collection install $(TARGET) --force

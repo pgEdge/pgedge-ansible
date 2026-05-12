@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v1.0.0
 
 This release is a major overhaul that revises every role in the collection.
 It replaces the pgEdge CLI component with standard RPM and DEB packages from
@@ -13,8 +13,9 @@ the pgEdge and PGDG package repositories. All local-user installation
 semantics are removed in favor of the standard `postgres` OS user and
 system-conventional paths.
 
-**This is a breaking change.** Clusters deployed with v0.2 cannot be upgraded
-in place. Re-provision all nodes from scratch before deploying to production.
+**This is a breaking change.** Clusters deployed with v0.1 or v0.2 cannot be
+upgraded in place. Re-provision all nodes from scratch before deploying to
+production.
 
 ### Added
 
