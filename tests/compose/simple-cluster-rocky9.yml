@@ -1,0 +1,39 @@
+networks:
+  pgedge-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.6.0/24
+
+x-common: &common
+  build:
+    context: ../docker
+    dockerfile: Dockerfile.rocky9
+  privileged: true
+  cgroup: host
+  volumes:
+    - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  networks:
+    pgedge-test: {}
+
+services:
+  n1:
+    <<: *common
+    hostname: n1
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.10
+
+  n2:
+    <<: *common
+    hostname: n2
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.11
+
+  n3:
+    <<: *common
+    hostname: n3
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.12

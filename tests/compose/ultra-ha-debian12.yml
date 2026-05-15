@@ -1,0 +1,88 @@
+networks:
+  pgedge-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.6.0/24
+
+x-common: &common
+  build:
+    context: ../docker
+    dockerfile: Dockerfile.debian12
+  privileged: true
+  cgroup: host
+  volumes:
+    - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  networks:
+    pgedge-test: {}
+
+services:
+  pgedge1:
+    <<: *common
+    hostname: pgedge1
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.10
+
+  pgedge2:
+    <<: *common
+    hostname: pgedge2
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.11
+
+  pgedge3:
+    <<: *common
+    hostname: pgedge3
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.12
+
+  pgedge4:
+    <<: *common
+    hostname: pgedge4
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.13
+
+  pgedge5:
+    <<: *common
+    hostname: pgedge5
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.14
+
+  pgedge6:
+    <<: *common
+    hostname: pgedge6
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.15
+
+  haproxy1:
+    <<: *common
+    hostname: haproxy1
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.16
+
+  haproxy2:
+    <<: *common
+    hostname: haproxy2
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.17
+
+  backup1:
+    <<: *common
+    hostname: backup1
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.18
+
+  backup2:
+    <<: *common
+    hostname: backup2
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.19

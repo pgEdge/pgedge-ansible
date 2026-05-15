@@ -1,0 +1,95 @@
+---
+- hosts: pgedge
+  become: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    pg_version: 17
+    cluster_name: demo
+    db_names:
+    - demo
+    db_user: admin
+    db_password: TestPass123
+    pgedge_user: pgedge
+    pgedge_password: TestPass456
+
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  - name: Check Postgres is accepting connections
+    command: >
+      pg_isready -h 127.0.0.1 -p {{ pg_port | default(5432) }}
+    changed_when: false
+
+  - name: Check Spock extension is installed
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT extname FROM pg_extension WHERE extname='spock'"
+    register: spock_ext
+    changed_when: false
+
+  - name: Assert Spock extension exists
+    assert:
+      that: "'spock' in spock_ext.stdout"
+      fail_msg: "Spock extension not found in database demo"
+
+  - name: Check Spock node exists
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT count(*) FROM spock.node"
+    register: spock_node_count
+    changed_when: false
+
+  - name: Assert Spock node is created
+    assert:
+      that: "spock_node_count.stdout | int >= 1"
+      fail_msg: "No Spock node found"
+
+  - name: Check Spock subscriptions
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT count(*) FROM spock.subscription"
+    register: sub_count
+    changed_when: false
+
+  - name: Assert subscriptions exist
+    assert:
+      that: "sub_count.stdout | int == (groups['pgedge'] | length) - 1"
+      fail_msg: >
+        Expected {{ (groups['pgedge'] | length) - 1 }} subscriptions,
+        got {{ sub_count.stdout }}
+
+  # Replication test: create table and insert data on first node
+  - name: Create test table for replication check
+    become_user: postgres
+    command: >
+      psql -d demo -c "
+        CREATE TABLE IF NOT EXISTS repl_test (id serial PRIMARY KEY, val text);
+        INSERT INTO repl_test (val) VALUES ('hello_from_{{ inventory_hostname }}');
+      "
+    run_once: true
+    changed_when: false
+
+  - name: Wait for replication
+    pause:
+      seconds: 5
+    run_once: true
+
+  - name: Verify replicated data exists
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT count(*) FROM repl_test"
+    register: repl_count
+    changed_when: false
+
+  - name: Assert replication worked
+    assert:
+      that: "repl_count.stdout | int >= 1"
+      fail_msg: "Replication test failed: no rows found in repl_test on {{ inventory_hostname }}"
+
+  - name: Show replication success
+    debug:
+      msg: "Replication verified on {{ inventory_hostname }}: {{ repl_count.stdout }} row(s) in repl_test"

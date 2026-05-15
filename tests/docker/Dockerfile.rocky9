@@ -1,0 +1,19 @@
+FROM rockylinux:9
+
+RUN dnf -y install systemd openssh-server openssh-clients python3 sudo iproute passwd && \
+    dnf clean all
+
+RUN useradd -m -s /bin/bash ansible && \
+    echo 'ansible ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ansible && \
+    chmod 440 /etc/sudoers.d/ansible && \
+    mkdir -p /home/ansible/.ssh && \
+    chown ansible:ansible /home/ansible/.ssh && \
+    chmod 700 /home/ansible/.ssh
+
+COPY authorized_keys /home/ansible/.ssh/authorized_keys
+RUN chown ansible:ansible /home/ansible/.ssh/authorized_keys && \
+    chmod 600 /home/ansible/.ssh/authorized_keys
+
+RUN ssh-keygen -A && systemctl enable sshd
+
+CMD ["/usr/sbin/init"]
