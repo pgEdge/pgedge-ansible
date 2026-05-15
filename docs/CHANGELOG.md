@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - patroni_config_file and patroni_tls_dir now recognized by all roles.
+- Patroni replication user now connects to all databases for logical slot creation.
 - backup_repo_cipher default now properly deterministic.
 
 ## v1.0.0
