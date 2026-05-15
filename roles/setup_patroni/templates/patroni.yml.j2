@@ -98,10 +98,10 @@ postgresql:
   - host {{ db_list }} {{ db_user }} {{ host_ip }}/32 scram-sha-256
 {% endfor %}
   # Physical replication user connections
-  - host postgres,replication {{ replication_user }} 127.0.0.1/32 scram-sha-256
+  - host {{ db_list }},replication {{ replication_user }} 127.0.0.1/32 scram-sha-256
 {% for host in nodes_in_zone %}
 {%   set host_ip = hostvars[host].ansible_default_ipv4.address %}
-  - host postgres,replication {{ replication_user }} {{ host_ip }}/32 scram-sha-256
+  - host {{ db_list }},replication {{ replication_user }} {{ host_ip }}/32 scram-sha-256
 {% endfor %}
   # Connections from proxy servers
 {% for host in proxies_in_zone %}

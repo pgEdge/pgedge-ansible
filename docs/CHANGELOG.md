@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- patroni_config_file and patroni_tls_dir now recognized by all roles.
+- Patroni replication user now connects to all databases for logical slot creation.
+- backup_repo_cipher default now properly deterministic.
+
 ## v1.0.0
 
 This release is a major overhaul that revises every role in the collection.
