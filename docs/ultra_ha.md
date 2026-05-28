@@ -8,14 +8,14 @@ An Ultra-HA cluster organizes nodes into two or more zones. Each zone contains
 multiple pgEdge nodes managed by Patroni for automatic failover, with etcd
 providing distributed coordination. HAProxy nodes in each zone route client
 connections to the current primary and survive PostgreSQL failover events.
-Dedicated backup servers in each zone run PgBackRest for automated backup and
+Dedicated backup servers in each zone run pgBackRest for automated backup and
 WAL archival.
 
 The standard Ultra-HA topology per zone includes:
 
 - Three pgEdge nodes (managed by Patroni and etcd).
 - One HAProxy node (routes connections to the Patroni primary).
-- One backup server (stores PgBackRest repository).
+- One backup server (stores pgBackRest repository).
 
 A two-zone Ultra-HA deployment therefore requires ten nodes in total.
 
@@ -27,7 +27,7 @@ After deployment, the following HA behaviors are active:
   the current primary.
 - Spock subscriptions run through HAProxy so cross-zone replication continues
   after a failover.
-- PgBackRest archives WAL continuously and runs scheduled full and differential
+- pgBackRest archives WAL continuously and runs scheduled full and differential
   backups.
 
 
