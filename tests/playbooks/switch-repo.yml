@@ -8,6 +8,12 @@
     when: ansible_facts['os_family'] == 'RedHat'
     become: true
 
+  - name: Update DNF cache after repo switch
+    dnf:
+      update_cache: true
+    when: ansible_facts['os_family'] == 'RedHat'
+    become: true
+
   - name: Switch pgEdge apt repo
     command: sed -i 's/release/{{ repo_environment }}/' /etc/apt/sources.list.d/pgedge.sources
     when: ansible_facts['os_family'] == 'Debian'
