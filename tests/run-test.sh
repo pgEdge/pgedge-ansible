@@ -82,9 +82,9 @@ echo "==> Step 4: Waiting for SSH on all containers..."
 # Extract IPs from inventory
 HOSTS=$(grep -oP '192\.168\.6\.\d+' "$INVENTORY" | sort -u)
 MAX_WAIT=60
-ELAPSED=0
 
 for host in $HOSTS; do
+  ELAPSED=0
   while ! ssh -i "$SCRIPT_DIR/.ssh/id_ed25519" \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
