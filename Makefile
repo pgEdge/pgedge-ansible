@@ -17,7 +17,7 @@
 #   make install
 #
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION ?= $(shell { git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"; } | sed 's/^v//')
 DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 TARGET := $(DIR)/pgedge-platform-$(VERSION).tar.gz
 
