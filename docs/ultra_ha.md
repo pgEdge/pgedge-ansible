@@ -46,6 +46,9 @@ all:
 pgedge:
   vars:
     db_password: secret
+    pgedge_password: secret
+    replication_password: secret
+    backup_password: secret
     is_ha_cluster: true
   hosts:
     192.168.6.10:
@@ -80,6 +83,9 @@ Setting `is_ha_cluster: true` on the `pgedge` group instructs the roles to
 install and configure etcd, Patroni, and HAProxy. The first node listed per
 zone bootstraps the Patroni cluster; all remaining nodes in the zone are
 rebuilt as streaming replicas.
+
+Note that these playbooks will also require that the passwords be changed from
+`secret`.
 
 ## Creating a Playbook
 
