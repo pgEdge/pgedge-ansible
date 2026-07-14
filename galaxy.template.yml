@@ -23,6 +23,7 @@ dependencies:
   "community.postgresql": ">=2.4.0"
   "community.general": ">=8.2.0"
   "community.crypto": ">=2.4.0"
+  "ansible.posix": ">=1.5.0"
 
 repository: https://github.com/pgEdge/pgedge-ansible
 

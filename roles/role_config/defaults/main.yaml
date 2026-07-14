@@ -9,7 +9,7 @@ spock_version: "5.0.4"
 tls_validity_days: 3560
 
 db_names:
-- demo
+- name: demo
 db_user: admin
 db_password: secret
 

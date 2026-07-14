@@ -94,8 +94,8 @@ The following inventory creates multiple databases with custom user accounts:
 pgedge:
   vars:
     db_names:
-      - app_db
-      - reporting_db
+      - name: app_db
+      - name: reporting_db
     db_user: appuser
     db_password: "{{ vault_db_password }}"
     pgedge_user: replication

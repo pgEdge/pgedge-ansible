@@ -13,6 +13,13 @@
     enabled: true
   become: true
 
+- name: Reload the Postgres service to incorporate any access changes, helpful in case if service is already running
+  systemd_service:
+    name: "{{ pg_service_name }}"
+    state: reloaded
+    enabled: true
+  become: true
+
 # Include all other common steps for a standard Postgres node
 
 - name: Include common Postgres setup steps
