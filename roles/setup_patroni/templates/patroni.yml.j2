@@ -1,7 +1,7 @@
 {%- set ip_mask = (ansible_default_ipv4.address + '/' +
       ansible_default_ipv4.netmask) |
       ansible.utils.ipaddr('host/prefix') %}
-{%- set db_list = (db_names + ['postgres']) | join(',') %}
+{%- set db_list = (db_names | map(attribute='name') + ['postgres']) | join(',') %}
 scope: "{{ pg_version }}-{{ cluster_name }}"
 namespace: /db/
 name: {{ ansible_hostname }}

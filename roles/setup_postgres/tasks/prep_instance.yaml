@@ -90,7 +90,7 @@
     dest: "{{ pg_config_dir }}/pg_hba.conf"
     contype: host
     users: "{{ pgedge_user + ',' + db_user }}"
-    databases: "{{ (db_names + ['postgres']) | join(',') }}"
+    databases: "{{ (db_names | map(attribute='name') + ['postgres']) | join(',') }}"
     method: scram-sha-256
     source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
   loop: "{{ groups['pgedge'] }}"

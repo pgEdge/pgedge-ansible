@@ -3,7 +3,7 @@
 - name: Set up Spock to manage node metadata
   community.postgresql.postgresql_query:
     login_port: "{{ pg_port }}"
-    login_db: "{{ item }}"
+    login_db: "{{ item.name }}"
     login_unix_socket: /var/run/postgresql
     query: |-
       DO $$
@@ -17,7 +17,7 @@
       END; $$ LANGUAGE plpgsql;
     named_args:
       node_name: "edge{{ zone }}"
-      dsn: "host={{ inventory_hostname }} user={{ pgedge_user }} dbname={{ item }} port={{ pg_port }}"
+      dsn: "host={{ inventory_hostname }} user={{ pgedge_user }} dbname={{ item.name }} port={{ pg_port }}"
   loop: "{{ db_names }}"
   become: true
   become_user: postgres
@@ -48,6 +48,6 @@
     remote_zone: "{{ hostvars[item.0]['zone'] }}"
   loop: >-
     {{ groups['pgedge'] | reject('equalto', inventory_hostname) | 
-    product(db_names) | list }}
+    product(db_names | map(attribute='name')) | list }}
   become: true
   become_user: postgres

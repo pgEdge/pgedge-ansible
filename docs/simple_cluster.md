@@ -78,7 +78,7 @@ pgedge:
   vars:
     pg_version: 17
     db_names:
-      - mydb
+      - name:  mydb
     db_user: myuser
     db_password: mypassword
 ```

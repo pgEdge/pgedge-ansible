@@ -27,9 +27,33 @@
 # Since we created the instance using the default 'postgres' database name,
 # create all requested databases and init the spock and snowflake extensions.
 
+- name: Create tablespace directories
+  file:
+    path: "{{ item.tablespace.location }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+  loop: "{{ db_names }}"
+  become: true
+  when: item.tablespace is defined
+
+- name: Create tablespaces
+  community.postgresql.postgresql_tablespace:
+    name: "{{ item.tablespace.name }}"
+    location: "{{ item.tablespace.location }}"
+    state: present
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  loop: "{{ db_names }}"
+  become: true
+  become_user: postgres
+  when: item.tablespace is defined
+
 - name: Create each of the requested databases
   community.postgresql.postgresql_db:
-    name: "{{ item }}"
+    name: "{{ item.name }}"
+    tablespace: "{{ item.tablespace.name | default(omit) }}"
     login_port: "{{ pg_port }}"
     login_unix_socket: /var/run/postgresql
   loop: "{{ db_names }}"
@@ -42,6 +66,6 @@
     login_port: "{{ pg_port }}"
     login_db: "{{ item.1 }}"
     login_unix_socket: /var/run/postgresql
-  loop: "{{ ['spock', 'snowflake'] | product(db_names) | list }}"
+  loop: "{{ ['spock', 'snowflake'] | product(db_names | map(attribute='name')) | list }}"
   become: true
   become_user: postgres
