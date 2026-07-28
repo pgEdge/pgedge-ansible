@@ -9,6 +9,8 @@ The role performs the following tasks on inventory hosts:
 - Install the pgEdge Enterprise Postgres meta-package.
 - Install pgEdge extensions including Spock and Snowflake.
 - Install the Python Postgres adapter for database connectivity.
+- Install the Postgres contrib package (which provides `pg_stat_statements`)
+  explicitly on RHEL-based systems.
 - Ensure all components match the configured Postgres version.
 
 ## Role Dependencies
@@ -95,6 +97,11 @@ On Debian-based systems, the role uses APT to install the
 `/usr/lib/postgresql/{{ pg_version }}/`. On RHEL-based systems, the role uses
 DNF to install `pgedge-enterprise-all_{{ pg_version }}` and binaries land in
 `/usr/pgsql-{{ pg_version }}/`.
+
+RHEL-based systems also require the `pgedge-postgresql{{ pg_version }}-contrib`
+package for `pg_stat_statements` support. The role installs this package
+explicitly rather than relying on it being pulled in as a recommended
+dependency.
 
 ## Idempotency
 

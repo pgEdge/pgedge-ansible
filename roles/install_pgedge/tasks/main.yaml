@@ -13,3 +13,18 @@
   register: result
   until: result is success
   become: true
+
+# RHEL systems don't reliably pull in the contrib package (which contains
+# pg_stat_statements) as part of the enterprise-all bundle, so install it
+# explicitly rather than relying on it being a recommended package.
+
+- name: Install the Postgres contrib package on RHEL systems
+  package:
+    name: "pgedge-postgresql{{ pg_version }}-contrib"
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+  when: ansible_facts['os_family'] == 'RedHat'
