@@ -1,0 +1,82 @@
+---
+
+- hosts: all
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: init_server
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: install_repos
+
+  - include_tasks: switch-repo.yml
+
+  - include_role:
+      name: install_pgedge
+
+  - include_role:
+      name: setup_postgres
+
+  - include_role:
+      name: install_etcd
+
+  - include_role:
+      name: install_patroni
+
+  - include_role:
+      name: install_backrest
+
+  - include_role:
+      name: setup_etcd
+
+  - include_role:
+      name: setup_patroni
+
+  - include_role:
+      name: setup_backrest
+
+- hosts: haproxy
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: setup_haproxy
+
+- hosts: pgedge
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: setup_pgedge
+
+- hosts: backup
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: install_repos
+
+  - include_tasks: switch-repo.yml
+
+  - include_role:
+      name: install_backrest
+
+  - include_role:
+      name: setup_backrest

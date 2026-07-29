@@ -1,0 +1,42 @@
+all:
+  vars:
+    ansible_user: ansible
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    debug_pgedge: false
+    disable_selinux: false
+    manage_host_file: false
+
+pgedge:
+  vars:
+    db_password: TestPass123
+    pgedge_password: TestPass456
+    replication_password: TestPass789
+    backup_password: TestBackup321
+    is_ha_cluster: true
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 1
+    192.168.6.12:
+      zone: 1
+    192.168.6.13:
+      zone: 2
+    192.168.6.14:
+      zone: 2
+    192.168.6.15:
+      zone: 2
+
+haproxy:
+  hosts:
+    192.168.6.16:
+      zone: 1
+    192.168.6.17:
+      zone: 2
+
+backup:
+  hosts:
+    192.168.6.18:
+      zone: 1
+    192.168.6.19:
+      zone: 2

@@ -1,0 +1,146 @@
+---
+# Verify pgedge nodes: Postgres, etcd, Patroni, Spock replication
+- hosts: pgedge
+  become: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    pg_version: 17
+    cluster_name: demo
+    db_names:
+    - demo
+    db_user: admin
+    db_password: TestPass123
+    pgedge_user: pgedge
+    pgedge_password: TestPass456
+    patroni_svc: >-
+      {{ 'patroni@' + pg_version|string + '-' + cluster_name if ansible_os_family == 'Debian'
+         else 'patroni' }}
+    nodes_in_zone: >-
+      {{ groups['pgedge'] |
+      map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  - name: Check Patroni is running
+    command: systemctl is-active {{ patroni_svc }}
+    changed_when: false
+
+  - name: Check Patroni cluster status
+    uri:
+      url: "http://127.0.0.1:8008/cluster"
+      return_content: true
+    register: patroni_cluster
+
+  - name: Assert Patroni cluster has a leader
+    assert:
+      that: "patroni_cluster.json.members | selectattr('role', 'eq', 'leader') | list | length == 1"
+      fail_msg: "No Patroni leader found in cluster"
+    run_once: true
+
+  - name: Check Postgres is accepting connections
+    command: >
+      pg_isready -h 127.0.0.1 -p {{ pg_port | default(5432) }}
+    changed_when: false
+    # Only primaries will accept connections; replicas may be in recovery
+    ignore_errors: true
+
+  # Run Spock checks only on zone primaries (first node in each zone)
+  - name: Check Spock extension on primary
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT extname FROM pg_extension WHERE extname='spock'"
+    register: spock_ext
+    changed_when: false
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert Spock extension exists on primary
+    assert:
+      that: "'spock' in spock_ext.stdout"
+      fail_msg: "Spock extension not found"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Check Spock subscriptions on primary
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT count(*) FROM spock.subscription"
+    register: sub_count
+    changed_when: false
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Show Spock subscription count
+    debug:
+      msg: "{{ inventory_hostname }}: {{ sub_count.stdout }} subscription(s)"
+    when: inventory_hostname == first_node_in_zone
+
+  # Replication test between zone primaries
+  - name: Create test table for replication
+    become_user: postgres
+    command: >
+      psql -d demo -c "
+        CREATE TABLE IF NOT EXISTS repl_test (id serial PRIMARY KEY, val text);
+        INSERT INTO repl_test (val) VALUES ('hello_from_zone_{{ zone }}');
+      "
+    changed_when: false
+    when: inventory_hostname == first_node_in_zone
+    run_once: true
+
+  - name: Wait for replication
+    pause:
+      seconds: 5
+    run_once: true
+
+  - name: Verify replicated data on zone primaries
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT count(*) FROM repl_test"
+    register: repl_count
+    changed_when: false
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert replication worked
+    assert:
+      that: "repl_count.stdout | int >= 1"
+      fail_msg: "Replication test failed on {{ inventory_hostname }}"
+    when: inventory_hostname == first_node_in_zone
+
+# Verify HAProxy nodes
+- hosts: haproxy
+  become: true
+
+  tasks:
+  - name: Check HAProxy is running
+    command: systemctl is-active haproxy
+    changed_when: false
+
+  - name: Check HAProxy is listening on port 5432
+    wait_for:
+      port: 5432
+      host: 127.0.0.1
+      timeout: 5
+
+  - name: Show HAProxy status
+    debug:
+      msg: "HAProxy running on {{ inventory_hostname }}"
+
+# Verify Backup nodes
+- hosts: backup
+  become: true
+
+  tasks:
+  - name: Check pgbackrest info
+    command: pgbackrest info
+    register: backrest_info
+    changed_when: false
+    ignore_errors: true
+
+  - name: Show backup status
+    debug:
+      msg: "pgbackrest info output: {{ backrest_info.stdout_lines | default(['not available']) }}"

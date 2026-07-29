@@ -1,0 +1,106 @@
+name: "E2E: Ultra-HA"
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Target OS
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - debian12
+          - rocky9
+      environment:
+        description: Package repository environment
+        type: choice
+        required: true
+        default: release
+        options:
+          - release
+          - staging
+
+jobs:
+  test:
+    name: Ultra-HA - ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ inputs.os == 'all' && fromJSON('["debian12","rocky9"]') || fromJSON(format('["{0}"]', inputs.os)) }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Increase inotify limits for systemd containers
+        run: sudo sysctl -w fs.inotify.max_user_instances=512
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Generate SSH keypair
+        run: |
+          mkdir -p tests/.ssh
+          if [ ! -f tests/.ssh/id_ed25519 ]; then
+            ssh-keygen -t ed25519 -f tests/.ssh/id_ed25519 -N "" -q
+          fi
+          cp tests/.ssh/id_ed25519.pub tests/docker/authorized_keys
+
+      - name: Build and install collection
+        run: make install VERSION=0.0.0-dev
+
+      - name: Start containers
+        run: |
+          docker compose -p e2e -f tests/compose/ultra-ha-${{ matrix.os }}.yml up -d --build
+          sleep 5
+          docker compose -p e2e -f tests/compose/ultra-ha-${{ matrix.os }}.yml ps
+
+      - name: Wait for SSH
+        run: |
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19; do
+            ready=0
+            for i in $(seq 1 30); do
+              ssh -i tests/.ssh/id_ed25519 \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=2 \
+                -o BatchMode=yes \
+                ansible@$host true 2>/dev/null && { ready=1; break; }
+              sleep 2
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "ERROR: SSH not ready for $host after 30 attempts" >&2
+              exit 1
+            fi
+          done
+
+      - name: Run playbook
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/ultra-ha.yml \
+            -i tests/inventories/ultra-ha.yml \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }}
+
+      - name: Verify cluster
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/verify/verify-ultra-ha.yml \
+            -i tests/inventories/ultra-ha.yml \
+            --private-key tests/.ssh/id_ed25519
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose -p e2e -f tests/compose/ultra-ha-${{ matrix.os }}.yml logs
+
+      - name: Teardown
+        if: always()
+        run: docker compose -p e2e -f tests/compose/ultra-ha-${{ matrix.os }}.yml down -v --remove-orphans

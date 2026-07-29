@@ -1,0 +1,30 @@
+FROM rockylinux:9
+
+RUN cat <<EOF > /etc/dnf/dnf.conf
+[main]
+gpgcheck=1
+installonly_limit=3
+clean_requirements_on_remove=True
+best=True
+skip_if_unavailable=False
+max_parallel_downloads=10
+fastestmirror=True
+EOF
+
+RUN dnf -y install systemd openssh-server openssh-clients python3 sudo iproute passwd && \
+    dnf clean all
+
+RUN useradd -m -s /bin/bash ansible && \
+    echo 'ansible ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ansible && \
+    chmod 440 /etc/sudoers.d/ansible && \
+    mkdir -p /home/ansible/.ssh && \
+    chown ansible:ansible /home/ansible/.ssh && \
+    chmod 700 /home/ansible/.ssh
+
+COPY authorized_keys /home/ansible/.ssh/authorized_keys
+RUN chown ansible:ansible /home/ansible/.ssh/authorized_keys && \
+    chmod 600 /home/ansible/.ssh/authorized_keys
+
+RUN ssh-keygen -A && systemctl enable sshd
+
+CMD ["/usr/sbin/init"]

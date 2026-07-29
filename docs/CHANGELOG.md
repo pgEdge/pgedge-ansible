@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - patroni_config_file and patroni_tls_dir now recognized by all roles.
 - Patroni replication user now connects to all databases for logical slot creation.
 - backup_repo_cipher default now properly deterministic.
+- manually install Postgres contrib on RHEL systems where it may be missing.
 
 ## v1.0.0
 

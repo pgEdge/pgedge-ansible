@@ -1,0 +1,26 @@
+---
+
+- name: Switch pgEdge repo from release to {{ repo_environment }}
+  when: repo_environment is defined and repo_environment != 'release'
+  block:
+  - name: Switch pgEdge yum repo
+    command: sed -i 's/release/{{ repo_environment }}/' /etc/yum.repos.d/pgedge.repo
+    when: ansible_facts['os_family'] == 'RedHat'
+    become: true
+
+  - name: Update DNF cache after repo switch
+    dnf:
+      update_cache: true
+    when: ansible_facts['os_family'] == 'RedHat'
+    become: true
+
+  - name: Switch pgEdge apt repo
+    command: sed -i 's/release/{{ repo_environment }}/' /etc/apt/sources.list.d/pgedge.sources
+    when: ansible_facts['os_family'] == 'Debian'
+    become: true
+
+  - name: Update APT cache after repo switch
+    apt:
+      update_cache: true
+    when: ansible_facts['os_family'] == 'Debian'
+    become: true
