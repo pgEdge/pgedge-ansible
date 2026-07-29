@@ -27,7 +27,7 @@ After deployment, the following HA behaviors are active:
   the current primary.
 - Spock subscriptions run through HAProxy so cross-zone replication continues
   after a failover.
-- pgBackRest archives WAL continuously and runs scheduled full and differential
+- PgBackRest archives WAL continuously and runs scheduled full and differential
   backups.
 
 
