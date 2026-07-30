@@ -64,3 +64,16 @@
     - groups.pgedge | default([]) | intersect(groups.backup | default([])) | length == 0
     fail_msg: "A host cannot be in both the 'pgedge' and 'backup' groups."
   run_once: true
+
+# Ensure that only "supported" DCS types are used. These are pulled directly
+# from Patroni documentation:
+#  - https://patroni.readthedocs.io/en/latest/yaml_configuration.html
+
+- name: Check DCS type for HA clusters
+  run_once: true
+  assert:
+    that:
+    - patroni_dcs.type | default('') in ('etcd', 'etcd3', 'consul', 'zookeeper', 'exhibitor', 'kubernetes')
+    fail_msg: "DCS type must be one of: etcd, etcd3, consul, zookeeper, exhibitor, kubernetes"
+  when:
+  - is_ha_cluster

@@ -60,3 +60,6 @@ backup_repo_path: "/home/{{ ansible_user_id }}"
 
 patroni_tls_dir: "/etc/patroni/tls"
 
+patroni_dcs:
+  type: etcd3
+  # parameters: intentionally omitted to trigger default substitution

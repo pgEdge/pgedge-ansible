@@ -84,12 +84,17 @@ parameters apply only when `is_ha_cluster` is `true`:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | is_ha_cluster | false | When true, the collection installs and configures etcd, Patroni, and HAProxy on the appropriate nodes. |
+| patroni_dcs | type: etcd3 | Distributed configuration store Patroni uses for cluster state, given as a dictionary with a type key and an optional parameters key. Accepted types are etcd3, etcd, consul, zookeeper, exhibitor, and kubernetes. |
 | replication_user | replicator | Username for Patroni streaming replication. |
 | replication_password | secret | Password for replication_user. |
 | synchronous_mode | false | When true, Patroni manages the synchronous_commit and synchronous_standby_names PostgreSQL parameters based on cluster state. |
 | synchronous_mode_strict | false | When synchronous_mode is enabled, Patroni disables synchronous replication if no synchronous replicas are available. Set this to true to always enforce synchronous commit regardless of replica availability. |
 | proxy_node | (none) | Overrides automatic HAProxy target selection for Spock subscriptions. When unset, subscriptions target the first HAProxy node in the same zone as the remote pgEdge node, or the first pgEdge node in that zone if no HAProxy node is present. |
 | proxy_port | 5432 | Port used for Spock subscription connections. Set this to a value different from pg_port to run HAProxy on a pgEdge node rather than a dedicated host. |
+
+The [DCS Configuration](configuration/dcs.md) document describes the accepted
+store types, the etcd defaults the collection substitutes, and the changes a
+playbook needs to use a store the collection does not manage.
 
 ## HAProxy Parameters
 

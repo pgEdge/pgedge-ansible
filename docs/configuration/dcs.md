@@ -1,0 +1,143 @@
+# DCS Configuration
+
+Patroni stores cluster state in a distributed configuration store (DCS) and
+uses that store to elect a primary node. The `setup_patroni` role writes the
+DCS connection details into the Patroni configuration file. By default the
+collection deploys an etcd cluster and points Patroni at that cluster, but the
+inventory can direct Patroni at any store Patroni supports, including a store
+this collection does not manage.
+
+## patroni_dcs
+
+- Type: Dictionary
+- Default: `type: etcd3` with no `parameters` key
+- Description: This parameter selects the distributed configuration store
+  that Patroni uses and supplies the connection settings for the store. The
+  dictionary accepts a `type` key and an optional `parameters` key.
+
+The `type` key names the store, and the collection writes the value directly
+as the DCS section name in the Patroni configuration file. The `init_server`
+role validates the value on HA clusters and stops the play when the value is
+not recognized. The following table describes the accepted values:
+
+| Value | Description |
+|-------|-------------|
+| etcd3 | etcd accessed through the version 3 API. This value is the default and the only store the collection installs and configures. |
+| etcd | etcd accessed through the legacy version 2 API. |
+| consul | A Consul cluster provided and managed outside the collection. |
+| zookeeper | An Apache ZooKeeper ensemble provided and managed outside the collection. |
+| exhibitor | A ZooKeeper ensemble fronted by Netflix Exhibitor. |
+| kubernetes | The Kubernetes API server, used in place of a separate store. |
+
+The `parameters` key holds the settings Patroni needs to reach the store. The
+collection passes these settings through to the configuration file without
+inspecting or validating the contents, so consult the
+[Patroni YAML Configuration reference](https://patroni.readthedocs.io/en/latest/yaml_configuration.html)
+for the settings each store accepts.
+
+When `type` is `etcd` or `etcd3` and the inventory omits `parameters`, the
+collection substitutes defaults that match the etcd cluster built by the
+`install_etcd` and `setup_etcd` roles. The following table describes those
+defaults:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| host | INVENTORY_HOSTNAME:2379 | Client endpoint on the local node, taken from the inventory hostname. |
+| ttl | 30 | Seconds before the leader key expires. |
+| protocol | https | Transport used for client connections. |
+| cacert | PATRONI_TLS_DIR/ca.crt | Certificate authority that signed the etcd server certificates. |
+| cert | PATRONI_TLS_DIR/patroni.crt | Client certificate Patroni presents to etcd. |
+| key | PATRONI_TLS_DIR/patroni.key | Private key for the client certificate. |
+
+The `patroni_tls_dir` parameter sets the directory in the last three defaults.
+For more information, see the
+[etcd Configuration](etcd.md) document.
+
+Supplying `parameters` replaces every default rather than merging with the
+defaults, so an inventory that sets `parameters` must list all settings the
+store requires. Ansible replaces the whole `patroni_dcs` dictionary when the
+inventory overrides the parameter, so an inventory that sets `parameters` must
+also set `type`.
+
+In the following example, the inventory keeps the default store and connects
+Patroni to the etcd cluster the collection builds:
+
+```yaml
+is_ha_cluster: true
+```
+
+In the following example, the inventory points Patroni at an existing etcd
+cluster running on dedicated hosts:
+
+```yaml
+is_ha_cluster: true
+
+patroni_dcs:
+  type: etcd3
+  parameters:
+    hosts:
+      - etcd1.example.com:2379
+      - etcd2.example.com:2379
+      - etcd3.example.com:2379
+    ttl: 30
+    protocol: https
+    cacert: /etc/patroni/tls/ca.crt
+```
+
+In the following example, the inventory replaces etcd with a Consul cluster:
+
+```yaml
+is_ha_cluster: true
+
+patroni_dcs:
+  type: consul
+  parameters:
+    host: consul.example.com:8500
+    token: 6370a0a0-de0f-4c0a-b1a0-3d5b1c19ba28
+    register_service: true
+```
+
+## Using an External Store
+
+The collection installs and configures etcd only, so a deployment that uses
+another store must provide and maintain that store separately. Omit the
+`install_etcd` and `setup_etcd` roles from the playbook when the store already
+exists outside the cluster.
+
+The `setup_patroni` role generates a Patroni client certificate signed by the
+etcd certificate authority, and the role skips that step when `type` is
+neither `etcd` nor `etcd3`. An external store must therefore carry its own
+credentials in `parameters`, and any certificate files those credentials
+reference must already exist on each pgEdge node.
+
+In the following example, the play that bootstraps the pgEdge nodes omits
+`install_etcd` and `setup_etcd` so that Patroni uses an external Consul
+cluster:
+
+```yaml
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+    - pgedge.platform
+
+  vars:
+    is_ha_cluster: true
+    patroni_dcs:
+      type: consul
+      parameters:
+        host: consul.example.com:8500
+
+  roles:
+    - install_repos
+    - install_pgedge
+    - setup_postgres
+    - install_patroni
+    - install_backrest
+    - setup_patroni
+    - setup_backrest
+```
+
+The remaining plays in the playbook are unchanged. For the full playbook
+structure, see the
+[Tutorial - Deploying an Ultra-HA Cluster](../ultra_ha.md) document.

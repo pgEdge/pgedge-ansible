@@ -83,6 +83,10 @@ OS-specific shortcut variables include the following computed values:
 - `pg_service_name` contains the OS-specific Postgres service name.
 - `pg_config_dir` contains the OS-specific configuration directory path.
 
+The `default_patroni_dcs_params` variable contains the etcd connection
+settings that `setup_patroni` applies when the inventory does not supply its
+own `patroni_dcs.parameters` value.
+
 ### Platform-Specific Values
 
 The `pg_service_name` variable contains the appropriate service name for the

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- new patroni_dcs parameter selects the distributed configuration store
+  Patroni uses and passes arbitrary connection settings to it, allowing an
+  externally managed store such as Consul or ZooKeeper. (EE-33)
+
 ### Fixed
 
 - patroni_config_file and patroni_tls_dir now recognized by all roles.

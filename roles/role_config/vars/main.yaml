@@ -52,3 +52,14 @@ patroni_config_file: >-
     pg_version|string + '-' + cluster_name + '.yml' if ansible_facts['os_family'] == 'Debian'
     else 'patroni.yml'
   }}
+
+# Set default Patroni DCS values here since many of them depend on inventory
+# settings. The template will substitute user dcs values if provided.
+
+default_patroni_dcs_params:
+  host: "{{ inventory_hostname }}:2379"
+  ttl: 30
+  protocol: "https"
+  cacert: "{{ patroni_tls_dir }}/ca.crt"
+  cert: "{{ patroni_tls_dir }}/patroni.crt"
+  key: "{{ patroni_tls_dir }}/patroni.key"

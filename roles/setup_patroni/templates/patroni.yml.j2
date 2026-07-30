@@ -2,6 +2,9 @@
       ansible_default_ipv4.netmask) |
       ansible.utils.ipaddr('host/prefix') %}
 {%- set db_list = (db_names + ['postgres']) | join(',') %}
+{%- set dcs_params = patroni_dcs.parameters | default(default_patroni_dcs_params, true)
+      if patroni_dcs.type in ('etcd3', 'etcd')
+      else patroni_dcs.parameters %}
 scope: "{{ pg_version }}-{{ cluster_name }}"
 namespace: /db/
 name: {{ ansible_hostname }}
@@ -11,13 +14,8 @@ restapi:
   listen: 0.0.0.0:8008
   connect_address: {{ inventory_hostname }}:8008
 
-etcd3:
-  host: {{ inventory_hostname }}:2379
-  ttl: 30
-  protocol: https
-  cacert: {{ patroni_tls_dir }}/ca.crt
-  cert: {{ patroni_tls_dir }}/patroni.crt
-  key: {{ patroni_tls_dir }}/patroni.key
+{{ patroni_dcs.type }}:
+{{ dcs_params | to_nice_yaml(indent=2) | indent(2, first=true) }}
 
 bootstrap:
 {% if ansible_os_family == 'Debian' %}

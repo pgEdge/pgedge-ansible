@@ -2,12 +2,14 @@
 
 The `setup_patroni` role configures and starts Patroni for high availability
 Postgres cluster management. The role generates the Patroni configuration file
-with etcd connection details and Postgres settings, then orchestrates the
-startup sequence to ensure proper cluster formation.
+with connection details for the distributed configuration store and Postgres
+settings, then orchestrates the startup sequence to ensure proper cluster
+formation.
 
 The role performs the following tasks on inventory hosts:
 
-- Generate TLS certificates for Patroni REST API communication.
+- Generate TLS certificates for communicating with etcd, when the cluster uses
+  an etcd store.
 - Generate the `patroni.yaml` configuration file from a template.
 - Disable the native Postgres systemd service so Patroni takes control.
 - Start Patroni on the primary node first, then on all replica nodes.
@@ -20,7 +22,8 @@ This role requires the following roles for normal operation:
 
 - `role_config` provides shared configuration variables to the role.
 - `install_patroni` installs Patroni packages and creates the config directory.
-- `setup_etcd` starts the etcd cluster for distributed consensus.
+- `setup_etcd` starts the etcd cluster for distributed consensus, and is
+  required only when `patroni_dcs.type` is `etcd` or `etcd3`.
 - `setup_postgres` initializes Postgres instances.
 
 ## When to Use
@@ -60,6 +63,7 @@ This role uses the following parameters from the inventory file:
 | `replication_user` | User for Patroni streaming replication. |
 | `replication_password` | Password for the replication user. |
 | `patroni_tls_dir` | Directory for Patroni TLS certificate files. |
+| `patroni_dcs` | Distributed configuration store type and connection settings. |
 | `synchronous_mode` | Enable synchronous replication mode. |
 | `synchronous_mode_strict` | Require a synchronous replica for all commits. |
 | `tls_validity_days` | Number of days TLS certificates remain valid. |
@@ -76,7 +80,9 @@ The role configures Patroni and orchestrates cluster formation.
 The role performs the following steps:
 
 1. Copy the CA certificate from `{{ etcd_tls_dir }}` and generate a Patroni
-   client key and certificate for communicating with etcd.
+   client key and certificate for communicating with etcd. The role skips this
+   step when `patroni_dcs.type` names a store other than `etcd` or `etcd3`,
+   because an external store supplies its own credentials.
 2. Generate the Patroni configuration file. On RHEL systems the file is named
    `patroni.yml`; on Debian systems the file is named
    `{{ pg_version }}-{{ cluster_name }}.yml`. Both files are stored in
@@ -156,9 +162,9 @@ This role generates the following files on inventory hosts:
 |------|----------------|-------------|
 | `/etc/patroni/patroni.yml` (RHEL) | New | Patroni configuration file with cluster settings and Postgres parameters. |
 | `/etc/patroni/{{ pg_version }}-{{ cluster_name }}.yml` (Debian) | New | Patroni configuration file on Debian systems. |
-| `{{ patroni_tls_dir }}/ca.crt` | New | Certificate authority for validating etcd server certificates. |
-| `{{ patroni_tls_dir }}/patroni.key` | New | Private key for encrypting traffic to etcd. |
-| `{{ patroni_tls_dir }}/patroni.crt` | New | Certificate for communicating with etcd as a client. |
+| `{{ patroni_tls_dir }}/ca.crt` | New | Certificate authority for validating etcd server certificates. Created for etcd stores only. |
+| `{{ patroni_tls_dir }}/patroni.key` | New | Private key for encrypting traffic to etcd. Created for etcd stores only. |
+| `{{ patroni_tls_dir }}/patroni.crt` | New | Certificate for communicating with etcd as a client. Created for etcd stores only. |
 | `{{ pg_home }}/.patroni_pgpass` | New | Password file for Patroni database connections with mode 600. |
 
 ## Platform-Specific Behavior
