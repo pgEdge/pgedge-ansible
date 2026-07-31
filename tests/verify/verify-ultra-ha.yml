@@ -24,6 +24,10 @@
       selectattr('zone', 'eq', zone) |
       map(attribute='inventory_hostname') | list }}
     first_node_in_zone: "{{ nodes_in_zone | first }}"
+    dcs_type: "{{ patroni_dcs.type | default('etcd3') }}"
+    patroni_cfg: >-
+      {{ '/etc/patroni/' + pg_version|string + '-' + cluster_name + '.yml'
+         if ansible_os_family == 'Debian' else '/etc/patroni/patroni.yml' }}
 
   environment:
     PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -32,6 +36,22 @@
   - name: Check Patroni is running
     command: systemctl is-active {{ patroni_svc }}
     changed_when: false
+
+  - name: Read the rendered Patroni configuration
+    slurp:
+      src: "{{ patroni_cfg }}"
+    register: patroni_cfg_raw
+
+  - name: Assert the configuration uses the expected DCS section
+    vars:
+      parsed: "{{ patroni_cfg_raw.content | b64decode | from_yaml }}"
+    assert:
+      that:
+      - dcs_type in parsed
+      - parsed[dcs_type] | length > 0
+      fail_msg: >-
+        Expected a non-empty '{{ dcs_type }}' section in {{ patroni_cfg }},
+        found sections: {{ parsed.keys() | list }}
 
   - name: Check Patroni cluster status
     uri:
