@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - new patroni_dcs parameter selects the distributed configuration store
   Patroni uses and passes arbitrary connection settings to it, allowing an
   externally managed store such as Consul or ZooKeeper. (EE-33)
+- install_patroni now installs the Patroni client library that matches the
+  configured patroni_dcs type. (EE-33)
 
 ### Fixed
 

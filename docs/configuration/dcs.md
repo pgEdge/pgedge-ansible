@@ -97,6 +97,25 @@ patroni_dcs:
     register_service: true
 ```
 
+## Client Libraries
+
+Patroni needs a Python client library for the store it talks to, and the
+library differs by store. The `install_patroni` role installs the library that
+matches `patroni_dcs.type`, drawing it from the pgEdge repository on RHEL
+systems and from the distribution repository on Debian systems. The following
+table describes the library each store requires:
+
+| Store type | Client library |
+|------------|----------------|
+| etcd3, etcd | The etcd client, installed by default. |
+| consul | The Consul client. |
+| zookeeper, exhibitor | The Kazoo ZooKeeper client. |
+| kubernetes | None; Patroni uses the Kubernetes API directly. |
+
+Patroni fails at startup with a missing module error when the library for the
+configured store is absent, so confirm the repositories the nodes use provide
+the library before selecting a store other than etcd.
+
 ## Using an External Store
 
 The collection installs and configures etcd only, so a deployment that uses
