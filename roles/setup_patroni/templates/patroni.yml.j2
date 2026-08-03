@@ -6,7 +6,7 @@
       if patroni_dcs.type in ('etcd3', 'etcd')
       else patroni_dcs.parameters %}
 scope: "{{ pg_version }}-{{ cluster_name }}"
-namespace: /db/
+namespace: {{ patroni_namespace }}
 name: {{ ansible_hostname }}
 replication_slot_name: {{ ansible_hostname | regex_replace('[\W-]', '_') }}
 

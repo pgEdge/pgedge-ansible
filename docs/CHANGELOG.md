@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   externally managed store such as Consul or ZooKeeper. (EE-33)
 - install_patroni now installs the Patroni client library that matches the
   configured patroni_dcs type. (EE-33)
+- Ultra-HA end-to-end test now covers an externally managed Consul store in
+  addition to the default etcd cluster. (EE-33)
+- new patroni_namespace parameter sets the key prefix Patroni uses within the
+  distributed configuration store, so a store shared by more than one zone can
+  give each zone its own prefix. Defaults to /db/, which matches the previous
+  hardcoded value. (EE-33)
 
 ### Fixed
 

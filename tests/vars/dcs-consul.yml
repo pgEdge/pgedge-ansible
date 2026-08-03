@@ -3,6 +3,12 @@
 # Points Patroni at the Consul container from tests/compose/dcs-consul.yml.
 # Pass with: ansible-playbook -e @tests/vars/dcs-consul.yml
 
+# One Consul serves both zones, so each zone needs its own namespace. Without
+# this, both zones claim /db/<pg_version>-<cluster_name> and whichever zone
+# bootstraps second aborts with "system ID mismatch".
+
+patroni_namespace: "/db/zone{{ zone }}/"
+
 patroni_dcs:
   type: consul
   parameters:

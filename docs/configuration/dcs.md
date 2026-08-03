@@ -129,6 +129,38 @@ neither `etcd` nor `etcd3`. An external store must therefore carry its own
 credentials in `parameters`, and any certificate files those credentials
 reference must already exist on each pgEdge node.
 
+### Sharing One Store Across Zones
+
+Patroni stores its cluster state under a key built from the namespace and the
+scope, and the collection derives both from values that are identical on every
+node. The collection deploys its own etcd cluster once per zone, so each zone
+writes to a separate store and the shared key never causes a conflict. An
+external store removes that separation whenever a single deployment serves
+more than one zone, and both zones then claim the same key.
+
+The symptom is that one zone deploys normally and the other fails, because the
+zone that reaches the store second reads a Postgres system identifier
+belonging to the first zone. Patroni refuses to join a cluster it does not
+recognize and stops with the following message:
+
+```text
+CRITICAL: system ID mismatch, node pgedge4 belongs to a different cluster
+```
+
+Which zone fails varies between deployments, because the outcome depends on
+which zone reaches the store first. Set `patroni_namespace` per zone to give
+each zone its own key prefix:
+
+```yaml
+patroni_namespace: "/db/zone{{ zone }}/"
+```
+
+The default is `/db/` for every zone, which preserves the behavior of earlier
+releases. A store that serves only one zone needs no change, and neither does
+a deployment that gives each zone its own store.
+
+### Example
+
 In the following example, the play that bootstraps the pgEdge nodes omits
 `install_etcd` and `setup_etcd` so that Patroni uses an external Consul
 cluster:
@@ -160,3 +192,11 @@ cluster:
 The remaining plays in the playbook are unchanged. For the full playbook
 structure, see the
 [Tutorial - Deploying an Ultra-HA Cluster](../ultra_ha.md) document.
+
+The Ultra-HA end-to-end test covers an external Consul cluster alongside the
+default etcd configuration. To run that variant locally, pass the store name
+as the third argument to the test script:
+
+```bash
+./tests/run-test.sh ultra-ha rocky9 consul
+```

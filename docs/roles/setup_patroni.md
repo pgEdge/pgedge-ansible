@@ -64,6 +64,7 @@ This role uses the following parameters from the inventory file:
 | `replication_password` | Password for the replication user. |
 | `patroni_tls_dir` | Directory for Patroni TLS certificate files. |
 | `patroni_dcs` | Distributed configuration store type and connection settings. |
+| `patroni_namespace` | Key prefix Patroni uses within the store. Set one per zone when a single store spans zones. |
 | `synchronous_mode` | Enable synchronous replication mode. |
 | `synchronous_mode_strict` | Require a synchronous replica for all commits. |
 | `tls_validity_days` | Number of days TLS certificates remain valid. |
