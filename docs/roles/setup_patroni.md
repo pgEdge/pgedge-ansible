@@ -1,4 +1,4 @@
-# setup_patroni
+⎈# setup_patroni
 
 The `setup_patroni` role configures and starts Patroni for high availability
 Postgres cluster management. The role generates the Patroni configuration file
@@ -29,7 +29,8 @@ This role requires the following roles for normal operation:
 ## When to Use
 
 Execute this role on all pgedge hosts in high availability configurations
-after setting up etcd and Postgres.
+after setting up etcd and Postgres, when using the collection to manage
+etcd directly.
 
 In the following example, the playbook invokes the role after etcd and
 Postgres setup:

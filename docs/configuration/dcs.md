@@ -13,7 +13,8 @@ this collection does not manage.
 - Default: `type: etcd3` with no `parameters` key
 - Description: This parameter selects the distributed configuration store
   that Patroni uses and supplies the connection settings for the store. The
-  dictionary accepts a `type` key and an optional `parameters` key.
+  dictionary accepts a `type` key and a `parameters` key. The `parameters` key
+  is optional only when `type` is `etcd` or `etcd3`.
 
 The `type` key names the store, and the collection writes the value directly
 as the DCS section name in the Patroni configuration file. The `init_server`
@@ -59,6 +60,18 @@ store requires. Ansible replaces the whole `patroni_dcs` dictionary when the
 inventory overrides the parameter, so an inventory that sets `parameters` must
 also set `type`.
 
+Every other `type` requires `parameters`, because the collection has no way to
+guess the address or credentials of a store it does not deploy. The
+`init_server` role asserts this on HA clusters and stops the play with the
+following message when the key is missing or empty:
+
+```text
+patroni_dcs.parameters is required when patroni_dcs.type is 'consul'
+```
+
+The check runs before any bootstrapping, so a missing key fails immediately
+rather than part way through configuring Patroni.
+
 In the following example, the inventory keeps the default store and connects
 Patroni to the etcd cluster the collection builds:
 
@@ -93,7 +106,7 @@ patroni_dcs:
   type: consul
   parameters:
     host: consul.example.com:8500
-    token: 6370a0a0-de0f-4c0a-b1a0-3d5b1c19ba28
+    token: 00000000-0000-0000-0000-000000000000
     register_service: true
 ```
 
@@ -127,7 +140,9 @@ The `setup_patroni` role generates a Patroni client certificate signed by the
 etcd certificate authority, and the role skips that step when `type` is
 neither `etcd` nor `etcd3`. An external store must therefore carry its own
 credentials in `parameters`, and any certificate files those credentials
-reference must already exist on each pgEdge node.
+reference must already exist on each pgEdge node. This is why `parameters` is
+mandatory for an unmanaged store: it is the only place the store's address and
+credentials can come from.
 
 ### Sharing One Store Across Zones
 

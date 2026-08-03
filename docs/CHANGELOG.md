@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distributed configuration store, so a store shared by more than one zone can
   give each zone its own prefix. Defaults to /db/, which matches the previous
   hardcoded value. (EE-33)
+- init_server now asserts that patroni_dcs.parameters is present when
+  patroni_dcs.type names a store the collection does not deploy, so a missing
+  key fails before bootstrapping rather than while Patroni is configured.
+  (EE-33)
 
 ### Fixed
 

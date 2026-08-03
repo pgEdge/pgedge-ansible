@@ -77,3 +77,26 @@
     fail_msg: "DCS type must be one of: etcd, etcd3, consul, zookeeper, exhibitor, kubernetes"
   when:
   - is_ha_cluster
+
+# The collection only knows how to reach the etcd cluster it builds itself, so
+# it can substitute connection defaults for the etcd types alone. Every other
+# store is unmanaged and the inventory is the only source of its address and
+# credentials. Catch that here rather than in setup_patroni, where the missing
+# key surfaces as an undefined-attribute error after the whole cluster has
+# already been provisioned.
+
+- name: Check DCS parameters are supplied for unmanaged stores
+  run_once: true
+  assert:
+    that:
+    - patroni_dcs.parameters | default({}, true) | length > 0
+    fail_msg: >-
+      patroni_dcs.parameters is required when patroni_dcs.type is
+      '{{ patroni_dcs.type | default('') }}'. The collection substitutes
+      connection defaults only for the etcd and etcd3 types, because those
+      describe the etcd cluster it deploys. Supply the settings this store
+      needs, such as the host and any credentials, and see the DCS
+      Configuration document for the settings each store accepts.
+  when:
+  - is_ha_cluster
+  - patroni_dcs.type | default('etcd3') not in ('etcd', 'etcd3')
