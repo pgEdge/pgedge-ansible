@@ -95,6 +95,7 @@
   run_once: true
   assert:
     that:
+    - (patroni_dcs.parameters | default({}, true)) is mapping
     - patroni_dcs.parameters | default({}, true) | length > 0
     fail_msg: >-
       patroni_dcs.parameters is required when patroni_dcs.type is
