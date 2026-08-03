@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - new patroni_dcs parameter selects the distributed configuration store
   Patroni uses and passes arbitrary connection settings to it, allowing an
-  externally managed store such as Consul or ZooKeeper. (EE-33)
+  externally managed store such as Consul or ZooKeeper. Accepted types are
+  etcd3, etcd, consul, zookeeper, and exhibitor. Patroni's kubernetes type is
+  not accepted, because it discovers the API server from a pod environment or a
+  kubeconfig rather than from a configured endpoint, and this collection
+  installs Patroni on ordinary hosts. (EE-33)
 - install_patroni now installs the Patroni client library that matches the
   configured patroni_dcs type. (EE-33)
 - Ultra-HA end-to-end test now covers an externally managed Consul store in

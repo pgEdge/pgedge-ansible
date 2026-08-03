@@ -65,16 +65,22 @@
     fail_msg: "A host cannot be in both the 'pgedge' and 'backup' groups."
   run_once: true
 
-# Ensure that only "supported" DCS types are used. These are pulled directly
-# from Patroni documentation:
+# Ensure that only "supported" DCS types are used. These are pulled from the
+# Patroni documentation:
 #  - https://patroni.readthedocs.io/en/latest/yaml_configuration.html
+#
+# Patroni's kubernetes type is deliberately excluded. It takes no endpoint
+# setting: Patroni discovers the API server from the environment variables and
+# service account files injected into a pod, and otherwise falls back to a
+# kubeconfig file. This collection installs Patroni under systemd on ordinary
+# hosts, where neither source exists, so the type cannot work here.
 
 - name: Check DCS type for HA clusters
   run_once: true
   assert:
     that:
-    - patroni_dcs.type | default('') in ('etcd', 'etcd3', 'consul', 'zookeeper', 'exhibitor', 'kubernetes')
-    fail_msg: "DCS type must be one of: etcd, etcd3, consul, zookeeper, exhibitor, kubernetes"
+    - patroni_dcs.type | default('') in ('etcd', 'etcd3', 'consul', 'zookeeper', 'exhibitor')
+    fail_msg: "DCS type must be one of: etcd, etcd3, consul, zookeeper, exhibitor"
   when:
   - is_ha_cluster
 

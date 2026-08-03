@@ -28,7 +28,13 @@ not recognized. The following table describes the accepted values:
 | consul | A Consul cluster provided and managed outside the collection. |
 | zookeeper | An Apache ZooKeeper ensemble provided and managed outside the collection. |
 | exhibitor | A ZooKeeper ensemble fronted by Netflix Exhibitor. |
-| kubernetes | The Kubernetes API server, used in place of a separate store. |
+
+Patroni also supports a `kubernetes` type, which this collection rejects.
+Patroni does not accept an endpoint for that type. It discovers the API server
+from the environment variables and service account files that Kubernetes
+injects into a pod, and falls back to a kubeconfig file when those are absent.
+This collection installs Patroni as a systemd service on ordinary hosts, where
+neither source is present, so the type cannot reach an API server.
 
 The `parameters` key holds the settings Patroni needs to reach the store. The
 collection passes these settings through to the configuration file without
@@ -123,7 +129,6 @@ table describes the library each store requires:
 | etcd3, etcd | The etcd client, installed by default. |
 | consul | The Consul client. |
 | zookeeper, exhibitor | The Kazoo ZooKeeper client. |
-| kubernetes | None; Patroni uses the Kubernetes API directly. |
 
 Patroni fails at startup with a missing module error when the library for the
 configured store is absent, so confirm the repositories the nodes use provide

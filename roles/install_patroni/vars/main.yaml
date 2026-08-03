@@ -6,9 +6,9 @@
 # RHEL uses pgEdge subpackages. Debian draws the clients from the main Debian
 # repository, so no pgEdge subpackage exists there.
 #
-# Kubernetes needs no extra package; Patroni talks to the API server directly.
 # Exhibitor is Kazoo pointed at an Exhibitor-managed ensemble, so it takes the
-# same client as ZooKeeper.
+# same client as ZooKeeper. Patroni's kubernetes type has no entry here because
+# init_server rejects it; see the comment in that role's validate.yaml.
 #
 # On Debian, Consul uses python3-consul (the python-consul project) even though
 # Patroni declares py-consul as of October 2024. The commit that made that
@@ -30,7 +30,6 @@ patroni_dcs_packages:
     - pgedge-patroni-zookeeper
     exhibitor:
     - pgedge-patroni-zookeeper
-    kubernetes: []
   Debian:
     etcd: []
     etcd3: []
@@ -40,4 +39,3 @@ patroni_dcs_packages:
     - python3-kazoo
     exhibitor:
     - python3-kazoo
-    kubernetes: []
