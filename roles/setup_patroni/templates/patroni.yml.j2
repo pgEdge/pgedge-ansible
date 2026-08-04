@@ -2,9 +2,9 @@
       ansible_default_ipv4.netmask) |
       ansible.utils.ipaddr('host/prefix') %}
 {%- set db_list = (db_names + ['postgres']) | join(',') %}
-{%- set dcs_params = patroni_dcs.parameters | default(default_patroni_dcs_params, true)
-      if patroni_dcs.type in ('etcd3', 'etcd')
-      else patroni_dcs.parameters %}
+{%- set dcs_params = patroni_dcs.parameters if patroni_dcs.type not in ('etcd3', 'etcd')
+      else patroni_dcs.parameters if (patroni_dcs.parameters is defined and patroni_dcs.parameters is mapping)
+      else default_patroni_dcs_params %}
 scope: "{{ patroni_scope }}"
 namespace: {{ patroni_namespace }}
 name: {{ ansible_hostname }}
