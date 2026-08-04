@@ -60,6 +60,22 @@ backup_repo_path: "/home/{{ ansible_user_id }}"
 
 patroni_tls_dir: "/etc/patroni/tls"
 
+# Patroni cluster name within the DCS. This is the second half of every key
+# Patroni writes, and the collection derives it from values that are identical
+# on every node. A store shared by more than one zone needs a distinct scope
+# per zone so the zones do not claim the same keys.
+
+patroni_scope: "{{ pg_version }}-{{ cluster_name }}"
+
+# Key prefix Patroni uses within the DCS, forming the first half of every key.
+# The collection-managed etcd cluster is deployed per zone, so every zone can
+# safely share this default. A store that spans zones needs each zone to write
+# to a distinct key, which patroni_scope usually provides; change this instead
+# when the prefix itself must differ, such as when the store grants access per
+# prefix.
+
+patroni_namespace: /db/
+
 patroni_dcs:
   type: etcd3
   # parameters: intentionally omitted to trigger default substitution

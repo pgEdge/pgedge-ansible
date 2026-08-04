@@ -168,16 +168,31 @@ CRITICAL: system ID mismatch, node pgedge4 belongs to a different cluster
 ```
 
 Which zone fails varies between deployments, because the outcome depends on
-which zone reaches the store first. Set `patroni_namespace` per zone to give
-each zone its own key prefix:
+which zone reaches the store first. Set `patroni_scope` per zone to give each
+zone its own cluster name within the store:
+
+```yaml
+patroni_scope: "{{ pg_version }}-{{ cluster_name }}-zone{{ zone }}"
+```
+
+The default is `{{ pg_version }}-{{ cluster_name }}`, which preserves the
+behavior of earlier releases. A store that serves only one zone needs no
+change, and neither does a deployment that gives each zone its own store.
+
+The scope is the better half of the key to vary, because the namespace is
+often load-bearing: a store may grant access, apply quotas, or run backups per
+key prefix, and moving a zone to a different prefix moves it outside those
+rules. Set `patroni_namespace` per zone instead when the prefix is what has to
+differ:
 
 ```yaml
 patroni_namespace: "/db/zone{{ zone }}/"
 ```
 
-The default is `/db/` for every zone, which preserves the behavior of earlier
-releases. A store that serves only one zone needs no change, and neither does
-a deployment that gives each zone its own store.
+Changing either one is enough on its own. Note that the scope also names the
+cluster in `patronictl` output, so a per-zone scope is the value passed to
+`patronictl list`, `patronictl restart`, and similar commands on that zone's
+nodes.
 
 ### Example
 

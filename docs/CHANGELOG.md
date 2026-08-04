@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distributed configuration store, so a store shared by more than one zone can
   give each zone its own prefix. Defaults to /db/, which matches the previous
   hardcoded value. (EE-33)
+- new patroni_scope parameter sets the cluster name Patroni uses within the
+  distributed configuration store, so a store shared by more than one zone can
+  give each zone its own scope instead of its own namespace prefix, which some
+  stores make load-bearing. Defaults to <pg_version>-<cluster_name>, which
+  matches the previous hardcoded value, and the patronictl invocations in
+  setup_patroni and setup_backrest now name the cluster with it. (EE-33)
 - init_server now asserts that patroni_dcs.parameters is present when
   patroni_dcs.type names a store the collection does not deploy, so a missing
   key fails before bootstrapping rather than while Patroni is configured.
@@ -32,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - patroni_config_file and patroni_tls_dir now recognized by all roles.
+- HA failover example in the usage guide now passes the Patroni scope the
+  collection actually configures, which has included the Postgres version
+  since v1.0.0.
 - Patroni replication user now connects to all databases for logical slot creation.
 - backup_repo_cipher default now properly deterministic.
 - manually install Postgres contrib on RHEL systems where it may be missing.

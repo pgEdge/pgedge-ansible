@@ -2,11 +2,3 @@
 
 synchronous_mode: false
 synchronous_mode_strict: false
-
-# Key prefix Patroni uses within the DCS. The collection-managed etcd cluster
-# is deployed per zone, so every zone can safely share this default. A store
-# that spans zones needs a distinct namespace per zone, because the Patroni
-# scope is the same in each one and two zones would otherwise claim the same
-# keys.
-
-patroni_namespace: /db/

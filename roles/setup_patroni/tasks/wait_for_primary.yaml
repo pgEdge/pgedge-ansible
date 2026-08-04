@@ -2,7 +2,7 @@
 
 - name: Wait until Patroni cluster is established
   shell: |-
-    {{ ctl }} list {{ pg_version }}-{{ cluster_name }} -f json \
+    {{ ctl }} list {{ patroni_scope }} -f json \
         | jq -r '.[] | select(.Host == "{{ first_node_in_zone }}") | .State'
   vars:
     ctl: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"

@@ -85,7 +85,8 @@ parameters apply only when `is_ha_cluster` is `true`:
 |-----------|---------|-------------|
 | is_ha_cluster | false | When true, the collection installs and configures etcd, Patroni, and HAProxy on the appropriate nodes. |
 | patroni_dcs | type: etcd3 | Distributed configuration store Patroni uses for cluster state, given as a dictionary with a type key and a parameters key. Accepted types are etcd3, etcd, consul, zookeeper, and exhibitor. Etcd3 is the only DCS option managed by this collection. The parameters key is optional only for the etcd types, where the collection substitutes defaults for the cluster it deploys, and is required for every other type. |
-| patroni_namespace | /db/ | Key prefix Patroni uses within the store. Give each zone its own prefix when one store serves more than one zone, because the rest of the key is identical on every node. |
+| patroni_namespace | /db/ | Key prefix Patroni uses within the store. Change this per zone only when the prefix itself must differ, such as when the store grants access per prefix; otherwise vary patroni_scope. |
+| patroni_scope | {{ pg_version }}-{{ cluster_name }} | Cluster name Patroni uses within the store, and the name patronictl reports. Give each zone its own scope when one store serves more than one zone, because the rest of the key is identical on every node. |
 | replication_user | replicator | Username for Patroni streaming replication. |
 | replication_password | secret | Password for replication_user. |
 | synchronous_mode | false | When true, Patroni manages the synchronous_commit and synchronous_standby_names PostgreSQL parameters based on cluster state. |
