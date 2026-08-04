@@ -24,22 +24,9 @@
     mode: "0750"
   become: true
 
-# Read the SCRAM verifiers straight from pg_shadow (requires superuser, so run
-# as the postgres peer user). pgBouncer uses these to authenticate clients and
-# to log in to the local Postgres (SCRAM pass-through), so no plaintext
-# passwords are stored.
-- name: Collect SCRAM secrets for the pgBouncer users
-  community.postgresql.postgresql_query:
-    login_unix_socket: /var/run/postgresql
-    login_port: "{{ pg_port }}"
-    login_db: postgres
-    query: "SELECT usename, passwd FROM pg_shadow WHERE usename = ANY(%s) AND passwd IS NOT NULL"
-    positional_args:
-    - "{{ pgbouncer_users }}"
-  become: true
-  become_user: postgres
-  register: pgbouncer_shadow
-
+# Write the userlist with plain passwords so pgBouncer can both verify clients
+# and authenticate to the backend Postgres. auth_type = scram-sha-256 keeps
+# SCRAM on the wire; pgBouncer derives the verifier from the plain password.
 - name: Write pgBouncer userlist
   copy:
     dest: /etc/pgbouncer/userlist.txt
@@ -47,8 +34,8 @@
     group: pgbouncer
     mode: "0640"
     content: |
-      {% for row in pgbouncer_shadow.query_result %}
-      "{{ row.usename }}" "{{ row.passwd }}"
+      {% for u in pgbouncer_userlist %}
+      "{{ u.user }}" "{{ u.password }}"
       {% endfor %}
   become: true
   notify: restart pgbouncer

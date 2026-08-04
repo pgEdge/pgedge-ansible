@@ -38,10 +38,15 @@ pgbouncer_pool_mode: session
 pgbouncer_max_client_conn: 1000
 pgbouncer_default_pool_size: 25
 pgbouncer_max_prepared_statements: 0
-# Postgres roles whose SCRAM secrets are copied into pgBouncer's userlist.
-pgbouncer_users:
-- "{{ db_user }}"
-- "{{ pgedge_user }}"
+# Postgres roles (and their passwords) written to pgBouncer's userlist. Plain
+# passwords are required so pgBouncer can authenticate to the backend Postgres
+# (a SCRAM verifier alone cannot); auth_type = scram-sha-256 still keeps SCRAM
+# on the wire for both the client and server connections.
+pgbouncer_userlist:
+- user: "{{ db_user }}"
+  password: "{{ db_password }}"
+- user: "{{ pgedge_user }}"
+  password: "{{ pgedge_password }}"
 
 is_ha_cluster: false
 exception_behaviour: "transdiscard"
