@@ -1,0 +1,7 @@
+---
+
+- name: restart pgbouncer
+  service:
+    name: pgbouncer
+    state: restarted
+  become: true

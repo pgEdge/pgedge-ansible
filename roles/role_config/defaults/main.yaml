@@ -21,6 +21,25 @@ replication_password: secret
 
 custom_hba_rules: []
 
+# pgBouncer connection pooler (runs on each pgEdge node in front of the local
+# Postgres; HAProxy forwards to it when pgbouncer_enabled is true).
+pgbouncer_enabled: true
+pgbouncer_package: pgbouncer
+pgbouncer_port: 6432
+pgbouncer_listen_addr: "*"
+# session = transparent (safe with apps that use prepared statements, e.g.
+# Mattermost); switch to "transaction" for real connection pooling, but then
+# either use pgBouncer >= 1.21 with pgbouncer_max_prepared_statements > 0 or
+# add "default_query_exec_mode=simple_protocol" to the client's connection.
+pgbouncer_pool_mode: session
+pgbouncer_max_client_conn: 1000
+pgbouncer_default_pool_size: 25
+pgbouncer_max_prepared_statements: 0
+# Postgres roles whose SCRAM secrets are copied into pgBouncer's userlist.
+pgbouncer_users:
+- "{{ db_user }}"
+- "{{ pgedge_user }}"
+
 is_ha_cluster: false
 exception_behaviour: "transdiscard"
 
