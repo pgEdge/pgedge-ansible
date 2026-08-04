@@ -24,7 +24,10 @@ custom_hba_rules: []
 # pgBouncer connection pooler (runs on each pgEdge node in front of the local
 # Postgres; HAProxy forwards to it when pgbouncer_enabled is true).
 pgbouncer_enabled: true
-pgbouncer_package: pgbouncer
+# pgEdge's pgBouncer (v1.24) from the pgEdge repo; standard EL layout
+# (/etc/pgbouncer, service "pgbouncer", user "pgbouncer"). >=1.21 so it
+# supports max_prepared_statements for transaction pooling.
+pgbouncer_package: pgedge-pgbouncer
 pgbouncer_port: 6432
 pgbouncer_listen_addr: "*"
 # session = transparent (safe with apps that use prepared statements, e.g.
