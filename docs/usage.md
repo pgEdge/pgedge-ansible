@@ -107,8 +107,13 @@ HAProxy redirects connections to the new primary:
 
 ```bash
 sudo -u postgres patronictl \
-  -c /etc/patroni/patroni.yml failover demo
+  -c /etc/patroni/patroni.yml failover 17-demo
 ```
+
+The final argument is the Patroni scope, which `patroni_scope` sets and which
+defaults to the Postgres version and the cluster name joined by a hyphen. Run
+`patronictl list` first when the deployment overrides `patroni_scope`, because
+that command reports the name to pass here.
 
 After the failover, connections through HAProxy continue automatically
 without application changes.

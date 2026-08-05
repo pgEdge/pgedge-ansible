@@ -1,6 +1,7 @@
 ---
 
 - include_tasks: tls.yaml
+  when: patroni_dcs.type in ('etcd', 'etcd3')
 
 - name: Create configuration file for Patroni node
   template:
@@ -60,7 +61,7 @@
     - -r
     - any
     - --force
-    - "{{ pg_version }}-{{ cluster_name }}"
+    - "{{ patroni_scope }}"
     - "{{ ansible_hostname }}"
   become: true
   become_user: postgres

@@ -68,6 +68,7 @@ nav:
       - Spock Configuration: configuration/spock.md
       - System Configuration: configuration/system.md
       - Backup Configuration: configuration/backup.md
+      - DCS Configuration: configuration/dcs.md
       - etcd Configuration: configuration/etcd.md
   - Role Reference:
       - Role Overview: roles.md

@@ -5,16 +5,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
-  echo "Usage: $0 <scenario> <os> [--keep]"
+  echo "Usage: $0 <scenario> <os> [dcs] [--keep]"
   echo "  scenario: simple-cluster | ultra-ha"
   echo "  os:       debian12 | rocky9"
+  echo "  dcs:      etcd3 (default) | consul"
   echo "  --keep:   don't tear down containers after test"
   exit 1
 }
 
 SCENARIO="${1:-}"
 OS="${2:-}"
+DCS="etcd3"
 KEEP=false
+
+if [ -n "${3:-}" ] && [ "$3" != "--keep" ]; then
+  DCS="$3"
+fi
 
 for arg in "$@"; do
   if [ "$arg" = "--keep" ]; then
@@ -47,12 +53,34 @@ if [ ! -f "$PLAYBOOK" ]; then
   exit 1
 fi
 
+COMPOSE_ARGS=(-f "$COMPOSE_FILE")
+EXTRA_VARS=()
+
+if [ "$DCS" != "etcd3" ]; then
+  DCS_COMPOSE="$SCRIPT_DIR/compose/dcs-${DCS}.yml"
+  DCS_VARS="$SCRIPT_DIR/vars/dcs-${DCS}.yml"
+
+  if [ ! -f "$DCS_COMPOSE" ]; then
+    echo "ERROR: DCS compose overlay not found: $DCS_COMPOSE"
+    exit 1
+  fi
+
+  if [ ! -f "$DCS_VARS" ]; then
+    echo "ERROR: DCS variable file not found: $DCS_VARS"
+    exit 1
+  fi
+
+  COMPOSE_ARGS+=(-f "$DCS_COMPOSE")
+  EXTRA_VARS+=(-e "@$DCS_VARS")
+  PROJECT_NAME="${PROJECT_NAME}-${DCS}"
+fi
+
 cleanup() {
   if [ "$KEEP" = false ]; then
     echo "==> Tearing down containers..."
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+    docker compose -p "$PROJECT_NAME" "${COMPOSE_ARGS[@]}" down -v --remove-orphans 2>/dev/null || true
   else
-    echo "==> Keeping containers running (use 'docker compose -p $PROJECT_NAME -f $COMPOSE_FILE down -v' to clean up)"
+    echo "==> Keeping containers running (use 'docker compose -p $PROJECT_NAME ${COMPOSE_ARGS[*]} down -v' to clean up)"
   fi
 }
 
@@ -71,11 +99,11 @@ cp "$SCRIPT_DIR/.ssh/id_ed25519.pub" "$SCRIPT_DIR/docker/authorized_keys"
 
 # Step 2: Build containers
 echo "==> Step 2: Building Docker images..."
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" build
+docker compose -p "$PROJECT_NAME" "${COMPOSE_ARGS[@]}" build
 
 # Step 3: Start containers
 echo "==> Step 3: Starting containers..."
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d
+docker compose -p "$PROJECT_NAME" "${COMPOSE_ARGS[@]}" up -d
 
 # Step 4: Wait for SSH
 echo "==> Step 4: Waiting for SSH on all containers..."
@@ -101,6 +129,22 @@ for host in $HOSTS; do
   echo "    SSH ready on $host"
 done
 
+# Step 4b: Wait for the external DCS to elect a leader
+if [ "$DCS" = "consul" ]; then
+  echo "==> Step 4b: Waiting for Consul to elect a leader..."
+  ELAPSED=0
+  until [ -n "$(curl -sf http://192.168.6.20:8500/v1/status/leader |
+                tr -d '"')" ]; do
+    ELAPSED=$((ELAPSED + 2))
+    if [ $ELAPSED -ge 60 ]; then
+      echo "ERROR: Consul did not elect a leader within 60s"
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "    Consul leader elected"
+fi
+
 # Step 5: Build and install Ansible collection
 echo "==> Step 5: Building and installing Ansible collection..."
 cd "$PROJECT_DIR"
@@ -117,6 +161,7 @@ ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
   "$PLAYBOOK" \
   -i "$INVENTORY" \
   --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+  "${EXTRA_VARS[@]}" \
   -v
 
 # Step 8: Run verification
@@ -126,6 +171,7 @@ if [ -f "$VERIFY_PLAYBOOK" ]; then
     "$VERIFY_PLAYBOOK" \
     -i "$INVENTORY" \
     --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
     -v
 else
   echo "==> Step 8: No verification playbook found, skipping"

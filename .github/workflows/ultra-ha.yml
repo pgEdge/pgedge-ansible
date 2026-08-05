@@ -20,15 +20,30 @@ on:
         options:
           - release
           - staging
+      dcs:
+        description: Distributed configuration store
+        type: choice
+        required: true
+        default: etcd3
+        options:
+          - all
+          - etcd3
+          - consul
 
 jobs:
   test:
-    name: Ultra-HA - ${{ matrix.os }}
+    name: Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         os: ${{ inputs.os == 'all' && fromJSON('["debian12","rocky9"]') || fromJSON(format('["{0}"]', inputs.os)) }}
+        dcs: ${{ inputs.dcs == 'all' && fromJSON('["etcd3","consul"]') || fromJSON(format('["{0}"]', inputs.dcs)) }}
+    env:
+      COMPOSE_ARGS: >-
+        -f tests/compose/ultra-ha-${{ matrix.os }}.yml
+        ${{ matrix.dcs != 'etcd3' && format('-f tests/compose/dcs-{0}.yml', matrix.dcs) || '' }}
+      DCS_VARS: ${{ matrix.dcs != 'etcd3' && format('-e @tests/vars/dcs-{0}.yml', matrix.dcs) || '' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -59,9 +74,9 @@ jobs:
 
       - name: Start containers
         run: |
-          docker compose -p e2e -f tests/compose/ultra-ha-${{ matrix.os }}.yml up -d --build
+          docker compose -p e2e $COMPOSE_ARGS up -d --build
           sleep 5
-          docker compose -p e2e -f tests/compose/ultra-ha-${{ matrix.os }}.yml ps
+          docker compose -p e2e $COMPOSE_ARGS ps
 
       - name: Wait for SSH
         run: |
@@ -82,25 +97,42 @@ jobs:
             fi
           done
 
+      - name: Wait for external DCS
+        if: matrix.dcs == 'consul'
+        run: |
+          for i in $(seq 1 30); do
+            leader=$(curl -sf http://192.168.6.20:8500/v1/status/leader |
+                     tr -d '"' || true)
+            if [ -n "$leader" ]; then
+              echo "Consul leader: $leader"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ERROR: Consul did not elect a leader" >&2
+          exit 1
+
       - name: Run playbook
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/ultra-ha.yml \
             -i tests/inventories/ultra-ha.yml \
             --private-key tests/.ssh/id_ed25519 \
-            -e repo_environment=${{ inputs.environment }}
+            -e repo_environment=${{ inputs.environment }} \
+            $DCS_VARS
 
       - name: Verify cluster
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-ultra-ha.yml \
             -i tests/inventories/ultra-ha.yml \
-            --private-key tests/.ssh/id_ed25519
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
 
       - name: Show container logs on failure
         if: failure()
-        run: docker compose -p e2e -f tests/compose/ultra-ha-${{ matrix.os }}.yml logs
+        run: docker compose -p e2e $COMPOSE_ARGS logs
 
       - name: Teardown
         if: always()
-        run: docker compose -p e2e -f tests/compose/ultra-ha-${{ matrix.os }}.yml down -v --remove-orphans
+        run: docker compose -p e2e $COMPOSE_ARGS down -v --remove-orphans

@@ -1,0 +1,20 @@
+# Overlay adding an external Consul cluster to the Ultra-HA test network.
+# Layer it onto a base compose file; it does not stand alone:
+#
+#   docker compose -f tests/compose/ultra-ha-rocky9.yml \
+#                  -f tests/compose/dcs-consul.yml up -d
+#
+# Consul is intentionally NOT an Ansible inventory host. It stands in for a
+# store the collection does not manage.
+
+services:
+  consul:
+    image: hashicorp/consul:1.20
+    hostname: consul
+    command: >-
+      agent -server -bootstrap-expect=1 -ui
+      -client=0.0.0.0 -bind=192.168.6.20
+      -data-dir=/consul/data
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.20

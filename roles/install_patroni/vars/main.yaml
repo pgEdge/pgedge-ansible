@@ -1,1 +1,41 @@
 ---
+
+# Patroni needs a Python client library for whichever DCS it talks to. Map
+# each supported patroni_dcs.type to the packages that supply the client.
+#
+# RHEL uses pgEdge subpackages. Debian draws the clients from the main Debian
+# repository, so no pgEdge subpackage exists there.
+#
+# Exhibitor is Kazoo pointed at an Exhibitor-managed ensemble, so it takes the
+# same client as ZooKeeper. Patroni's kubernetes type has no entry here because
+# init_server rejects it; see the comment in that role's validate.yaml.
+#
+# On Debian, Consul uses python3-consul (the python-consul project) even though
+# Patroni declares py-consul as of October 2024. The commit that made that
+# switch retains backward compatibility with python-consul, and Debian does not
+# package py-consul. Do NOT "correct" this to python3-consul2: the retained
+# compatibility names python-consul specifically, and every project in this
+# lineage installs a module named "consul", so a wrong choice imports cleanly
+# and then fails inside Patroni rather than at install time.
+
+patroni_dcs_packages:
+  RedHat:
+    etcd:
+    - pgedge-patroni-etcd
+    etcd3:
+    - pgedge-patroni-etcd
+    consul:
+    - pgedge-patroni-consul
+    zookeeper:
+    - pgedge-patroni-zookeeper
+    exhibitor:
+    - pgedge-patroni-zookeeper
+  Debian:
+    etcd: []
+    etcd3: []
+    consul:
+    - python3-consul
+    zookeeper:
+    - python3-kazoo
+    exhibitor:
+    - python3-kazoo

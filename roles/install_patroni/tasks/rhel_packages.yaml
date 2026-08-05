@@ -2,9 +2,9 @@
 
 - name: Install Patroni and DCS Python dependencies
   package:
-    name:
-    - pgedge-patroni
-    - pgedge-patroni-etcd
+    name: >-
+      {{ ['pgedge-patroni'] +
+         patroni_dcs_packages[ansible_os_family][patroni_dcs.type] }}
     state: present
     lock_timeout: 300
   retries: 5

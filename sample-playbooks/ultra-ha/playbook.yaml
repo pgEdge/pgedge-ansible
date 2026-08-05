@@ -39,10 +39,12 @@
   - install_repos
   - install_pgedge
   - setup_postgres
-  - install_etcd
+  - role: install_etcd
+    when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
   - install_patroni
   - install_backrest
-  - setup_etcd
+  - role: setup_etcd
+    when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
   - setup_patroni
   - setup_backrest
 

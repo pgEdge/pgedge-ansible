@@ -7,9 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- new patroni_dcs parameter selects the distributed configuration store
+  Patroni uses and passes arbitrary connection settings to it, allowing an
+  externally managed store such as Consul or ZooKeeper. Accepted types are
+  etcd3, etcd, consul, zookeeper, and exhibitor. Patroni's kubernetes type is
+  not accepted, because it discovers the API server from a pod environment or a
+  kubeconfig rather than from a configured endpoint, and this collection
+  installs Patroni on ordinary hosts. (EE-33)
+- install_patroni now installs the Patroni client library that matches the
+  configured patroni_dcs type. (EE-33)
+- Ultra-HA end-to-end test now covers an externally managed Consul store in
+  addition to the default etcd cluster. (EE-33)
+- new patroni_namespace parameter sets the key prefix Patroni uses within the
+  distributed configuration store, so a store shared by more than one zone can
+  give each zone its own prefix. Defaults to /db/, which matches the previous
+  hardcoded value. (EE-33)
+- new patroni_scope parameter sets the cluster name Patroni uses within the
+  distributed configuration store, so a store shared by more than one zone can
+  give each zone its own scope instead of its own namespace prefix, which some
+  stores make load-bearing. Defaults to <pg_version>-<cluster_name>, which
+  matches the previous hardcoded value, and the patronictl invocations in
+  setup_patroni and setup_backrest now name the cluster with it. (EE-33)
+- init_server now asserts that patroni_dcs.parameters is present when
+  patroni_dcs.type names a store the collection does not deploy, so a missing
+  key fails before bootstrapping rather than while Patroni is configured.
+  (EE-33)
+
 ### Fixed
 
 - patroni_config_file and patroni_tls_dir now recognized by all roles.
+- HA failover example in the usage guide now passes the Patroni scope the
+  collection actually configures, which has included the Postgres version
+  since v1.0.0.
 - Patroni replication user now connects to all databases for logical slot creation.
 - backup_repo_cipher default now properly deterministic.
 - manually install Postgres contrib on RHEL systems where it may be missing.
