@@ -1,0 +1,10 @@
+#!/bin/bash
+# HAProxy agent-check: report pgBouncer liveness on this node.
+# Prints "up" if pgBouncer is accepting TCP connections, "down" otherwise.
+# HAProxy marks the pgBouncer backend down on "down" and uses the direct
+# Postgres backup instead. Managed by Ansible (pgbouncer role).
+if timeout 2 bash -c '</dev/tcp/127.0.0.1/{{ pgbouncer_port }}' 2>/dev/null; then
+    printf 'up\n'
+else
+    printf 'down\n'
+fi

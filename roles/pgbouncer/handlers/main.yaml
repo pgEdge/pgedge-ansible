@@ -1,7 +1,15 @@
 ---
 
 - name: restart pgbouncer
-  service:
+  systemd:
     name: pgbouncer
     state: restarted
+    daemon_reload: true
+  become: true
+
+- name: restart pgbouncer-agent
+  systemd:
+    name: pgbouncer-agent.socket
+    state: restarted
+    daemon_reload: true
   become: true

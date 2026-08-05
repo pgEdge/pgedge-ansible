@@ -56,3 +56,68 @@
     enabled: true
     state: started
   become: true
+
+# --- Resilience -----------------------------------------------------------
+# 1) Always restart pgBouncer, forever (StartLimitIntervalSec=0 disables the
+#    systemd rate-limit that would otherwise give up after a few crashes).
+- name: Ensure pgBouncer systemd drop-in directory exists
+  file:
+    path: /etc/systemd/system/pgbouncer.service.d
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Configure pgBouncer to always restart
+  copy:
+    dest: /etc/systemd/system/pgbouncer.service.d/override.conf
+    mode: "0644"
+    content: |
+      [Unit]
+      StartLimitIntervalSec=0
+
+      [Service]
+      Restart=always
+      RestartSec=2
+  become: true
+  notify: restart pgbouncer
+
+# 2) A per-connection HAProxy agent that reports pgBouncer liveness ("up" /
+#    "down"). HAProxy uses it to mark a node's pooler down and fall back to
+#    direct Postgres, independent of the Patroni leader health check.
+- name: Install the pgBouncer HAProxy agent-check script
+  template:
+    src: pgbouncer-agent-check.sh.j2
+    dest: /usr/local/bin/pgbouncer-agent-check.sh
+    mode: "0755"
+  become: true
+
+- name: Install the pgBouncer agent per-connection service
+  copy:
+    dest: /etc/systemd/system/pgbouncer-agent@.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=HAProxy agent-check for pgBouncer (per connection)
+
+      [Service]
+      ExecStart=/usr/local/bin/pgbouncer-agent-check.sh
+      StandardInput=socket
+      StandardOutput=socket
+  become: true
+  notify: restart pgbouncer-agent
+
+- name: Install the pgBouncer agent socket
+  template:
+    src: pgbouncer-agent.socket.j2
+    dest: /etc/systemd/system/pgbouncer-agent.socket
+    mode: "0644"
+  become: true
+  notify: restart pgbouncer-agent
+
+- name: Ensure the pgBouncer agent socket is enabled and running
+  systemd:
+    name: pgbouncer-agent.socket
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true

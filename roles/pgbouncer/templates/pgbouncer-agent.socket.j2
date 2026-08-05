@@ -1,0 +1,9 @@
+[Unit]
+Description=HAProxy agent-check socket for pgBouncer
+
+[Socket]
+ListenStream={{ pgbouncer_agent_port }}
+Accept=yes
+
+[Install]
+WantedBy=sockets.target

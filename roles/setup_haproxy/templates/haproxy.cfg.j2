@@ -26,7 +26,14 @@ listen pg-cluster
 {% for host in nodes_in_zone %}
 {%   set host_name = hostvars[host].inventory_hostname %}
 {%   set host_label = host_name | regex_replace('[\W-]', '_') %}
-    server {{ host_label }} {{ host_name }}:{{ pgbouncer_port if pgbouncer_enabled | default(false) | bool else pg_port }} check port 8008
+{% if pgbouncer_enabled | default(false) | bool %}
+    server {{ host_label }} {{ host_name }}:{{ pgbouncer_port }} check port 8008 agent-check agent-addr {{ host_name }} agent-port {{ pgbouncer_agent_port }}
+{% if pgbouncer_backup_direct | default(false) | bool %}
+    server {{ host_label }}_direct {{ host_name }}:{{ pg_port }} check port 8008 backup
+{% endif %}
+{% else %}
+    server {{ host_label }} {{ host_name }}:{{ pg_port }} check port 8008
+{% endif %}
 {% endfor %}
 
 {% for route in haproxy_extra_routes %}
@@ -42,6 +49,13 @@ listen pg-cluster-{{ route }}
 {% for host in nodes_in_zone %}
 {%   set host_name = hostvars[host].inventory_hostname %}
 {%   set host_label = host_name | regex_replace('[\W-]', '_') %}
-    server {{ host_label }} {{ host_name }}:{{ pgbouncer_port if pgbouncer_enabled | default(false) | bool else pg_port }} check port 8008
+{% if pgbouncer_enabled | default(false) | bool %}
+    server {{ host_label }} {{ host_name }}:{{ pgbouncer_port }} check port 8008 agent-check agent-addr {{ host_name }} agent-port {{ pgbouncer_agent_port }}
+{% if pgbouncer_backup_direct | default(false) | bool %}
+    server {{ host_label }}_direct {{ host_name }}:{{ pg_port }} check port 8008 backup
+{% endif %}
+{% else %}
+    server {{ host_label }} {{ host_name }}:{{ pg_port }} check port 8008
+{% endif %}
 {% endfor %}
 {% endfor %}

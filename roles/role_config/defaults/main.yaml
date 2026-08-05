@@ -38,6 +38,10 @@ pgbouncer_pool_mode: session
 pgbouncer_max_client_conn: 1000
 pgbouncer_default_pool_size: 25
 pgbouncer_max_prepared_statements: 0
+# Resilience: a tiny agent reports pgBouncer liveness to HAProxy on this port
+# so HAProxy can fail a node's pgBouncer over to direct Postgres (pg_port).
+pgbouncer_agent_port: 6433
+pgbouncer_backup_direct: true
 # Postgres roles (and their passwords) written to pgBouncer's userlist. Plain
 # passwords are required so pgBouncer can authenticate to the backend Postgres
 # (a SCRAM verifier alone cannot); auth_type = scram-sha-256 still keeps SCRAM
