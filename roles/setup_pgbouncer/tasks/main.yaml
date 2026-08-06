@@ -1,19 +1,9 @@
 ---
 
-# Install and configure pgBouncer on each pgEdge node. pgBouncer listens on
-# pgbouncer_port and forwards to the node's local Postgres on 127.0.0.1. The
-# local pg_hba.conf already permits "host all all 127.0.0.1/32 scram-sha-256",
-# so Patroni is not modified.
-
-- name: Install pgBouncer
-  package:
-    name: "{{ pgbouncer_package }}"
-    state: present
-  become: true
-  retries: 5
-  delay: 20
-  register: pgbouncer_pkg
-  until: pgbouncer_pkg is success
+# Configure and run pgBouncer on each pgEdge node (the package is installed by
+# install_pgbouncer). pgBouncer listens on pgbouncer_port and forwards to the
+# node's local Postgres on 127.0.0.1; the Patroni-managed pg_hba.conf already
+# permits "host all all 127.0.0.1/32 scram-sha-256", so Patroni is untouched.
 
 - name: Ensure pgBouncer configuration directory exists
   file:

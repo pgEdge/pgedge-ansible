@@ -1,0 +1,14 @@
+---
+
+# Install pgBouncer from the pgEdge repo. Configuration is handled separately
+# by the setup_pgbouncer role.
+
+- name: Ensure pgBouncer is installed
+  package:
+    name: "{{ pgbouncer_package }}"
+    state: present
+  become: true
+  retries: 5
+  delay: 20
+  register: pgbouncer_pkg
+  until: pgbouncer_pkg is success
