@@ -4,6 +4,15 @@ Description=HAProxy agent-check socket for pgBouncer
 [Socket]
 ListenStream={{ pgbouncer_agent_port }}
 Accept=yes
+# The agent is only consumed by the HAProxy proxy hosts; block everyone else.
+IPAddressDeny=any
+IPAddressAllow=localhost
+{% for host in groups['haproxy'] | default([]) %}
+{%   set ip = hostvars[host].ansible_default_ipv4.address | default('') %}
+{%   if ip %}
+IPAddressAllow={{ ip }}
+{%   endif %}
+{% endfor %}
 
 [Install]
 WantedBy=sockets.target

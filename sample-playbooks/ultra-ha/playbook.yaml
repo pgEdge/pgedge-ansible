@@ -43,11 +43,13 @@
     when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
   - install_patroni
   - install_backrest
-  - install_pgbouncer
+  - role: install_pgbouncer
+    when: pgbouncer_enabled | default(true) | bool
   - role: setup_etcd
     when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
   - setup_patroni
-  - setup_pgbouncer
+  - role: setup_pgbouncer
+    when: pgbouncer_enabled | default(true) | bool
   - setup_backrest
 
 # Install HAProxy on dedicated proxy nodes.

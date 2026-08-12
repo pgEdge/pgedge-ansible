@@ -15,9 +15,9 @@ auth_file = /etc/pgbouncer/userlist.txt
 pool_mode = {{ pgbouncer_pool_mode }}
 max_client_conn = {{ pgbouncer_max_client_conn }}
 default_pool_size = {{ pgbouncer_default_pool_size }}
-{% if pgbouncer_max_prepared_statements | int > 0 %}
+{# Render unconditionally: pgBouncer >= 1.24 defaults to 200 when omitted, so #}
+{# a value of 0 must be written explicitly to disable prepared statements.   #}
 max_prepared_statements = {{ pgbouncer_max_prepared_statements }}
-{% endif %}
 
 # Mattermost and other clients send extra_float_digits in the startup packet.
 ignore_startup_parameters = extra_float_digits

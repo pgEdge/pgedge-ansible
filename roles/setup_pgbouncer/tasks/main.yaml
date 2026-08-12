@@ -25,9 +25,10 @@
     mode: "0640"
     content: |
       {% for u in pgbouncer_userlist %}
-      "{{ u.user }}" "{{ u.password }}"
+      "{{ u.user | replace('"', '""') }}" "{{ u.password | replace('"', '""') }}"
       {% endfor %}
   become: true
+  no_log: true
   notify: restart pgbouncer
 
 - name: Write pgBouncer configuration
