@@ -1,9 +1,15 @@
 ---
 
-# Configure and run pgBouncer on each pgEdge node (the package is installed by
-# install_pgbouncer). pgBouncer listens on pgbouncer_port and forwards to the
-# node's local Postgres on 127.0.0.1; the Patroni-managed pg_hba.conf already
-# permits "host all all 127.0.0.1/32 scram-sha-256", so Patroni is untouched.
+# Configure and run pgBouncer on each pooled pgEdge node (the package is
+# installed by install_pgbouncer). pgBouncer listens on pgbouncer_port and
+# forwards to the node's local Postgres on 127.0.0.1; the Patroni-managed
+# pg_hba.conf already permits "host all all 127.0.0.1/32 scram-sha-256", so
+# Patroni is untouched.
+#
+# Pooled and direct connections are not interchangeable — they resolve against
+# different pg_hba rules — so nothing here fails a pooled client over to
+# Postgres. A dead pooler is an outage of the pooled endpoint by design, and
+# Restart=always below is the mitigation.
 
 - name: Ensure pgBouncer configuration directory exists
   file:
@@ -14,43 +20,10 @@
     mode: "0750"
   become: true
 
-# Write the userlist with plain passwords so pgBouncer can both verify clients
-# and authenticate to the backend Postgres. auth_type = scram-sha-256 keeps
-# SCRAM on the wire; pgBouncer derives the verifier from the plain password.
-- name: Write pgBouncer userlist
-  copy:
-    dest: /etc/pgbouncer/userlist.txt
-    owner: pgbouncer
-    group: pgbouncer
-    mode: "0640"
-    content: |
-      {% for u in pgbouncer_userlist %}
-      "{{ u.user | replace('"', '""') }}" "{{ u.password | replace('"', '""') }}"
-      {% endfor %}
-  become: true
-  no_log: true
-  notify: restart pgbouncer
+# Written before the service is ever started, so the first start already has
+# the restart policy in place. StartLimitIntervalSec=0 disables the systemd
+# rate-limit that would otherwise stop retrying after a few crashes.
 
-- name: Write pgBouncer configuration
-  template:
-    src: pgbouncer.ini.j2
-    dest: /etc/pgbouncer/pgbouncer.ini
-    owner: pgbouncer
-    group: pgbouncer
-    mode: "0640"
-  become: true
-  notify: restart pgbouncer
-
-- name: Ensure pgBouncer is enabled and running
-  service:
-    name: pgbouncer
-    enabled: true
-    state: started
-  become: true
-
-# --- Resilience -----------------------------------------------------------
-# 1) Always restart pgBouncer, forever (StartLimitIntervalSec=0 disables the
-#    systemd rate-limit that would otherwise give up after a few crashes).
 - name: Ensure pgBouncer systemd drop-in directory exists
   file:
     path: /etc/systemd/system/pgbouncer.service.d
@@ -69,46 +42,51 @@
       [Service]
       Restart=always
       RestartSec=2
-  become: true
-  notify: restart pgbouncer
-
-# 2) A per-connection HAProxy agent that reports pgBouncer liveness ("up" /
-#    "down"). HAProxy uses it to mark a node's pooler down and fall back to
-#    direct Postgres, independent of the Patroni leader health check.
-- name: Install the pgBouncer HAProxy agent-check script
-  template:
-    src: pgbouncer-agent-check.sh.j2
-    dest: /usr/local/bin/pgbouncer-agent-check.sh
-    mode: "0755"
+  register: dropin_status
   become: true
 
-- name: Install the pgBouncer agent per-connection service
+# Write the userlist with plain passwords so pgBouncer can both verify clients
+# and authenticate to the backend Postgres. auth_type = scram-sha-256 keeps
+# SCRAM on the wire; pgBouncer derives the verifier from the plain password.
+
+- name: Write pgBouncer userlist
   copy:
-    dest: /etc/systemd/system/pgbouncer-agent@.service
-    mode: "0644"
+    dest: /etc/pgbouncer/userlist.txt
+    owner: pgbouncer
+    group: pgbouncer
+    mode: "0640"
     content: |
-      [Unit]
-      Description=HAProxy agent-check for pgBouncer (per connection)
-
-      [Service]
-      ExecStart=/usr/local/bin/pgbouncer-agent-check.sh
-      StandardInput=socket
-      StandardOutput=socket
+      {% for u in pgbouncer_userlist %}
+      "{{ u.user | replace('"', '""') }}" "{{ u.password | replace('"', '""') }}"
+      {% endfor %}
+  register: userlist_status
   become: true
-  notify: restart pgbouncer-agent
+  no_log: true
 
-- name: Install the pgBouncer agent socket
+- name: Write pgBouncer configuration
   template:
-    src: pgbouncer-agent.socket.j2
-    dest: /etc/systemd/system/pgbouncer-agent.socket
-    mode: "0644"
+    src: pgbouncer.ini.j2
+    dest: /etc/pgbouncer/pgbouncer.ini
+    owner: pgbouncer
+    group: pgbouncer
+    mode: "0640"
+  register: config_status
   become: true
-  notify: restart pgbouncer-agent
 
-- name: Ensure the pgBouncer agent socket is enabled and running
+# Only restart pgBouncer on subsequent runs if something it reads changed.
+# Otherwise, just make sure it's up and running. This is deliberately not a
+# handler: with any_errors_fatal, a notified handler never fires when a later
+# role fails, which would leave the pooler running stale configuration while
+# Ansible reported the change as applied.
+
+- name: Ensure pgBouncer is enabled and running
   systemd:
-    name: pgbouncer-agent.socket
+    name: pgbouncer
     enabled: true
-    state: started
-    daemon_reload: true
+    daemon_reload: "{{ dropin_status.changed }}"
+    state: >-
+      {{ 'restarted'
+         if (dropin_status.changed or userlist_status.changed or
+             config_status.changed)
+         else 'started' }}
   become: true

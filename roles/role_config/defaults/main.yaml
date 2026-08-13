@@ -21,12 +21,12 @@ replication_password: secret
 
 custom_hba_rules: []
 
-# pgBouncer connection pooler (runs on each pgEdge node in front of the local
-# Postgres; HAProxy forwards to it when pgbouncer_enabled is true).
-pgbouncer_enabled: true
-# pgEdge's pgBouncer (v1.24) from the pgEdge repo; standard EL layout
-# (/etc/pgbouncer, service "pgbouncer", user "pgbouncer"). >=1.21 so it
-# supports max_prepared_statements for transaction pooling.
+# pgBouncer connection pooler. Pooling is opt-in by inventory group: a node
+# runs a pooler when it is a member of the 'pgbouncer' group, which must be a
+# subset of the 'pgedge' group. Nodes outside that group are untouched.
+#
+# pgEdge's pgBouncer from the pgEdge repo. >=1.21 so it supports
+# max_prepared_statements for transaction pooling.
 pgbouncer_package: pgedge-pgbouncer
 pgbouncer_port: 6432
 pgbouncer_listen_addr: "*"
@@ -38,10 +38,6 @@ pgbouncer_pool_mode: session
 pgbouncer_max_client_conn: 1000
 pgbouncer_default_pool_size: 25
 pgbouncer_max_prepared_statements: 0
-# Resilience: a tiny agent reports pgBouncer liveness to HAProxy on this port
-# so HAProxy can fail a node's pgBouncer over to direct Postgres (pg_port).
-pgbouncer_agent_port: 6433
-pgbouncer_backup_direct: true
 # Postgres roles (and their passwords) written to pgBouncer's userlist. Plain
 # passwords are required so pgBouncer can authenticate to the backend Postgres
 # (a SCRAM verifier alone cannot); auth_type = scram-sha-256 still keeps SCRAM
@@ -57,6 +53,14 @@ exception_behaviour: "transdiscard"
 
 proxy_port: 5432
 proxy_node: ''
+
+# The proxy-layer port for the pooled listener, mirroring how proxy_port fronts
+# pg_port: pooler_port fronts each pooled node's pgbouncer_port. It is a
+# separate setting because HAProxy may share a host with Postgres and pgBouncer
+# (see docs/configuration/proxy.md), and identical values collide there.
+# Nothing is emitted on this port unless the zone has a node in the 'pgbouncer'
+# group.
+pooler_port: 6432
 
 pg_port: 5432
 

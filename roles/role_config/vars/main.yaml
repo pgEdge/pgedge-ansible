@@ -18,6 +18,15 @@ backups_in_zone: >-
   selectattr('zone', 'eq', zone) |
   map(attribute='inventory_hostname') | list }}
 
+# Pooling is opt-in by group membership. init_server asserts the 'pgbouncer'
+# group is a subset of 'pgedge', so filtering it by zone is the intersection
+# with nodes_in_zone. A zone may pool some of its nodes and not others.
+pooled_nodes_in_zone: >-
+  {{ groups['pgbouncer'] | default([]) |
+  map('extract', hostvars) |
+  selectattr('zone', 'eq', zone) |
+  map(attribute='inventory_hostname') | list }}
+
 first_node_in_zone: "{{ nodes_in_zone | first }}"
 
 spock_exception_behaviour: >-

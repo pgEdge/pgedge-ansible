@@ -2,6 +2,9 @@
 #
 # Make sure all nodes are in the pgedge node group.
 #
+# Nodes that should also run a connection pooler go in the optional pgbouncer
+# group, which must be a subset of pgedge.
+#
 # CHECK the README for how these roles work
 ---
 
@@ -14,5 +17,9 @@
   - init_server
   - install_repos
   - install_pgedge
+  - role: install_pgbouncer
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
   - setup_postgres
+  - role: setup_pgbouncer
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
   - setup_pgedge

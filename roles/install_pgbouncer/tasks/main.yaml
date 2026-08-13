@@ -7,8 +7,10 @@
   package:
     name: "{{ pgbouncer_package }}"
     state: present
-  become: true
+    lock_timeout: 300
+    update_cache: true
   retries: 5
   delay: 20
-  register: pgbouncer_pkg
-  until: pgbouncer_pkg is success
+  register: result
+  until: result is success
+  become: true

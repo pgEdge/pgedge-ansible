@@ -65,6 +65,43 @@
     fail_msg: "A host cannot be in both the 'pgedge' and 'backup' groups."
   run_once: true
 
+# Pooling is opt-in by membership in the 'pgbouncer' group. A pooler forwards
+# to the Postgres instance on its own host, so a pooled host with no Postgres
+# has nothing to forward to.
+
+- name: Ensure every host in the pgbouncer group is also a pgEdge node
+  assert:
+    that:
+    - groups.pgbouncer | default([]) | difference(groups.pgedge | default([])) | length == 0
+    fail_msg: >-
+      The 'pgbouncer' group must be a subset of the 'pgedge' group. pgBouncer
+      runs on a pgEdge node, in front of that node's own Postgres. Offending
+      hosts:
+      {{ groups.pgbouncer | default([]) | difference(groups.pgedge | default([])) | join(', ') }}
+  run_once: true
+
+# proxy_port and pooler_port are proxy-layer ports, so they only collide with
+# the node-level ports when HAProxy shares a host with Postgres — a topology
+# docs/configuration/proxy.md explicitly supports. Checked only when the
+# cluster actually pools, since pooler_port is otherwise inert.
+
+- name: Ensure pooler_port does not collide on hosts that also run Postgres
+  assert:
+    that:
+    - pooler_port | int != pg_port | int
+    - pooler_port | int != proxy_port | int
+    - pooler_port | int != pgbouncer_port | int or
+      inventory_hostname not in (groups.pgbouncer | default([]))
+    fail_msg: >-
+      pooler_port ({{ pooler_port }}) collides with another port on
+      {{ inventory_hostname }}, which runs HAProxy alongside Postgres. It must
+      differ from pg_port ({{ pg_port }}), proxy_port ({{ proxy_port }}), and —
+      on a pooled node — pgbouncer_port ({{ pgbouncer_port }}).
+  when:
+  - groups.pgbouncer | default([]) | length > 0
+  - inventory_hostname in (groups.haproxy | default([]))
+  - inventory_hostname in (groups.pgedge | default([]))
+
 # Ensure that only "supported" DCS types are used. These are pulled from the
 # Patroni documentation:
 #  - https://patroni.readthedocs.io/en/latest/yaml_configuration.html
