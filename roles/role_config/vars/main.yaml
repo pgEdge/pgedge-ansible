@@ -27,6 +27,28 @@ spock_exception_behaviour: >-
 
 backup_type: "{{ backup_repo_type if backup_repo_type in ('ssh', 's3') else 'ssh' }}"
 
+# The fix for CVE-2026-6471 stops Postgres from loading an arbitrary logical
+# decoding output plugin, which means Spock cannot decode anything until
+# spock_output is named in output_plugin_libraries. That parameter arrived in a
+# different minor release for each Postgres major, and Postgres refuses to
+# start when postgresql.conf names a parameter it does not recognize, so the
+# minor release the packages installed decides whether we may set it. Majors
+# newer than the ones listed here carry the parameter in every minor, and
+# majors older than 16 are not supported by Spock 5.
+
+pg_output_plugin_min_versions:
+  '16': '16.15'
+  '17': '17.11'
+  '18': '18.6'
+
+pg_point_major: "{{ (pg_point_version | default('')).split('.') | first }}"
+
+pg_supports_output_plugin_libraries: >-
+  {{ pg_point_version is version(
+       pg_output_plugin_min_versions[pg_point_major] |
+         default(pg_point_major ~ '.0'), '>='
+     ) if pg_point_major | int >= 16 else false }}
+
 pg_service_name: >-
   {{ 
     'pgedge-postgres-' + pg_version|string if ansible_facts['os_family'] == 'RedHat' else

@@ -1,0 +1,25 @@
+---
+
+# The inventory pins a Postgres major version, but several configuration
+# decisions depend on the point release the package repositories actually
+# installed. Ask the binary rather than the running server, since HA nodes keep
+# Postgres stopped while Patroni takes over the service.
+#
+# Roles include this file instead of duplicating the lookup. Postgres must
+# already be installed, which install_pgedge guarantees for every playbook in
+# this collection. The guard makes repeated inclusion free and lets an
+# inventory pin pg_point_version outright when the binary cannot be reached.
+
+- name: Retrieve the version of the installed Postgres binary
+  command:
+    cmd: "{{ pg_path }}/bin/postgres --version"
+  changed_when: false
+  check_mode: false
+  register: pg_version_result
+  when: pg_point_version is not defined
+
+- name: Record the installed Postgres point version
+  set_fact:
+    pg_point_version: >-
+      {{ pg_version_result.stdout | regex_search('\d+\.\d+') | default('', true) }}
+  when: pg_point_version is not defined

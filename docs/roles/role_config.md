@@ -87,6 +87,36 @@ The `default_patroni_dcs_params` variable contains the etcd connection
 settings that `setup_patroni` applies when the inventory does not supply its
 own `patroni_dcs.parameters` value.
 
+Version-gating variables include the following computed values:
+
+- `pg_output_plugin_min_versions` maps each Postgres major version to the
+  earliest point release that recognizes `output_plugin_libraries`.
+- `pg_supports_output_plugin_libraries` reports whether the installed point
+  release recognizes `output_plugin_libraries`.
+
+### Postgres Version Detection
+
+The `pg_version` parameter pins a Postgres major version, but some
+configuration parameters only exist in certain point releases. The role
+provides a `pg_version` task file that reads the point release from the
+installed Postgres binary and records it in the `pg_point_version` fact.
+
+Unlike the rest of this role, that task file does not run automatically as a
+dependency, because it requires Postgres to be installed. Roles that need the
+value include it explicitly:
+
+```yaml
+- name: Determine the installed Postgres point version
+  include_role:
+    name: role_config
+    tasks_from: pg_version
+```
+
+The `setup_postgres` and `setup_patroni` roles both include it. The task file
+skips its work when `pg_point_version` already holds a value, so repeated
+inclusion costs nothing and an inventory may set the value directly when the
+binary is unreachable.
+
 ### Platform-Specific Values
 
 The `pg_service_name` variable contains the appropriate service name for the

@@ -1,5 +1,13 @@
 ---
 
+# Postgres is installed by the time this role runs, so the point release is
+# available to gate configuration parameters that only exist in newer minors.
+
+- name: Determine the installed Postgres point version
+  include_role:
+    name: role_config
+    tasks_from: pg_version
+
 - name: Ensure RHEL pgedge Postgres service is set up
   include_tasks: rhel_prep.yaml
   when: ansible_os_family == 'RedHat'

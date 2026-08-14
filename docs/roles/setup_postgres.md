@@ -103,6 +103,23 @@ and additionally:
     This role modifies `shared_preload_libraries`. If this is a pre-existing
     instance, a Postgres restart is required for the change to take effect.
 
+### Logical Decoding Output Plugins
+
+The fix for
+[CVE-2026-6471](https://github.com/advisories/GHSA-r26j-h78w-pjqm) stops
+Postgres from loading a logical decoding output plugin that
+`output_plugin_libraries` does not name, so Spock cannot replicate until
+`spock_output` appears in that list. The role sets the parameter to
+`pgoutput, test_decoding, spock_output`, which also names the two in-tree
+plugins so ordinary logical replication and `pg_recvlogical` keep working.
+
+The parameter arrived in a different minor release for each Postgres major,
+and Postgres refuses to start when its configuration names a parameter it
+does not recognize. The role therefore reads the installed point release from
+the Postgres binary, records it in `pg_point_version`, and writes the
+parameter only on Postgres 16.15, 17.11, 18.6, and later releases. Earlier
+releases neither restrict plugin loading nor recognize the parameter.
+
 ## Usage Examples
 
 In the following example, the playbook deploys a standalone Postgres instance

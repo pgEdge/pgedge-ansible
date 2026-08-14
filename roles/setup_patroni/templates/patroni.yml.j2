@@ -53,6 +53,9 @@ bootstrap:
         hot_standby_feedback: "on"
         track_commit_timestamp: "on"
         shared_preload_libraries: "spock, snowflake, pg_stat_statements"
+{% if pg_supports_output_plugin_libraries %}
+        output_plugin_libraries: "pgoutput, test_decoding, spock_output"
+{% endif %}
         spock.enable_ddl_replication: "on"
         spock.allow_ddl_from_functions: "on"
         spock.include_ddl_repset: "on"

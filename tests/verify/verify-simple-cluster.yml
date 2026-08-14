@@ -24,6 +24,27 @@
       pg_isready -h 127.0.0.1 -p {{ pg_port | default(5432) }}
     changed_when: false
 
+  # Postgres versions carrying the fix for CVE-2026-6471 refuse to load
+  # spock_output unless it is named in output_plugin_libraries. Versions
+  # predating the fix have no such parameter, and pg_settings comes back empty
+  # for them, so this check gates itself on the running server.
+
+  - name: Check the permitted logical decoding output plugins
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT setting FROM pg_settings WHERE name = 'output_plugin_libraries'"
+    register: output_plugins
+    changed_when: false
+
+  - name: Assert Spock's output plugin is permitted
+    assert:
+      that: "'spock_output' in output_plugins.stdout"
+      fail_msg: >
+        output_plugin_libraries does not permit spock_output:
+        {{ output_plugins.stdout }}
+    when: output_plugins.stdout | length > 0
+
   - name: Check Spock extension is installed
     become_user: postgres
     command: >
