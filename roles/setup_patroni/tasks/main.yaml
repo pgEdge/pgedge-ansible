@@ -1,12 +1,12 @@
 ---
 
-# The Patroni configuration gates at least one Postgres parameter on the point
-# release. setup_postgres normally establishes this earlier in the play, so
-# this is a no-op unless this role is run on its own.
+# The Patroni configuration gates at least one Postgres parameter on whether
+# the installed release recognizes it. setup_postgres normally establishes this
+# earlier in the play, so this is a no-op unless this role is run on its own.
 
-- name: Determine the installed Postgres point version
+- name: Determine which configuration parameters Postgres recognizes
   include_role:
     name: role_config
-    tasks_from: pg_version
+    tasks_from: pg_feature_checks
 
 - include_tasks: setup.yaml

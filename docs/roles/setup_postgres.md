@@ -115,10 +115,11 @@ plugins so ordinary logical replication and `pg_recvlogical` keep working.
 
 The parameter arrived in a different minor release for each Postgres major,
 and Postgres refuses to start when its configuration names a parameter it
-does not recognize. The role therefore reads the installed point release from
-the Postgres binary, records it in `pg_point_version`, and writes the
-parameter only on Postgres 16.15, 17.11, 18.6, and later releases. Earlier
-releases neither restrict plugin loading nor recognize the parameter.
+does not recognize. The role therefore asks the Postgres binary which
+parameters the installed release recognizes, records the answer in
+`pg_supports_output_plugin_libraries`, and writes the parameter only where it
+exists. Releases predating the fix neither restrict plugin loading nor
+recognize the parameter.
 
 ## Usage Examples
 

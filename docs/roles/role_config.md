@@ -87,35 +87,36 @@ The `default_patroni_dcs_params` variable contains the etcd connection
 settings that `setup_patroni` applies when the inventory does not supply its
 own `patroni_dcs.parameters` value.
 
-Version-gating variables include the following computed values:
-
-- `pg_output_plugin_min_versions` maps each Postgres major version to the
-  earliest point release that recognizes `output_plugin_libraries`.
-- `pg_supports_output_plugin_libraries` reports whether the installed point
-  release recognizes `output_plugin_libraries`.
-
-### Postgres Version Detection
+### Postgres Feature Checks
 
 The `pg_version` parameter pins a Postgres major version, but some
-configuration parameters only exist in certain point releases. The role
-provides a `pg_version` task file that reads the point release from the
-installed Postgres binary and records it in the `pg_point_version` fact.
+configuration parameters exist only in certain releases, and Postgres refuses
+to start when its configuration names a parameter it does not recognize. The
+role provides a `pg_feature_checks` task file that asks the installed Postgres
+binary which parameters it recognizes and records the answers as facts:
+
+- `pg_supports_output_plugin_libraries` reports whether the installed release
+  recognizes `output_plugin_libraries`.
+
+Asking the binary rather than comparing release numbers keeps the checks
+correct when a fix reaches an unexpected release, as happens with backports to
+older branches and with pgEdge's own patched builds.
 
 Unlike the rest of this role, that task file does not run automatically as a
 dependency, because it requires Postgres to be installed. Roles that need the
-value include it explicitly:
+values include it explicitly:
 
 ```yaml
-- name: Determine the installed Postgres point version
+- name: Determine which configuration parameters Postgres recognizes
   include_role:
     name: role_config
-    tasks_from: pg_version
+    tasks_from: pg_feature_checks
 ```
 
 The `setup_postgres` and `setup_patroni` roles both include it. The task file
-skips its work when `pg_point_version` already holds a value, so repeated
-inclusion costs nothing and an inventory may set the value directly when the
-binary is unreachable.
+skips each check that already holds a value, so repeated inclusion costs
+nothing and an inventory may set a check directly when the binary is
+unreachable.
 
 ### Platform-Specific Values
 

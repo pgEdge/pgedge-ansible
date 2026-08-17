@@ -35,19 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key fails before bootstrapping rather than while Patroni is configured.
   (EE-33)
 
-- role_config gained a pg_version task file that records the point release of
-  the installed Postgres binary in pg_point_version. setup_postgres and
-  setup_patroni include it so configuration can be gated on a minor release.
-  (EE-34)
+- role_config gained a pg_feature_checks task file that asks the installed
+  Postgres binary which configuration parameters it recognizes. setup_postgres
+  and setup_patroni include it so configuration can be gated on parameters that
+  only some releases carry. (EE-34)
 
 ### Fixed
 
 - Spock replication no longer breaks on Postgres releases carrying the fix for
   CVE-2026-6471, which refuse to load an output plugin that
   output_plugin_libraries does not name. Both simple and Ultra-HA clusters now
-  set the parameter, on Postgres 16.15, 17.11, 18.6, and later only, since
-  earlier releases do not recognize it and refuse to start when it appears.
-  (EE-34)
+  set the parameter, and only on releases that recognize it, since earlier
+  releases refuse to start when it appears. (EE-34)
 - patroni_config_file and patroni_tls_dir now recognized by all roles.
 - HA failover example in the usage guide now passes the Patroni scope the
   collection actually configures, which has included the Postgres version
