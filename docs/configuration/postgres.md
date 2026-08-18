@@ -125,3 +125,4 @@ The following table shows the values by OS family:
 | pg_service_name | postgresql@VERSION-main | postgresql-VERSION | Systemd service name for PostgreSQL. |
 | patroni_service_name | patroni@VERSION-main | patroni | Systemd service name for Patroni. |
 | nodes_in_zone | (computed) | (computed) | List of all pgedge hosts in the same zone as the current node. |
+| pg_supports_output_plugin_libraries | (detected) | (detected) | Whether the installed Postgres release recognizes `output_plugin_libraries`. |
