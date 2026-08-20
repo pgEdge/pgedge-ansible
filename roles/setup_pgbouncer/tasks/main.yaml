@@ -75,12 +75,17 @@
   register: config_status
   become: true
 
-# Debian's package also ships a pgbouncer.socket that listens on 6432. Nothing
-# uses it: the service unit's "Requires=pgbouncer.socket" line is commented out
-# and the package's postinst enables only the service. But the two units bind
-# the same port, so a socket someone starts by hand takes 6432 and the pooler
-# then fails its next restart — with the socket answering connections it cannot
-# hand off. Mask it, so that cannot happen.
+# Debian's package also ships a pgbouncer.socket listening on the same 6432,
+# for systemd socket activation. That is a real mechanism, not packaging debris
+# — pgBouncer links sd_listen_fds and can adopt a socket systemd holds, which
+# keeps the listener alive across a restart instead of refusing connections
+# during it. This collection does not use it. The pooler is always-on with
+# Restart=always, pgBouncer has its own online-restart path for the same
+# problem, and activation would move authority over the endpoint out of
+# pgbouncer.ini, where the port and listen_addr are already set. The packaged
+# unit's endpoints agree with the packaged ini, not with the one this role
+# renders. Mask it, on Debian only, so the two mechanisms can never both be
+# live; the package ships it disabled, so this only holds that state.
 
 - name: Mask the packaged pgBouncer socket unit
   systemd:
