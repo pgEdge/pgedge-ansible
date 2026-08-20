@@ -87,6 +87,37 @@ The `default_patroni_dcs_params` variable contains the etcd connection
 settings that `setup_patroni` applies when the inventory does not supply its
 own `patroni_dcs.parameters` value.
 
+### Postgres Feature Checks
+
+The `pg_version` parameter pins a Postgres major version, but some
+configuration parameters exist only in certain releases, and Postgres refuses
+to start when its configuration names a parameter it does not recognize. The
+role provides a `pg_feature_checks` task file that asks the installed Postgres
+binary which parameters it recognizes and records the answers as facts:
+
+- `pg_supports_output_plugin_libraries` reports whether the installed release
+  recognizes `output_plugin_libraries`.
+
+Asking the binary rather than comparing release numbers keeps the checks
+correct when a fix reaches an unexpected release, as happens with backports to
+older branches and with pgEdge's own patched builds.
+
+Unlike the rest of this role, that task file does not run automatically as a
+dependency, because it requires Postgres to be installed. Roles that need the
+values include it explicitly:
+
+```yaml
+- name: Determine which configuration parameters Postgres recognizes
+  include_role:
+    name: role_config
+    tasks_from: pg_feature_checks
+```
+
+The `setup_postgres` and `setup_patroni` roles both include it. The task file
+skips each check that already holds a value, so repeated inclusion costs
+nothing and an inventory may set a check directly when the binary is
+unreachable.
+
 ### Platform-Specific Values
 
 The `pg_service_name` variable contains the appropriate service name for the

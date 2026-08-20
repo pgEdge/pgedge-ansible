@@ -72,6 +72,30 @@
     # Only primaries will accept connections; replicas may be in recovery
     ignore_errors: true
 
+  # Postgres versions carrying the fix for CVE-2026-6471 refuse to load
+  # spock_output unless it is named in output_plugin_libraries. Versions
+  # predating the fix have no such parameter, and pg_settings comes back empty
+  # for them, so this check gates itself on the running server.
+
+  - name: Check the permitted logical decoding output plugins on primary
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT setting FROM pg_settings WHERE name = 'output_plugin_libraries'"
+    register: output_plugins
+    changed_when: false
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert Spock's output plugin is permitted on primary
+    assert:
+      that: "'spock_output' in output_plugins.stdout"
+      fail_msg: >
+        output_plugin_libraries does not permit spock_output:
+        {{ output_plugins.stdout }}
+    when:
+    - inventory_hostname == first_node_in_zone
+    - output_plugins.stdout | length > 0
+
   # Run Spock checks only on zone primaries (first node in each zone)
   - name: Check Spock extension on primary
     become_user: postgres

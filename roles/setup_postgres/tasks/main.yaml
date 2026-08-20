@@ -1,5 +1,13 @@
 ---
 
+# Postgres is installed by the time this role runs, so its binary can say which
+# configuration parameters the installed release recognizes.
+
+- name: Determine which configuration parameters Postgres recognizes
+  include_role:
+    name: role_config
+    tasks_from: pg_feature_checks
+
 - name: Ensure RHEL pgedge Postgres service is set up
   include_tasks: rhel_prep.yaml
   when: ansible_os_family == 'RedHat'

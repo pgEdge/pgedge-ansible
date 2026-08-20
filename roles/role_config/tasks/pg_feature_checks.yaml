@@ -1,0 +1,32 @@
+---
+
+# Some configuration parameters exist only in certain Postgres releases, and
+# Postgres refuses to start when its configuration names a parameter it does
+# not recognize. Rather than map each parameter to the release that introduced
+# it, ask the binary which parameters it knows about. That survives backports
+# to older branches and pgEdge's own patched builds, both of which a table of
+# minimum versions gets wrong.
+#
+# Interrogate the binary rather than the running server, since HA nodes keep
+# Postgres stopped while Patroni takes over the service. Postgres must already
+# be installed, which install_pgedge guarantees for every playbook in this
+# collection. The guards make repeated inclusion free and let an inventory set
+# a check outright when the binary cannot be reached.
+
+- name: Retrieve the configuration parameters the Postgres binary recognizes
+  command:
+    cmd: "{{ pg_path }}/bin/postgres --describe-config"
+  changed_when: false
+  check_mode: false
+  register: pg_describe_config
+  when: pg_supports_output_plugin_libraries is not defined
+
+# Only Postgres core can define output_plugin_libraries, because a parameter
+# registered by a shared library must carry a prefix.name form, so matching the
+# bare name cannot pick up an unrelated parameter of some extension's making.
+
+- name: Record whether Postgres recognizes output_plugin_libraries
+  set_fact:
+    pg_supports_output_plugin_libraries: >-
+      {{ 'output_plugin_libraries' in pg_describe_config.stdout }}
+  when: pg_supports_output_plugin_libraries is not defined
