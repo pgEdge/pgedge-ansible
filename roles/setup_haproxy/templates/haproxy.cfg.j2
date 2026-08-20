@@ -1,5 +1,9 @@
+{# maxconn is the top of a chain the operator sizes as a whole: HAProxy's    #}
+{# per-listener maxconn -> pgBouncer's max_client_conn -> default_pool_size  #}
+{# -> Postgres max_connections, which this collection does not set. The      #}
+{# global value must be at least the sum of the listeners' own.              #}
 global
-    maxconn 100
+    maxconn {{ haproxy_max_conn }}
 
 defaults
     log global
@@ -45,3 +49,30 @@ listen pg-cluster-{{ route }}
     server {{ host_label }} {{ host_name }}:{{ pg_port }} check port 8008
 {% endfor %}
 {% endfor %}
+{# The pooled endpoint, emitted only where a zone has pooled nodes. The check #}
+{# is Patroni's REST API on 8008, exactly as the direct listeners use it: a   #}
+{# TCP check against pgbouncer_port would mark every pooled node up and send  #}
+{# writes to replicas. So a dead pooler on the leader is an outage of this    #}
+{# endpoint rather than a silent reroute to Postgres — pooled and direct      #}
+{# connections resolve against different pg_hba rules and are not             #}
+{# interchangeable. Restart=always in setup_pgbouncer is the mitigation.      #}
+{#                                                                           #}
+{# An endpoint that failed over to Postgres by itself would need a frontend   #}
+{# with two backends and nbsrv()-based selection, each backend carrying its   #}
+{# own check. It does not belong in this listener as another server line.     #}
+{% if pooled_nodes_in_zone %}
+
+
+listen pg-pooler
+    bind *:{{ pooler_port }} maxconn {{ haproxy_pooler_max_conn }}
+    mode tcp
+    option httpchk
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+
+{% for host in pooled_nodes_in_zone %}
+{%   set host_name = hostvars[host].inventory_hostname %}
+{%   set host_label = host_name | regex_replace('[\W-]', '_') %}
+    server {{ host_label }} {{ host_name }}:{{ pgbouncer_port }} check port 8008
+{% endfor %}
+{% endif %}

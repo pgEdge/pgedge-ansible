@@ -1,1 +1,11 @@
 ---
+
+# Both packaged units ship LimitNOFILE commented out, leaving the pooler with
+# systemd's default of 1024 — fewer descriptors than max_client_conn alone, so
+# it would run out long before reaching its own connection limit. Budget two
+# per client connection (its socket, and the backend it gets paired with) plus
+# a fixed allowance for the idle server pools, the listening sockets, the log
+# and the admin console.
+
+pgbouncer_limit_nofile: >-
+  {{ (pgbouncer_max_client_conn | int * 2) + 1024 }}

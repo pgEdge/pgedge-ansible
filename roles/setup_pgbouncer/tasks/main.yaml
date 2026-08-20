@@ -21,8 +21,9 @@
   become: true
 
 # Written before the service is ever started, so the first start already has
-# the restart policy in place. StartLimitIntervalSec=0 disables the systemd
-# rate-limit that would otherwise stop retrying after a few crashes.
+# the restart policy and the descriptor limit in place. StartLimitIntervalSec=0
+# disables the systemd rate-limit that would otherwise stop retrying after a
+# few crashes.
 
 - name: Ensure pgBouncer systemd drop-in directory exists
   file:
@@ -42,6 +43,7 @@
       [Service]
       Restart=always
       RestartSec=2
+      LimitNOFILE={{ pgbouncer_limit_nofile }}
   register: dropin_status
   become: true
 

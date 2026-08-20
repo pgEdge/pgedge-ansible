@@ -165,6 +165,26 @@
         "{{ pooled_select.stdout | default('') }}"
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
+  # The drop-in has to raise the descriptor ceiling off systemd's default of
+  # 1024, which is below max_client_conn on its own. The exact figure is derived
+  # from max_client_conn in the role's defaults and is not visible here, so
+  # assert only that the default was left behind.
+
+  - name: Read the pooler's descriptor limit
+    command: systemctl show -p LimitNOFILE --value pgbouncer
+    register: pgbouncer_nofile
+    changed_when: false
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Assert the pooler's descriptor limit was raised
+    assert:
+      that: pgbouncer_nofile.stdout | int > 1024
+      fail_msg: >-
+        pgBouncer on {{ inventory_hostname }} has LimitNOFILE
+        {{ pgbouncer_nofile.stdout }}, so the systemd drop-in did not take
+        effect.
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
   # Each platform's own log path, which is also the one its logrotate
   # configuration already covers: RHEL ships /etc/logrotate.d/pgbouncer, and on
   # Debian pgedge-postgresql-common rotates /var/log/postgresql/*.log.
