@@ -48,6 +48,33 @@ pg_config_dir: >-
     else pg_data
   }}
 
+# pgBouncer's packaging differs by platform and neither layout needs new
+# directories or a logrotate file, provided the native paths are used. The RHEL
+# package creates a dedicated pgbouncer user and owns /var/log/pgbouncer and
+# /run/pgbouncer (the latter via tmpfiles.d); the Debian package ships no such
+# user — its unit runs as postgres — and logs beside Postgres, where
+# pgedge-postgresql-common's logrotate glob already covers the file.
+
+pgbouncer_user: >-
+  {{
+    'pgbouncer' if ansible_facts['os_family'] == 'RedHat' else
+    'postgres' if ansible_facts['os_family'] == 'Debian'
+  }}
+
+pgbouncer_group: "{{ pgbouncer_user }}"
+
+pgbouncer_log_file: >-
+  {{
+    '/var/log/pgbouncer/pgbouncer.log' if ansible_facts['os_family'] == 'RedHat' else
+    '/var/log/postgresql/pgbouncer.log' if ansible_facts['os_family'] == 'Debian'
+  }}
+
+pgbouncer_pid_file: >-
+  {{
+    '/run/pgbouncer/pgbouncer.pid' if ansible_facts['os_family'] == 'RedHat' else
+    '/var/run/postgresql/pgbouncer.pid' if ansible_facts['os_family'] == 'Debian'
+  }}
+
 patroni_config_dir: "/etc/patroni"
 
 patroni_service_name: >-

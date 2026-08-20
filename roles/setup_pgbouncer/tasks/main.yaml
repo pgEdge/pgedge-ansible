@@ -15,8 +15,8 @@
   file:
     path: /etc/pgbouncer
     state: directory
-    owner: pgbouncer
-    group: pgbouncer
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
     mode: "0750"
   become: true
 
@@ -52,8 +52,8 @@
 - name: Write pgBouncer userlist
   copy:
     dest: /etc/pgbouncer/userlist.txt
-    owner: pgbouncer
-    group: pgbouncer
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
     mode: "0640"
     content: |
       {% for u in pgbouncer_userlist %}
@@ -67,10 +67,26 @@
   template:
     src: pgbouncer.ini.j2
     dest: /etc/pgbouncer/pgbouncer.ini
-    owner: pgbouncer
-    group: pgbouncer
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
     mode: "0640"
   register: config_status
+  become: true
+
+# Debian's package also ships a pgbouncer.socket that listens on 6432. Nothing
+# uses it: the service unit's "Requires=pgbouncer.socket" line is commented out
+# and the package's postinst enables only the service. But the two units bind
+# the same port, so a socket someone starts by hand takes 6432 and the pooler
+# then fails its next restart — with the socket answering connections it cannot
+# hand off. Mask it, so that cannot happen.
+
+- name: Mask the packaged pgBouncer socket unit
+  systemd:
+    name: pgbouncer.socket
+    state: stopped
+    enabled: false
+    masked: true
+  when: ansible_facts['os_family'] == 'Debian'
   become: true
 
 # Only restart pgBouncer on subsequent runs if something it reads changed.

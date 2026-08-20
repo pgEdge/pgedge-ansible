@@ -40,3 +40,14 @@ backup:
       zone: 1
     192.168.6.19:
       zone: 2
+
+# Every pgEdge node pools here: the pooled HAProxy listener follows the Patroni
+# leader, and any node can hold that role.
+pgbouncer:
+  hosts:
+    192.168.6.10:
+    192.168.6.11:
+    192.168.6.12:
+    192.168.6.13:
+    192.168.6.14:
+    192.168.6.15:

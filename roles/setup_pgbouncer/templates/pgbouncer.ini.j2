@@ -28,5 +28,9 @@ server_tls_sslmode = disable
 admin_users = {{ db_user }}
 stats_users = {{ db_user }}
 
-logfile = /var/log/pgbouncer/pgbouncer.log
-pidfile = /run/pgbouncer/pgbouncer.pid
+# Both paths are the platform's own: RHEL's package owns /var/log/pgbouncer
+# and /run/pgbouncer, Debian's logs beside Postgres and keeps its pidfile in
+# /var/run/postgresql. Using anything else would need a directory and a
+# logrotate rule this role does not ship.
+logfile = {{ pgbouncer_log_file }}
+pidfile = {{ pgbouncer_pid_file }}
