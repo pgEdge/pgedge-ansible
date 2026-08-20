@@ -26,3 +26,10 @@ pgbouncer:
   hosts:
     192.168.6.10:
     192.168.6.11:
+
+# A client with no deployment role at all: not in pgedge, haproxy or backup, and
+# named by no pg_hba rule. Phase 4's whole point — the access gates cannot be
+# observed from a node that every rule already names.
+clients:
+  hosts:
+    192.168.6.30:

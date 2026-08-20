@@ -199,6 +199,29 @@
     - proxies_in_zone | length > 0
     - pooled_nodes_in_zone | length > 0
 
+  # Spock must never route through the pooler: replication is a long-lived
+  # session on a fixed node, and pooled and direct connections do not resolve
+  # against the same rules. The DSNs name proxy_port or pg_port, both 5432 by
+  # default, so the assertion is that no interface mentions the pooled port.
+
+  - name: Read the Spock node interface DSNs
+    become_user: postgres
+    command: >
+      psql -d {{ db_names | first }} -t -A -c
+      "SELECT if_dsn FROM spock.node_interface"
+    register: spock_dsns
+    changed_when: false
+
+  - name: Assert no Spock DSN routes through the pooler
+    assert:
+      that: >-
+        spock_dsns.stdout_lines |
+        select('search', 'port=' ~ (pgbouncer_port | default(6432))) |
+        list | length == 0
+      fail_msg: >-
+        A Spock DSN on {{ inventory_hostname }} points at the pooled port:
+        {{ spock_dsns.stdout_lines }}
+
   # Pooling is opt-in by group membership. The pgBouncer package itself is a
   # dependency of the pgEdge metapackage, so it is present on every node; what
   # the group gates is configuration and the service. Debian's packaging goes
@@ -351,3 +374,140 @@
   - name: Show backup status
     debug:
       msg: "pgbackrest info output: {{ backrest_info.stdout_lines | default(['not available']) }}"
+
+# Verify the access gates from a host that no pg_hba rule names and no role was
+# applied to. From a pgEdge node these checks are meaningless — every rule the
+# collection writes already names those addresses.
+#
+# Interpretation matters here: through either HAProxy listener, Postgres sees
+# the *proxy's* address, so those paths do not exercise client-IP gating at all.
+# Only the direct-to-node paths do.
+- hosts: clients
+  become: true
+
+  vars:
+    db_names:
+    - demo
+    db_user: admin
+    db_password: TestPass123
+    pooled_nodes: "{{ groups['pgbouncer'] | default([]) }}"
+    unpooled_nodes: >-
+      {{ groups['pgedge'] | difference(groups['pgbouncer'] | default([])) }}
+    proxies: "{{ groups['haproxy'] | default([]) }}"
+
+  environment:
+    PGPASSWORD: "{{ db_password }}"
+    PGCONNECT_TIMEOUT: "5"
+
+  tasks:
+  - name: Install a Postgres client
+    package:
+      name: >-
+        {{ 'postgresql' if ansible_facts['os_family'] == 'RedHat'
+           else 'postgresql-client' }}
+      state: present
+      update_cache: true
+    retries: 5
+    delay: 20
+    register: result
+    until: result is success
+
+  # Positive: the pooler answers a client no Postgres rule names, because the
+  # pooled hop terminates at pgBouncer and reaches Postgres over loopback.
+
+  - name: Query a pooled node's pooler directly
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_pooler
+    changed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooler served the client
+    assert:
+      that: via_pooler.stdout == '1'
+      fail_msg: >-
+        SELECT 1 against {{ pooled_nodes | first }}:{{ pgbouncer_port | default(6432) }}
+        returned "{{ via_pooler.stdout | default('') }}"
+    when: pooled_nodes | length > 0
+
+  - name: Query the direct HAProxy listener
+    command: >
+      psql "host={{ proxies | first }} port={{ proxy_port | default(5432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_proxy
+    changed_when: false
+    when: proxies | length > 0
+
+  - name: Assert the direct listener served the client
+    assert:
+      that: via_proxy.stdout == '1'
+      fail_msg: >-
+        SELECT 1 through {{ proxies | first }}:{{ proxy_port | default(5432) }}
+        returned "{{ via_proxy.stdout | default('') }}"
+    when: proxies | length > 0
+
+  - name: Query the pooled HAProxy listener
+    command: >
+      psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_pooled_proxy
+    changed_when: false
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  - name: Assert the pooled listener served the client
+    assert:
+      that: via_pooled_proxy.stdout == '1'
+      fail_msg: >-
+        SELECT 1 through {{ proxies | first }}:{{ pooler_port | default(6432) }}
+        returned "{{ via_pooled_proxy.stdout | default('') }}"
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  # Negative: the same credentials straight at Postgres, which does gate on the
+  # client's address and has no rule for this one.
+
+  - name: Connect straight to a node's Postgres port
+    command: >
+      psql "host={{ groups['pgedge'] | first }} port={{ pg_port | default(5432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_postgres
+    changed_when: false
+    failed_when: false
+
+  - name: Assert Postgres refused the unnamed client
+    assert:
+      that:
+      - via_postgres.rc != 0
+      - "'no pg_hba.conf entry' in via_postgres.stderr"
+      fail_msg: >-
+        Postgres on {{ groups['pgedge'] | first }} did not refuse this host on
+        its own address. rc={{ via_postgres.rc }},
+        stderr="{{ via_postgres.stderr }}"
+
+  # Negative: an unpooled node has no pooler to reach. On RHEL nothing is
+  # listening; on Debian the packaged pooler the metapackage started is bound to
+  # localhost. Either way the client cannot get in, which is the assertion that
+  # holds on both platforms.
+
+  - name: Connect to an unpooled node's pooler port
+    command: >
+      psql "host={{ unpooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_unpooled
+    changed_when: false
+    failed_when: false
+    when: unpooled_nodes | length > 0
+
+  - name: Assert an unpooled node serves nothing on the pooler port
+    assert:
+      that: via_unpooled.rc != 0
+      fail_msg: >-
+        {{ unpooled_nodes | first }} answered on
+        {{ pgbouncer_port | default(6432) }} but is not in the pgbouncer group.
+    when: unpooled_nodes | length > 0
