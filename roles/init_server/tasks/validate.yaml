@@ -96,6 +96,23 @@
   run_once: true
   when: groups.pgbouncer | default([]) | length > 0
 
+# A typo here would render a pgbouncer.ini the pooler refuses to start on, and
+# the failure would surface as a systemd error several tasks later. verify-ca
+# and verify-full are valid pgBouncer settings but unsupported here: both demand
+# a client certificate, which needs pg_hba option syntax pgBouncer cannot parse,
+# so a pooler configured that way would reject every client.
+
+- name: Ensure the pooler's client TLS mode is one this collection supports
+  assert:
+    that:
+    - pgbouncer_client_tls_sslmode in ('disable', 'allow', 'prefer', 'require')
+    fail_msg: >-
+      pgbouncer_client_tls_sslmode is "{{ pgbouncer_client_tls_sslmode }}".
+      It must be one of disable, allow, prefer or require. Client certificates
+      (verify-ca, verify-full) are not supported on the pooled endpoint.
+  run_once: true
+  when: groups.pgbouncer | default([]) | length > 0
+
 # proxy_port and pooler_port are proxy-layer ports, so they only collide with
 # the node-level ports when HAProxy shares a host with Postgres — a topology
 # docs/configuration/proxy.md explicitly supports. Checked only when the

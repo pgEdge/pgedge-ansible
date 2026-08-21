@@ -46,6 +46,24 @@ pgbouncer_max_prepared_statements: 0
 # pgBouncer's auth_file, because the admin console cannot use the lookup.
 pgbouncer_auth_user: pgbouncer_auth
 pgbouncer_auth_password: secret
+# Client TLS on the pooled endpoint. Postgres already presents a certificate on
+# every node — setup_postgres issues one and turns ssl on — so a pooled client
+# should not have to drop to cleartext to use the pooler. "allow" accepts
+# exactly what the direct endpoint accepts today: TLS when the client asks for
+# it, plaintext when it does not, so no existing client changes behaviour. Set
+# "require" to make TLS mandatory on the pooled endpoint, or "disable" to turn
+# it off and omit the certificate entirely. verify-ca and verify-full are not
+# supported: they demand a client certificate, which needs the pg_hba option
+# syntax pgBouncer cannot parse.
+pgbouncer_client_tls_sslmode: allow
+# Where the pooler's certificate comes from: the controller-side staging
+# directory setup_postgres generates into, which is also where PGDATA's copy
+# came from — so the pooled and direct endpoints present the same certificate,
+# and replacing this replaces both. Deliberately not read from PGDATA on the
+# node: on an HA replica that copy arrives with Patroni's clone, which has not
+# necessarily finished when this role runs.
+pgbouncer_tls_cert_source: tls/postgres/server.crt
+pgbouncer_tls_key_source: tls/postgres/server.key
 
 is_ha_cluster: false
 exception_behaviour: "transdiscard"

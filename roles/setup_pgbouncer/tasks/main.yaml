@@ -66,6 +66,32 @@
   become: true
   no_log: true
 
+# The pooler needs its own copy of the certificate: on RHEL the service user is
+# pgbouncer while PGDATA is 0700 postgres, so Postgres's copy is unreadable to
+# it. It comes from the controller rather than from PGDATA on the node, for the
+# same reason setup_postgres puts it there — on an HA replica the PGDATA copy
+# arrives with Patroni's clone, which this role cannot assume has finished. The
+# bytes are identical either way, so both endpoints present one certificate.
+# Skipped when client TLS is off, so nothing writes a key that nothing reads.
+
+- name: Stage the pooler's TLS certificate and key
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+  - src: "{{ pgbouncer_tls_cert_source }}"
+    dest: "{{ pgbouncer_tls_cert_file }}"
+    mode: "0640"
+  - src: "{{ pgbouncer_tls_key_source }}"
+    dest: "{{ pgbouncer_tls_key_file }}"
+    mode: "0600"
+  register: tls_status
+  become: true
+  when: pgbouncer_client_tls_sslmode != 'disable'
+
 - name: Write pgBouncer configuration
   template:
     src: pgbouncer.ini.j2
@@ -111,6 +137,6 @@
     state: >-
       {{ 'restarted'
          if (dropin_status.changed or userlist_status.changed or
-             config_status.changed)
+             tls_status.changed or config_status.changed)
          else 'started' }}
   become: true

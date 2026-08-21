@@ -336,6 +336,35 @@
         be testing auth_query.
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
+  # Client TLS is served from a copy of the certificate Postgres presents on its
+  # own port, staged where the pooler's service user can read it. On RHEL that
+  # user is pgbouncer while PGDATA is 0700 postgres, so the ownership and mode
+  # are the whole reason the copy exists.
+
+  - name: Stat the pooler's staged TLS key
+    stat:
+      path: /etc/pgbouncer/server.key
+    register: pgbouncer_tls_key
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Assert the pooler holds a private key its own user can read
+    vars:
+      service_user: >-
+        {{ 'pgbouncer' if ansible_facts['os_family'] == 'RedHat'
+           else 'postgres' }}
+    assert:
+      that:
+      - pgbouncer_tls_key.stat.exists
+      - pgbouncer_tls_key.stat.pw_name == service_user
+      - pgbouncer_tls_key.stat.mode == '0600'
+      fail_msg: >-
+        /etc/pgbouncer/server.key on {{ inventory_hostname }} is
+        {{ 'missing' if not pgbouncer_tls_key.stat.exists else
+           'owned by ' ~ pgbouncer_tls_key.stat.pw_name ~ ' mode ' ~
+           pgbouncer_tls_key.stat.mode }}, so the pooler running as
+        {{ service_user }} cannot serve client TLS from it.
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
   # The drop-in has to raise the descriptor ceiling off systemd's default of
   # 1024, which is below max_client_conn on its own. The exact figure is derived
   # from max_client_conn in the role's defaults and is not visible here, so
@@ -563,6 +592,75 @@
         {{ pool_test_user }} could not authenticate through
         {{ proxies | first }}:{{ pooler_port | default(6432) }}. stderr="{{
         via_pooled_proxy_new_role.stderr | default('') }}"
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  # Client TLS, from the one host that reaches the pooler over a real network.
+  # sslmode=require is the assertion in itself: libpq abandons the connection
+  # when the server declines TLS, so a row coming back cannot have crossed the
+  # wire in cleartext. \conninfo then says which protocol was negotiated.
+
+  - name: Query a pooled node's pooler over TLS
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }} sslmode=require"
+      -t -A -c "SELECT 1"
+    register: via_pooler_tls
+    changed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooler served the client over TLS
+    assert:
+      that: via_pooler_tls.stdout == '1'
+      fail_msg: >-
+        sslmode=require against {{ pooled_nodes | first }}:{{
+        pgbouncer_port | default(6432) }} returned
+        "{{ via_pooler_tls.stdout | default('') }}".
+        stderr="{{ via_pooler_tls.stderr | default('') }}"
+    when: pooled_nodes | length > 0
+
+  - name: Ask the pooled connection what it negotiated
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }} sslmode=require"
+      -c "\conninfo"
+    register: pooler_conninfo
+    changed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooled connection reports itself encrypted
+    assert:
+      that: "'SSL connection' in pooler_conninfo.stdout"
+      fail_msg: >-
+        The pooled connection to {{ pooled_nodes | first }} does not report an
+        SSL connection: {{ pooler_conninfo.stdout | default('') }}
+    when: pooled_nodes | length > 0
+
+  # The pooled listener is TCP passthrough, so the client negotiates TLS with
+  # whichever node's pooler HAProxy picked, not with HAProxy.
+
+  - name: Query the pooled HAProxy listener over TLS
+    command: >
+      psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }} sslmode=require"
+      -t -A -c "SELECT 1"
+    register: via_pooled_proxy_tls
+    changed_when: false
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  - name: Assert the pooled listener served the client over TLS
+    assert:
+      that: via_pooled_proxy_tls.stdout == '1'
+      fail_msg: >-
+        sslmode=require through {{ proxies | first }}:{{
+        pooler_port | default(6432) }} returned
+        "{{ via_pooled_proxy_tls.stdout | default('') }}".
+        stderr="{{ via_pooled_proxy_tls.stderr | default('') }}"
     when:
     - proxies | length > 0
     - pooled_nodes | length > 0

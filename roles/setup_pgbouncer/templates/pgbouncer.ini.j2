@@ -33,6 +33,18 @@ max_prepared_statements = {{ pgbouncer_max_prepared_statements }}
 # Mattermost and other clients send extra_float_digits in the startup packet.
 ignore_startup_parameters = extra_float_digits
 
+# Client TLS, served from the certificate setup_pgbouncer staged out of PGDATA
+# — the same one Postgres presents on its own port. The default sslmode accepts
+# TLS or cleartext, matching what the direct endpoint accepts, so turning this
+# on changes no existing client; set pgbouncer_client_tls_sslmode to require to
+# make TLS mandatory here. hostssl and hostnossl rules in the pooler's own HBA
+# file mean nothing unless this is on.
+client_tls_sslmode = {{ pgbouncer_client_tls_sslmode }}
+{% if pgbouncer_client_tls_sslmode != 'disable' %}
+client_tls_cert_file = {{ pgbouncer_tls_cert_file }}
+client_tls_key_file = {{ pgbouncer_tls_key_file }}
+{% endif %}
+
 # pgBouncer -> local Postgres is a loopback connection; no TLS required.
 server_tls_sslmode = disable
 

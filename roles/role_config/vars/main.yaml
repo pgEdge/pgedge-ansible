@@ -75,6 +75,17 @@ pgbouncer_pid_file: >-
     '/var/run/postgresql/pgbouncer.pid' if ansible_facts['os_family'] == 'Debian'
   }}
 
+# Where setup_pgbouncer stages the certificate it serves clients from. The
+# pooler needs its own copy because on RHEL it runs as pgbouncer while PGDATA is
+# 0700 postgres, so Postgres's copy is unreadable to it. Debian's pooler runs as
+# postgres and could read PGDATA directly, but it stages too: one code path and
+# one pair of paths in pgbouncer.ini is worth more than saving a file copy.
+# These are the destinations, not a knob — point pgbouncer_tls_cert_source at a
+# different certificate to change what is served.
+
+pgbouncer_tls_cert_file: /etc/pgbouncer/server.crt
+pgbouncer_tls_key_file: /etc/pgbouncer/server.key
+
 patroni_config_dir: "/etc/patroni"
 
 patroni_service_name: >-
