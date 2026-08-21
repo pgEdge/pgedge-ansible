@@ -86,6 +86,14 @@ pgbouncer_pid_file: >-
 pgbouncer_tls_cert_file: /etc/pgbouncer/server.crt
 pgbouncer_tls_key_file: /etc/pgbouncer/server.key
 
+# The pooler's own client-authentication rules, beside its configuration for the
+# same reason the certificate is: on RHEL the pooler runs as pgbouncer and
+# cannot read Postgres's pg_hba.conf inside a 0700 PGDATA. A destination rather
+# than a knob — the rules themselves come from custom_hba_rules and
+# pgbouncer_hba_rules.
+
+pgbouncer_hba_file: /etc/pgbouncer/pg_hba.conf
+
 patroni_config_dir: "/etc/patroni"
 
 patroni_service_name: >-

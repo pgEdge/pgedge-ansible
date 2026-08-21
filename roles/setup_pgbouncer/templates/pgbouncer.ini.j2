@@ -9,15 +9,19 @@
 listen_addr = {{ pgbouncer_listen_addr }}
 listen_port = {{ pgbouncer_port }}
 
-# Clients are verified against Postgres itself, not against a list kept here:
-# pgBouncer connects as auth_user and calls the lookup setup_postgres created to
-# read the requested role's stored SCRAM verifier. Any Postgres role therefore
-# works through the pooler, including one created after the pooler started, and
-# a rotated password takes effect immediately. auth_dbname pins the lookup to
-# the maintenance database, so it runs there rather than in whichever database
-# the client asked for. auth_file holds only auth_user's own password, which
-# pgBouncer needs before it can run the lookup at all.
-auth_type = scram-sha-256
+# Which clients may connect and what credential they are checked against are
+# two separate decisions here. auth_type = hba makes the rules in auth_hba_file
+# select the method per client and address, so an address those rules do not
+# name is refused before any password is considered. auth_user and auth_query
+# then resolve the requested role's stored SCRAM verifier by calling the lookup
+# setup_postgres created, so any Postgres role works through the pooler —
+# including one created after the pooler started — and a rotated password takes
+# effect immediately. auth_dbname pins the lookup to the maintenance database,
+# so it runs there rather than in whichever database the client asked for, and
+# auth_file holds only auth_user's own password, which pgBouncer needs before it
+# can run the lookup at all.
+auth_type = hba
+auth_hba_file = {{ pgbouncer_hba_file }}
 auth_file = /etc/pgbouncer/userlist.txt
 auth_user = {{ pgbouncer_auth_user }}
 auth_query = SELECT username, password FROM pgbouncer.get_auth($1)

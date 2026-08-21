@@ -5,6 +5,18 @@ all:
     debug_pgedge: false
     disable_selinux: false
     manage_host_file: false
+    # The pooler enforces its own HBA rules, which name the cluster's nodes,
+    # this zone's proxies and the node's loopback -- and nothing else. The client
+    # node is none of those, so the pooled endpoint has to be opened to it here.
+    # Naming it in custom_hba_rules instead would open Postgres's own port to it
+    # as well and cost the suite its clearest negative test. It is admitted for
+    # the two application roles only: pgedge is deliberately left out, so the
+    # verify playbooks can prove a valid credential is still refused when no
+    # rule names it.
+    pgbouncer_hba_rules:
+    - databases: demo,postgres
+      users: admin,pooltest
+      source: 192.168.6.30/32
 
 pgedge:
   vars:

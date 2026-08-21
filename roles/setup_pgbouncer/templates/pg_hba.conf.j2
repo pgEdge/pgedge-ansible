@@ -1,0 +1,82 @@
+{% set db_list = (db_names + ['postgres']) | join(',') %}
+# Managed by Ansible (pgbouncer role) - do not edit manually.
+#
+# Client authentication for the pooled endpoint. pgbouncer.ini sets
+# auth_type = hba, so pgBouncer consults this file to decide which method a
+# client is offered; auth_query then supplies the verifier to check it against.
+# The two compose cleanly — the rules select the method, the lookup supplies the
+# credential — so nothing here needs a password of its own.
+#
+# These rules cover the client → pooler hop only. The pooler → Postgres hop is
+# a loopback connection, and Postgres matches it against its own
+# "host all all 127.0.0.1/32 scram-sha-256" rule.
+#
+# The rules are rendered from the same variables that drive the Postgres rules
+# in setup_postgres/tasks/prep_instance.yaml and
+# setup_patroni/templates/patroni.yml.j2, so the two lists stay in step without
+# either file reading the other. The pooler cannot simply be pointed at
+# Postgres's pg_hba.conf: on RHEL that file lives in a 0700 PGDATA owned by
+# postgres, while the pooler runs as pgbouncer.
+#
+# Four deliberate differences from the Postgres rules. Physical replication is
+# not mirrored, because a replication connection cannot be pooled and a rule
+# permitting one here would only mislead. Neither are the rules setup_backrest
+# patches in for the backup host, for the same reason. pgbouncer_hba_rules is
+# pooler-only: it names clients that should reach the pooled endpoint and
+# nothing else, which naming them in custom_hba_rules could not express, since
+# those rules open the direct endpoint too. And the proxy rules admit every
+# role, for the reason given where they are rendered.
+#
+# A line pgBouncer cannot parse is skipped with a WARNING rather than refused,
+# so an unsupported rule fails open — a dropped "reject" would leave the pooler
+# more permissive than Postgres, silently. init_server's validate.yaml rejects
+# the syntax that would do this before anything is provisioned.
+
+# Administration over the unix socket, matching Postgres's own local rule.
+local all postgres peer
+
+# The node itself: this is the path the pooler's own host uses, and the only one
+# that exists on a node with no proxy in front of it.
+host all all 127.0.0.1/32 scram-sha-256
+
+# pgEdge node communication and the admin user.
+{% for host in groups['pgedge'] %}
+host {{ db_list }} {{ pgedge_user }},{{ db_user }} {{ hostvars[host].ansible_default_ipv4.address }}/32 scram-sha-256
+{% endfor %}
+{% if proxies_in_zone or proxy_node %}
+
+# Connections arriving through a proxy. HAProxy's pooled listener is TCP
+# passthrough, so the pooler sees the proxy's address and not the client's, and
+# a client-address rule cannot gate that path at all.
+#
+# These name every role rather than the two Postgres names on the same
+# addresses, which is the one place the pooled rules are wider than the direct
+# ones. The pooled listener exists for applications, and an application uses
+# whichever role the operator created for it; admitting only db_user and
+# pgedge_user here would leave that listener able to carry nothing but the
+# cluster's own logins. Restrict this at the proxy or the network, not here:
+# these rules are first-match, so nothing added below can narrow them.
+{% for host in proxies_in_zone %}
+host {{ db_list }} all {{ hostvars[host].ansible_default_ipv4.address }}/32 scram-sha-256
+{% endfor %}
+{% if proxy_node %}
+{%   set proxy_ip = proxy_node | ansible.utils.ipaddr('address') or lookup('dig', proxy_node) %}
+host {{ db_list }} all {{ proxy_ip }}/32 scram-sha-256
+{% endif %}
+{% endif %}
+{% if custom_hba_rules %}
+
+# custom_hba_rules, shared with Postgres: a client named here reaches both
+# endpoints.
+{% for rule in custom_hba_rules %}
+{{ rule.contype | default('host') }} {{ rule.databases | default('postgres') }} {{ rule.users | default('postgres') }} {{ rule.source | default('127.0.0.1/32') }} {{ rule.method | default('scram-sha-256') }}
+{% endfor %}
+{% endif %}
+{% if pgbouncer_hba_rules %}
+
+# pgbouncer_hba_rules: clients of the pooled endpoint only. Postgres never sees
+# these, so a client named here cannot reach its port directly.
+{% for rule in pgbouncer_hba_rules %}
+{{ rule.contype | default('host') }} {{ rule.databases | default('postgres') }} {{ rule.users | default('postgres') }} {{ rule.source | default('127.0.0.1/32') }} {{ rule.method | default('scram-sha-256') }}
+{% endfor %}
+{% endif %}

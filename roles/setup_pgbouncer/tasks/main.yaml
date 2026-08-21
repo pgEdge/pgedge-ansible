@@ -92,6 +92,23 @@
   become: true
   when: pgbouncer_client_tls_sslmode != 'disable'
 
+# The pooler decides for itself which clients may connect, from rules rendered
+# out of the same variables as Postgres's. It cannot share Postgres's file: on
+# RHEL that lives in a 0700 PGDATA owned by postgres while the pooler runs as
+# pgbouncer, so pointing auth_hba_file at it would leave every client refused.
+# Written before pgbouncer.ini, which names it, so the file the pooler is told
+# to read exists by the time it is told.
+
+- name: Write the pooler's client authentication rules
+  template:
+    src: pg_hba.conf.j2
+    dest: "{{ pgbouncer_hba_file }}"
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "0640"
+  register: hba_status
+  become: true
+
 - name: Write pgBouncer configuration
   template:
     src: pgbouncer.ini.j2
@@ -137,6 +154,7 @@
     state: >-
       {{ 'restarted'
          if (dropin_status.changed or userlist_status.changed or
-             tls_status.changed or config_status.changed)
+             tls_status.changed or hba_status.changed or
+             config_status.changed)
          else 'started' }}
   become: true

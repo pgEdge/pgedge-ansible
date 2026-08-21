@@ -16,6 +16,14 @@
     pgedge_user: pgedge
     pgedge_password: TestPass456
     pgbouncer_auth_user: pgbouncer_auth
+    # The address the pooler's own rules have to name for the client play below
+    # to get in, and the platform's log path, where an HBA line pgBouncer could
+    # not parse is the only trace it leaves.
+    client_host: "{{ groups['clients'] | default([]) | first | default('') }}"
+    pgbouncer_log_path: >-
+      {{ '/var/log/pgbouncer/pgbouncer.log'
+         if ansible_facts['os_family'] == 'RedHat'
+         else '/var/log/postgresql/pgbouncer.log' }}
     pool_test_user: pooltest
     pool_test_password: PoolTest987
     patroni_svc: >-
@@ -365,6 +373,70 @@
         {{ service_user }} cannot serve client TLS from it.
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
+  # auth_type = hba puts this file, not a password on its own, in charge of who
+  # may connect: pgBouncer matches the client's address, database and user
+  # against these rules first and refuses anything it cannot match. Three things
+  # therefore have to hold. The file has to be readable by the service user — on
+  # RHEL that is pgbouncer, which is the whole reason the pooler cannot share
+  # Postgres's own pg_hba.conf inside a 0700 PGDATA. It has to carry the
+  # pooler-only rules from pgbouncer_hba_rules, which is what admits the client
+  # node below. And every line has to have parsed: pgBouncer skips one it cannot
+  # read with only a warning, so a dropped rule fails open and leaves no trace
+  # anywhere but the log.
+
+  - name: Stat the pooler's HBA file
+    stat:
+      path: /etc/pgbouncer/pg_hba.conf
+    register: pgbouncer_hba
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Read the pooler's HBA file
+    slurp:
+      src: /etc/pgbouncer/pg_hba.conf
+    register: pgbouncer_hba_file
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Assert the pooler has rules its own user can read
+    vars:
+      service_user: >-
+        {{ 'pgbouncer' if ansible_facts['os_family'] == 'RedHat'
+           else 'postgres' }}
+      rules: >-
+        {{ (pgbouncer_hba_file.content | b64decode).splitlines() |
+           reject('match', ' *(#|$)') | list }}
+    assert:
+      that:
+      - pgbouncer_hba.stat.exists
+      - pgbouncer_hba.stat.pw_name == service_user
+      - "'local all postgres peer' in rules"
+      - rules | select('search', '127.0.0.1/32') | list | length > 0
+      - rules | select('search', client_host) | list | length > 0
+      fail_msg: >-
+        /etc/pgbouncer/pg_hba.conf on {{ inventory_hostname }} is
+        {{ 'missing' if not pgbouncer_hba.stat.exists else
+           'owned by ' ~ pgbouncer_hba.stat.pw_name ~ ' and holds ' ~
+           (rules | length) ~ ' rules' }}, so the pooler running as
+        {{ service_user }} cannot gate clients the way this inventory asked.
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Look for HBA rules the pooler could not parse
+    command: >
+      grep -c "could not parse hba" {{ pgbouncer_log_path }}
+    register: pgbouncer_hba_warnings
+    changed_when: false
+    failed_when: false
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Assert the pooler parsed every rule it was given
+    assert:
+      that: pgbouncer_hba_warnings.stdout | trim | int == 0
+      fail_msg: >-
+        pgBouncer on {{ inventory_hostname }} logged
+        {{ pgbouncer_hba_warnings.stdout | trim }} unparsable HBA lines. It
+        skips those with a warning rather than refusing to start, so the pooled
+        endpoint is running with fewer rules than this inventory asked for.
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
   # The drop-in has to raise the descriptor ceiling off systemd's default of
   # 1024, which is below max_client_conn on its own. The exact figure is derived
   # from max_client_conn in the role's defaults and is not visible here, so
@@ -391,10 +463,7 @@
 
   - name: Stat the pooler log file
     stat:
-      path: >-
-        {{ '/var/log/pgbouncer/pgbouncer.log'
-           if ansible_facts['os_family'] == 'RedHat'
-           else '/var/log/postgresql/pgbouncer.log' }}
+      path: "{{ pgbouncer_log_path }}"
     register: pgbouncer_log
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
@@ -483,6 +552,10 @@
     - demo
     db_user: admin
     db_password: TestPass123
+    # A real login with a real password that the pooler's rules do not name for
+    # this host, which is what the refusal below turns on.
+    pgedge_user: pgedge
+    pgedge_password: TestPass456
     pool_test_user: pooltest
     pool_test_password: PoolTest987
     pooled_nodes: "{{ groups['pgbouncer'] | default([]) }}"
@@ -721,6 +794,37 @@
         Postgres on {{ groups['pgedge'] | first }} did not refuse this host on
         its own address. rc={{ via_postgres.rc }},
         stderr="{{ via_postgres.stderr }}"
+
+  # Negative: the pooler's own rules, which auth_type = hba makes authoritative.
+  # This host is named in pgbouncer_hba_rules for the application roles only, so
+  # pgedge — a real login with a real password, named for every node's address
+  # but not for this one — matches no rule and is refused before its password is
+  # considered at all. The wording is pgBouncer's, not Postgres's: the direct
+  # endpoint's "no pg_hba.conf entry" never reaches a pooled client.
+
+  - name: Connect to a pooler as a role its rules do not name
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ pgedge_user }}" -t -A -c "SELECT 1"
+    environment:
+      PGPASSWORD: "{{ pgedge_password }}"
+    register: via_pooler_unnamed
+    changed_when: false
+    failed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooler refused a role its rules do not name
+    assert:
+      that:
+      - via_pooler_unnamed.rc != 0
+      - "'no authentication method is found' in via_pooler_unnamed.stderr"
+      fail_msg: >-
+        {{ pgedge_user }} was not refused at
+        {{ pooled_nodes | first }}:{{ pgbouncer_port | default(6432) }} the way
+        the pooler's HBA rules require. rc={{ via_pooler_unnamed.rc }},
+        stderr="{{ via_pooler_unnamed.stderr }}"
+    when: pooled_nodes | length > 0
 
   # Negative: an unpooled node has no pooler to reach. On RHEL nothing is
   # listening; on Debian the packaged pooler the metapackage started is bound to

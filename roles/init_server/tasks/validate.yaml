@@ -113,6 +113,56 @@
   run_once: true
   when: groups.pgbouncer | default([]) | length > 0
 
+# A pooled node renders these rules into the pooler's own HBA file, and
+# pgBouncer's parser accepts a narrower syntax than Postgres's. What makes that
+# dangerous is the failure mode: an unsupported line is skipped with a WARNING
+# rather than refused, so the rule silently disappears from the pooled endpoint
+# — and a dropped "reject" leaves it more permissive than the direct one. Catch
+# it in the inventory instead. The three lists below were measured against
+# pgBouncer 1.25.1: no ident, gss, sspi, radius, pam or bsd, no option syntax
+# such as clientcert=verify-ca, no uppercase spellings, and no hostname, bare
+# address or samehost/samenet in the source, all of which Postgres accepts.
+
+- name: Ensure the HBA rules are ones the pooler can parse too
+  vars:
+    pooler_hba_contypes: [local, host, hostssl, hostnossl]
+    pooler_hba_methods: [trust, reject, md5, password, scram-sha-256, peer, cert]
+    hba_rules: "{{ custom_hba_rules + pgbouncer_hba_rules }}"
+    # Rules with no contype default to host, so they are networked too.
+    networked_rules: >-
+      {{ (hba_rules | rejectattr('contype', 'defined') | list) +
+      (hba_rules | selectattr('contype', 'defined') |
+      rejectattr('contype', 'eq', 'local') | list) }}
+    hosted_sources: >-
+      {{ networked_rules | rejectattr('source', 'undefined') |
+      rejectattr('source', 'eq', 'all') | map(attribute='source') | list }}
+    bad_contype: >-
+      {{ hba_rules | rejectattr('contype', 'undefined') |
+      rejectattr('contype', 'in', pooler_hba_contypes) | list }}
+    bad_method: >-
+      {{ hba_rules | rejectattr('method', 'undefined') |
+      rejectattr('method', 'in', pooler_hba_methods) | list }}
+    bad_source: >-
+      {{ ((hosted_sources | reject('search', '/[0-9]+$') | list) +
+      (hosted_sources | reject('ansible.utils.ip') | list)) | unique }}
+  assert:
+    that:
+    - bad_contype | length == 0
+    - bad_method | length == 0
+    - bad_source | length == 0
+    fail_msg: >-
+      custom_hba_rules and pgbouncer_hba_rules also feed the pooler's own HBA
+      file, and pgBouncer skips a line it cannot parse with only a warning, so
+      an unsupported rule disappears from the pooled endpoint instead of
+      failing. contype must be one of {{ pooler_hba_contypes | join(', ') }};
+      method must be one of {{ pooler_hba_methods | join(', ') }}, lowercase and
+      with no option syntax; source must carry a prefix length or be "all".
+      Rejected contypes: {{ bad_contype | map(attribute='contype') | list }}.
+      Rejected methods: {{ bad_method | map(attribute='method') | list }}.
+      Rejected sources: {{ bad_source }}.
+  run_once: true
+  when: groups.pgbouncer | default([]) | length > 0
+
 # proxy_port and pooler_port are proxy-layer ports, so they only collide with
 # the node-level ports when HAProxy shares a host with Postgres — a topology
 # docs/configuration/proxy.md explicitly supports. Checked only when the
