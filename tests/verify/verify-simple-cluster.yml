@@ -14,8 +14,30 @@
     db_password: TestPass123
     pgedge_user: pgedge
     pgedge_password: TestPass456
+    pgbouncer_auth_user: pgbouncer_auth
+    pool_test_user: pooltest
+    pool_test_password: PoolTest987
+    client_protocol_version: "3.0"
 
   environment:
+  # Pin the wire protocol these tests use. pgEdge's bookworm repo currently
+  # publishes the PG19 beta in 'release', and Debian builds one shared libpq5
+  # from the newest tree in the component, so every pgEdge bookworm host gets
+  # libpq5 19~beta3. During the PG19 beta libpq deliberately "greases" the
+  # handshake (version 3.9999) to flush out software that mis-negotiates, and
+  # pgBouncer <= 1.25.2 is such software: it answers NegotiateProtocolVersion
+  # twice whenever it cannot assign a server immediately, which auth_query
+  # always triggers because the login pauses for the lookup. Upstream
+  # https://github.com/pgbouncer/pgbouncer/issues/1459, fixed by PR #1460
+  # (merged 2026-05-30), unreleased as of 1.25.2.
+  #
+  # That is a transient packaging problem, not something this collection causes
+  # or can fix, so the suite does not encode it -- the pooler documentation
+  # carries the operator-facing note instead. 3.0 is the default for every
+  # stable libpq and the workaround the PostgreSQL docs name, so pinning it
+  # keeps these tests measuring our own configuration rather than the client
+  # library's beta behaviour.
+    PGMAXPROTOCOLVERSION: "{{ client_protocol_version }}"
     PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
   tasks:
@@ -188,6 +210,46 @@
         "{{ pooled_select.stdout | default('') }}"
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
+  # Client credentials come from auth_query, not from a list on the pooler, so a
+  # role this collection never created has to work through the pooled endpoint.
+  # It is created here, after the pooler has been running since deployment —
+  # exactly the case that would fail if the verifier came from a file. The
+  # userlist is checked first, because a pooled connection below proves nothing
+  # unless this role is genuinely absent from it.
+
+  - name: Create a Postgres role that no userlist names
+    community.postgresql.postgresql_user:
+      name: "{{ pool_test_user }}"
+      password: "{{ pool_test_password }}"
+      role_attr_flags: LOGIN
+      login_port: "{{ pg_port | default(5432) }}"
+      login_unix_socket: /var/run/postgresql
+    become_user: postgres
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Read the pooler's userlist
+    slurp:
+      src: /etc/pgbouncer/userlist.txt
+    register: pgbouncer_userlist
+    no_log: true
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Assert the userlist holds nothing but the pooler's own login
+    vars:
+      entries: >-
+        {{ (pgbouncer_userlist.content | b64decode).splitlines() |
+           select | list }}
+    assert:
+      that:
+      - entries | length == 1
+      - entries[0] is match('"' ~ pgbouncer_auth_user ~ '"')
+      fail_msg: >-
+        /etc/pgbouncer/userlist.txt on {{ inventory_hostname }} holds
+        {{ entries | length }} entries and does not begin with
+        "{{ pgbouncer_auth_user }}", so the pooled connections below would not
+        be testing auth_query.
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
   # The drop-in has to raise the descriptor ceiling off systemd's default of
   # 1024, which is below max_client_conn on its own. The exact figure is derived
   # from max_client_conn in the role's defaults and is not visible here, so
@@ -243,12 +305,33 @@
     - demo
     db_user: admin
     db_password: TestPass123
+    pool_test_user: pooltest
+    pool_test_password: PoolTest987
     pooled_nodes: "{{ groups['pgbouncer'] | default([]) }}"
     unpooled_nodes: >-
       {{ groups['pgedge'] | difference(groups['pgbouncer'] | default([])) }}
     proxies: "{{ groups['haproxy'] | default([]) }}"
+    client_protocol_version: "3.0"
 
   environment:
+  # Pin the wire protocol these tests use. pgEdge's bookworm repo currently
+  # publishes the PG19 beta in 'release', and Debian builds one shared libpq5
+  # from the newest tree in the component, so every pgEdge bookworm host gets
+  # libpq5 19~beta3. During the PG19 beta libpq deliberately "greases" the
+  # handshake (version 3.9999) to flush out software that mis-negotiates, and
+  # pgBouncer <= 1.25.2 is such software: it answers NegotiateProtocolVersion
+  # twice whenever it cannot assign a server immediately, which auth_query
+  # always triggers because the login pauses for the lookup. Upstream
+  # https://github.com/pgbouncer/pgbouncer/issues/1459, fixed by PR #1460
+  # (merged 2026-05-30), unreleased as of 1.25.2.
+  #
+  # That is a transient packaging problem, not something this collection causes
+  # or can fix, so the suite does not encode it -- the pooler documentation
+  # carries the operator-facing note instead. 3.0 is the default for every
+  # stable libpq and the workaround the PostgreSQL docs name, so pinning it
+  # keeps these tests measuring our own configuration rather than the client
+  # library's beta behaviour.
+    PGMAXPROTOCOLVERSION: "{{ client_protocol_version }}"
     PGPASSWORD: "{{ db_password }}"
     PGCONNECT_TIMEOUT: "5"
 
@@ -283,6 +366,31 @@
       fail_msg: >-
         SELECT 1 against {{ pooled_nodes | first }}:{{ pgbouncer_port | default(6432) }}
         returned "{{ via_pooler.stdout | default('') }}"
+    when: pooled_nodes | length > 0
+
+  # The gate for auth_query, from the only host that can observe it. This role
+  # was created after the pooler started and appears in no userlist, so the
+  # verifier it authenticates against can only have come from the lookup
+  # function in Postgres.
+
+  - name: Query a pooled node's pooler as the post-deployment role
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ pool_test_user }}" -t -A -c "SELECT 1"
+    environment:
+      PGPASSWORD: "{{ pool_test_password }}"
+    register: via_pooler_new_role
+    changed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooler resolved a credential it was never given
+    assert:
+      that: via_pooler_new_role.stdout == '1'
+      fail_msg: >-
+        {{ pool_test_user }} could not authenticate through
+        {{ pooled_nodes | first }}:{{ pgbouncer_port | default(6432) }}, so
+        auth_query did not resolve it. stderr="{{ via_pooler_new_role.stderr | default('') }}"
     when: pooled_nodes | length > 0
 
   - name: Query the direct HAProxy listener

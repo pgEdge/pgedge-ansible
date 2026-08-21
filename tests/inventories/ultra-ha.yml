@@ -12,6 +12,7 @@ pgedge:
     pgedge_password: TestPass456
     replication_password: TestPass789
     backup_password: TestBackup321
+    pgbouncer_auth_password: TestPool654
     is_ha_cluster: true
   hosts:
     192.168.6.10:

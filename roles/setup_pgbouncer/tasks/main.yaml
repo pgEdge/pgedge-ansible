@@ -47,9 +47,11 @@
   register: dropin_status
   become: true
 
-# Write the userlist with plain passwords so pgBouncer can both verify clients
-# and authenticate to the backend Postgres. auth_type = scram-sha-256 keeps
-# SCRAM on the wire; pgBouncer derives the verifier from the plain password.
+# One line, for one account. Client credentials come from auth_query, but
+# pgBouncer has to authenticate to Postgres before it can run that query, and
+# its own login has nowhere else to come from. The password is plain because a
+# stored SCRAM verifier cannot be used to log in; auth_type = scram-sha-256
+# still keeps SCRAM on the wire, with pgBouncer deriving the verifier from this.
 
 - name: Write pgBouncer userlist
   copy:
@@ -57,10 +59,9 @@
     owner: "{{ pgbouncer_user }}"
     group: "{{ pgbouncer_group }}"
     mode: "0640"
-    content: |
-      {% for u in pgbouncer_userlist %}
-      "{{ u.user | replace('"', '""') }}" "{{ u.password | replace('"', '""') }}"
-      {% endfor %}
+    content: >
+      "{{ pgbouncer_auth_user | replace('"', '""') }}"
+      "{{ pgbouncer_auth_password | replace('"', '""') }}"
   register: userlist_status
   become: true
   no_log: true

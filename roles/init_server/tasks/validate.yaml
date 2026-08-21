@@ -80,6 +80,22 @@
       {{ groups.pgbouncer | default([]) | difference(groups.pgedge | default([])) | join(', ') }}
   run_once: true
 
+# The pooler's own Postgres login is the one credential this collection still
+# writes to disk, so it gets the same treatment as the rest. Asserted only when
+# the cluster actually pools: an unpooled cluster never creates the role, and
+# demanding a password for it would change what an existing inventory needs.
+
+- name: Ensure the pgBouncer authentication password has been changed
+  assert:
+    that:
+    - pgbouncer_auth_password != 'secret'
+    fail_msg: >-
+      pgbouncer_auth_password is still set to the default value 'secret'. It is
+      the login pgBouncer uses to look up client credentials in Postgres, and it
+      is written to the pooler's auth_file, so it must be set explicitly.
+  run_once: true
+  when: groups.pgbouncer | default([]) | length > 0
+
 # proxy_port and pooler_port are proxy-layer ports, so they only collide with
 # the node-level ports when HAProxy shares a host with Postgres — a topology
 # docs/configuration/proxy.md explicitly supports. Checked only when the

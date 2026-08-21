@@ -38,15 +38,14 @@ pgbouncer_pool_mode: session
 pgbouncer_max_client_conn: 1000
 pgbouncer_default_pool_size: 25
 pgbouncer_max_prepared_statements: 0
-# Postgres roles (and their passwords) written to pgBouncer's userlist. Plain
-# passwords are required so pgBouncer can authenticate to the backend Postgres
-# (a SCRAM verifier alone cannot); auth_type = scram-sha-256 still keeps SCRAM
-# on the wire for both the client and server connections.
-pgbouncer_userlist:
-- user: "{{ db_user }}"
-  password: "{{ db_password }}"
-- user: "{{ pgedge_user }}"
-  password: "{{ pgedge_password }}"
+# pgBouncer keeps no list of Postgres passwords. It logs in as this role and
+# calls a SECURITY DEFINER lookup to fetch the requested user's stored SCRAM
+# verifier, so any Postgres role can use the pooled endpoint — including roles
+# created long after deployment. setup_postgres creates the role and the lookup
+# wherever the zone pools; this password is the only one written to disk, in
+# pgBouncer's auth_file, because the admin console cannot use the lookup.
+pgbouncer_auth_user: pgbouncer_auth
+pgbouncer_auth_password: secret
 
 is_ha_cluster: false
 exception_behaviour: "transdiscard"

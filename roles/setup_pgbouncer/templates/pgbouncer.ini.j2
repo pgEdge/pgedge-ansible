@@ -9,8 +9,19 @@
 listen_addr = {{ pgbouncer_listen_addr }}
 listen_port = {{ pgbouncer_port }}
 
+# Clients are verified against Postgres itself, not against a list kept here:
+# pgBouncer connects as auth_user and calls the lookup setup_postgres created to
+# read the requested role's stored SCRAM verifier. Any Postgres role therefore
+# works through the pooler, including one created after the pooler started, and
+# a rotated password takes effect immediately. auth_dbname pins the lookup to
+# the maintenance database, so it runs there rather than in whichever database
+# the client asked for. auth_file holds only auth_user's own password, which
+# pgBouncer needs before it can run the lookup at all.
 auth_type = scram-sha-256
 auth_file = /etc/pgbouncer/userlist.txt
+auth_user = {{ pgbouncer_auth_user }}
+auth_query = SELECT username, password FROM pgbouncer.get_auth($1)
+auth_dbname = postgres
 
 pool_mode = {{ pgbouncer_pool_mode }}
 max_client_conn = {{ pgbouncer_max_client_conn }}
@@ -25,8 +36,12 @@ ignore_startup_parameters = extra_float_digits
 # pgBouncer -> local Postgres is a loopback connection; no TLS required.
 server_tls_sslmode = disable
 
-admin_users = {{ db_user }}
-stats_users = {{ db_user }}
+# The admin console is the one path that cannot use auth_query, so its users
+# must appear in auth_file — and auth_user is the only account that does. Naming
+# db_user here instead would advertise an account the pooler cannot authenticate,
+# and would put RELOAD / KILL / SHUTDOWN wherever the pooled endpoint reaches.
+admin_users = {{ pgbouncer_auth_user }}
+stats_users = {{ pgbouncer_auth_user }}
 
 # Both paths are the platform's own: RHEL's package owns /var/log/pgbouncer
 # and /run/pgbouncer, Debian's logs beside Postgres and keeps its pidfile in
