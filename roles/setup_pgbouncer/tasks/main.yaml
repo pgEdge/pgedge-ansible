@@ -2,9 +2,10 @@
 
 # Configure and run pgBouncer on each pooled pgEdge node (the package is
 # installed by install_pgbouncer). pgBouncer listens on pgbouncer_port and
-# forwards to the node's local Postgres on 127.0.0.1; the Patroni-managed
-# pg_hba.conf already permits "host all all 127.0.0.1/32 scram-sha-256", so
-# Patroni is untouched.
+# forwards to the node's local Postgres on 127.0.0.1, which Postgres already
+# permits: prep_instance.yaml writes "host all all 127.0.0.1/32 scram-sha-256"
+# in a simple cluster and patroni.yml.j2 renders the same rule in an HA one, so
+# neither Postgres's own configuration nor Patroni's needs changing here.
 #
 # Pooled and direct connections are not interchangeable — they resolve against
 # different pg_hba rules — so nothing here fails a pooled client over to
@@ -50,8 +51,10 @@
 # One line, for one account. Client credentials come from auth_query, but
 # pgBouncer has to authenticate to Postgres before it can run that query, and
 # its own login has nowhere else to come from. The password is plain because a
-# stored SCRAM verifier cannot be used to log in; auth_type = scram-sha-256
-# still keeps SCRAM on the wire, with pgBouncer deriving the verifier from this.
+# stored SCRAM verifier cannot be used to log in; pgBouncer derives the verifier
+# from this, so SCRAM is still what goes on the wire. It is also what admits the
+# auth user to the admin console over the unix socket, which is the one path
+# auth_query cannot serve.
 
 - name: Write pgBouncer userlist
   copy:

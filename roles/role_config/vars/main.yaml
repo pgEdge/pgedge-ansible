@@ -75,6 +75,25 @@ pgbouncer_pid_file: >-
     '/var/run/postgresql/pgbouncer.pid' if ansible_facts['os_family'] == 'Debian'
   }}
 
+# Where the pooler puts its unix socket. pgBouncer's compiled default is /tmp,
+# which is world-writable and shared with everything else on the host, so the
+# console and every local client resolve through a path no package owns. Each
+# platform already has a directory for this: RHEL's package owns /run/pgbouncer
+# (created 0700 pgbouncer by its tmpfiles.d, which also holds the pidfile), and
+# Debian's shipped configuration uses /var/run/postgresql, beside Postgres's own
+# socket, where its pooler already runs as postgres.
+#
+# The 0700 on RHEL is the difference worth knowing: only root and the pgbouncer
+# user can reach a socket there, so local administration is root's. On Debian
+# the directory is 2775 postgres, so root and postgres both reach it. Neither
+# platform needs a directory this role creates.
+
+pgbouncer_socket_dir: >-
+  {{
+    '/run/pgbouncer' if ansible_facts['os_family'] == 'RedHat' else
+    '/var/run/postgresql' if ansible_facts['os_family'] == 'Debian'
+  }}
+
 # Where setup_pgbouncer stages the certificate it serves clients from. The
 # pooler needs its own copy because on RHEL it runs as pgbouncer while PGDATA is
 # 0700 postgres, so Postgres's copy is unreadable to it. Debian's pooler runs as

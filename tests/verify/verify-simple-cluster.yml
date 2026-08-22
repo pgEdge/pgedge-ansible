@@ -23,6 +23,13 @@
       {{ '/var/log/pgbouncer/pgbouncer.log'
          if ansible_facts['os_family'] == 'RedHat'
          else '/var/log/postgresql/pgbouncer.log' }}
+    # Set explicitly by the role; asserted here rather than read back from the
+    # rendered file, so a change to either side has to be deliberate.
+    pgbouncer_socket_dir_path: >-
+      {{ '/run/pgbouncer' if ansible_facts['os_family'] == 'RedHat'
+         else '/var/run/postgresql' }}
+    pgbouncer_socket_path: >-
+      {{ pgbouncer_socket_dir_path }}/.s.PGSQL.{{ pgbouncer_port | default(6432) }}
     pool_test_user: pooltest
     pool_test_password: PoolTest987
     client_protocol_version: "3.0"
@@ -323,6 +330,7 @@
       - pgbouncer_hba.stat.exists
       - pgbouncer_hba.stat.pw_name == service_user
       - "'local all postgres peer' in rules"
+      - "'local all ' ~ pgbouncer_auth_user ~ ' scram-sha-256' in rules"
       - rules | select('search', '127.0.0.1/32') | list | length > 0
       - rules | select('search', client_host) | list | length > 0
       fail_msg: >-
@@ -349,6 +357,47 @@
         {{ pgbouncer_hba_warnings.stdout | trim }} unparsable HBA lines. It
         skips those with a warning rather than refusing to start, so the pooled
         endpoint is running with fewer rules than this inventory asked for.
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  # The pooler's socket is set explicitly rather than left at pgBouncer's
+  # compiled default of /tmp, so it lands somewhere a package already owns:
+  # /run/pgbouncer on RHEL, /var/run/postgresql on Debian. Reaching the admin
+  # console over it is what proves the whole local path at once — the socket is
+  # where the configuration says, the HBA file's local rule for the auth user
+  # matched, and pgBouncer derived a SCRAM verifier from auth_file to check it.
+  # The console is the one path auth_query cannot serve, and admin_users names
+  # only the auth user, so no other role can stand in for this.
+
+  - name: Stat the pooler's unix socket
+    stat:
+      path: "{{ pgbouncer_socket_path }}"
+    register: pgbouncer_socket
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Reach the pooler's admin console over its unix socket
+    command: >
+      psql "host={{ pgbouncer_socket_dir_path }}
+      port={{ pgbouncer_port | default(6432) }} dbname=pgbouncer
+      user={{ pgbouncer_auth_user }}" -t -A -c "SHOW VERSION"
+    environment:
+      PGPASSWORD: "{{ pgbouncer_auth_password }}"
+    register: pgbouncer_console
+    changed_when: false
+    failed_when: false
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Assert local administration works over the socket
+    assert:
+      that:
+      - pgbouncer_socket.stat.exists
+      - pgbouncer_console.stdout is search('PgBouncer')
+      fail_msg: >-
+        {{ pgbouncer_socket_path }} on {{ inventory_hostname }} is
+        {{ 'missing' if not pgbouncer_socket.stat.exists else 'present' }} and
+        the admin console answered
+        "{{ pgbouncer_console.stdout | default('') }}{{ pgbouncer_console.stderr | default('') }}".
+        Local administration is the only path that does not depend on the
+        network, so it has to work as {{ pgbouncer_auth_user }}.
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
   # The drop-in has to raise the descriptor ceiling off systemd's default of

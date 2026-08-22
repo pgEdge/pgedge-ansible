@@ -101,13 +101,18 @@
 # and verify-full are valid pgBouncer settings but unsupported here: both demand
 # a client certificate, which needs pg_hba option syntax pgBouncer cannot parse,
 # so a pooler configured that way would reject every client.
+#
+# Only checked when the value is set. The default is a setup_pgbouncer default,
+# so it is not in scope in this role — and it does not need checking, being ours.
+# What needs checking is what the inventory supplied.
 
 - name: Ensure the pooler's client TLS mode is one this collection supports
   assert:
     that:
-    - pgbouncer_client_tls_sslmode in ('disable', 'allow', 'prefer', 'require')
+    - pgbouncer_client_tls_sslmode is not defined or
+      pgbouncer_client_tls_sslmode in ('disable', 'allow', 'prefer', 'require')
     fail_msg: >-
-      pgbouncer_client_tls_sslmode is "{{ pgbouncer_client_tls_sslmode }}".
+      pgbouncer_client_tls_sslmode is "{{ pgbouncer_client_tls_sslmode | default('') }}".
       It must be one of disable, allow, prefer or require. Client certificates
       (verify-ca, verify-full) are not supported on the pooled endpoint.
   run_once: true
@@ -162,6 +167,23 @@
       Rejected sources: {{ bad_source }}.
   run_once: true
   when: groups.pgbouncer | default([]) | length > 0
+
+# A pooled node binds both Postgres and the pooler, and since the pooler's
+# unix_socket_dir is /var/run/postgresql on Debian — beside Postgres's own
+# socket — an equal port collides twice: on the TCP listener and on the socket
+# name, .s.PGSQL.<port>. Both surface late and confusingly (the socket one as
+# "unix socket is in use" from whichever process starts second), so catch it
+# here instead.
+
+- name: Ensure pgbouncer_port does not collide with pg_port on a pooled node
+  assert:
+    that:
+    - pgbouncer_port | int != pg_port | int
+    fail_msg: >-
+      pgbouncer_port and pg_port are both {{ pg_port }} on
+      {{ inventory_hostname }}, which runs Postgres and a pooler. They share a
+      host, and on Debian a socket directory, so the two must differ.
+  when: inventory_hostname in (groups.pgbouncer | default([]))
 
 # proxy_port and pooler_port are proxy-layer ports, so they only collide with
 # the node-level ports when HAProxy shares a host with Postgres — a topology
