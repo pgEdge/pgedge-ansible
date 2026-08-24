@@ -61,6 +61,13 @@ jobs:
       - name: Install Ansible
         run: pip install ansible
 
+      # Offline, and the only tests that can observe a topology this matrix
+      # does not deploy -- in particular a cluster with nothing in the
+      # 'pgbouncer' group, whose haproxy.cfg must stay what it was before
+      # pooling existed.
+      - name: Check rendered templates
+        run: python3 tests/render/check-haproxy.py
+
       - name: Generate SSH keypair
         run: |
           mkdir -p tests/.ssh
@@ -117,6 +124,15 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/ultra-ha.yml \
             -i tests/inventories/ultra-ha.yml \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }} \
+            $DCS_VARS
+
+      - name: Check the pooler roles are idempotent
+        run: |
+          tests/check-idempotence.sh \
+            tests/inventories/ultra-ha.yml \
+            tests/playbooks/ultra-ha.yml \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS

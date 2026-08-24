@@ -6,6 +6,9 @@ host-keys
 tests/.ssh/
 tests/docker/authorized_keys
 
+# Left behind by the render checks under tests/render.
+__pycache__/
+
 # Built by the Makefile from galaxy.template.yml.
 galaxy.yml
 pgedge-platform-*.tar.gz

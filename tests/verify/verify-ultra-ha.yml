@@ -24,6 +24,15 @@
       {{ '/var/log/pgbouncer/pgbouncer.log'
          if ansible_facts['os_family'] == 'RedHat'
          else '/var/log/postgresql/pgbouncer.log' }}
+    # What a logrotate configuration has to name for that log to be rotated,
+    # which on Debian is not the log's own path: the pooler logs beside
+    # Postgres and pgedge-postgresql-common rotates the whole directory with a
+    # glob. Character classes rather than backslash escapes, because this ends
+    # up in a regex and a backslash does not survive a folded scalar.
+    pgbouncer_logrotate_pattern: >-
+      {{ '/var/log/pgbouncer/pgbouncer[.]log'
+         if ansible_facts['os_family'] == 'RedHat'
+         else '/var/log/postgresql/[*][.]log' }}
     # Set explicitly by the role; asserted here rather than read back from the
     # rendered file, so a change to either side has to be deliberate.
     pgbouncer_socket_dir_path: >-
@@ -507,8 +516,12 @@
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
   # Each platform's own log path, which is also the one its logrotate
-  # configuration already covers: RHEL ships /etc/logrotate.d/pgbouncer, and on
-  # Debian pgedge-postgresql-common rotates /var/log/postgresql/*.log.
+  # configuration already covers: RHEL ships /etc/logrotate.d/pgbouncer with
+  # the pooler's package, and on Debian pgedge-postgresql-common rotates
+  # /var/log/postgresql/*.log. Both are asserted, not assumed — that coverage
+  # is the entire reason this collection keeps the pooler on the native paths
+  # and ships no logrotate file of its own, so a packaging change that dropped
+  # it has to fail here rather than be discovered by a full disk.
 
   - name: Stat the pooler log file
     stat:
@@ -521,6 +534,24 @@
       that: pgbouncer_log.stat.exists
       fail_msg: >-
         No pgBouncer log at the platform's path on {{ inventory_hostname }}
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Find the logrotate configuration that covers the pooler log
+    find:
+      paths: /etc/logrotate.d
+      contains: "{{ pgbouncer_logrotate_pattern }}"
+    register: pgbouncer_logrotate
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Assert the platform rotates the pooler log
+    assert:
+      that: pgbouncer_logrotate.files | length > 0
+      fail_msg: >-
+        Nothing in /etc/logrotate.d on {{ inventory_hostname }} names
+        {{ pgbouncer_logrotate_pattern }}, so the pooler's log grows until the
+        filesystem fills. Either the packaging stopped shipping the rule this
+        platform used to carry, or the pooler was moved off the path that rule
+        covers.
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
 # Verify HAProxy nodes
@@ -897,3 +928,146 @@
         {{ unpooled_nodes | first }} answered on
         {{ pgbouncer_port | default(6432) }} but is not in the pgbouncer group.
     when: unpooled_nodes | length > 0
+
+# The pooled endpoint's failure mode, which the design chooses deliberately:
+# pooled and direct connections resolve against different pg_hba rules, so
+# nothing fails a pooled client over to Postgres. Stopping the pooler on the
+# node the pooled listener is routing to therefore has to take that endpoint
+# down while the direct one keeps serving.
+#
+# Both listeners check Patroni on 8008 rather than the port they forward to, so
+# the leader stays "up" for the pooled listener even with its pooler dead: the
+# connection is accepted and then fails, rather than being routed to a replica.
+# A TCP check on pgbouncer_port would mark every pooled node up and send writes
+# to replicas, which is why it is not used.
+#
+# Runs last, and inside a block/always, because it stops a service the rest of
+# the suite depends on. Only ultra-ha can test this at all — a simple cluster
+# has no proxy in front of the poolers and no leader to pick.
+- hosts: clients
+  become: true
+
+  vars:
+    db_names:
+    - demo
+    db_user: admin
+    db_password: TestPass123
+    proxies: "{{ groups['haproxy'] | default([]) }}"
+    # The pooled nodes of the zone the proxy under test serves: the only ones
+    # its pooled listener can route to, and only the one holding the leader is
+    # carrying traffic — the others fail their 8008 check. The zone is read out
+    # of hostvars inside the expression rather than through a variable of its
+    # own, so it stays the integer the inventory wrote instead of becoming a
+    # string on the way through.
+    pooled_in_zone: >-
+      {{ groups['pgbouncer'] | default([]) |
+      map('extract', hostvars) |
+      selectattr('zone', 'defined') |
+      selectattr('zone', 'eq', hostvars[groups['haproxy'] | first].zone) |
+      map(attribute='inventory_hostname') | list }}
+    client_protocol_version: "3.0"
+
+  environment:
+    PGMAXPROTOCOLVERSION: "{{ client_protocol_version }}"
+    PGPASSWORD: "{{ db_password }}"
+    PGCONNECT_TIMEOUT: "5"
+
+  tasks:
+  - name: Ask each pooled node in the zone whether it holds the leader
+    uri:
+      url: "http://{{ item }}:8008/leader"
+      status_code:
+      - 200
+      - 503
+    loop: "{{ pooled_in_zone }}"
+    register: leader_probe
+    when:
+    - proxies | length > 0
+    - pooled_in_zone | length > 0
+
+  - name: Identify the pooler the pooled listener is routing to
+    set_fact:
+      pooled_leader: >-
+        {{ leader_probe.results | selectattr('status', 'eq', 200) |
+        map(attribute='item') | first }}
+    when:
+    - proxies | length > 0
+    - pooled_in_zone | length > 0
+
+  - block:
+    - name: Query the pooled listener before stopping the pooler
+      command: >
+        psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+        dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+      register: pooled_before
+      changed_when: false
+
+    - name: Stop the pooler on the node holding the leader
+      systemd:
+        name: pgbouncer
+        state: stopped
+      delegate_to: "{{ pooled_leader }}"
+
+    - name: Query the pooled listener with that pooler stopped
+      command: >
+        psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+        dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+      register: pooled_during
+      changed_when: false
+      failed_when: false
+
+    - name: Query the direct listener with that pooler stopped
+      command: >
+        psql "host={{ proxies | first }} port={{ proxy_port | default(5432) }}
+        dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+      register: direct_during
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the pooled endpoint failed and the direct one kept serving
+      assert:
+        that:
+        - pooled_before.stdout == '1'
+        - pooled_during.rc != 0
+        - direct_during.stdout == '1'
+        fail_msg: >-
+          With pgBouncer stopped on {{ pooled_leader }}, the pooled listener on
+          {{ proxies | first }}:{{ pooler_port | default(6432) }} returned
+          rc={{ pooled_during.rc }} "{{ pooled_during.stdout | default('') }}"
+          and the direct listener returned
+          "{{ direct_during.stdout | default('') }}". A pooled endpoint that
+          still answers is routing somewhere it should not: pooled and direct
+          connections are not interchangeable, and the direct endpoint must be
+          the one still serving.
+
+    always:
+    - name: Start the pooler again
+      systemd:
+        name: pgbouncer
+        state: started
+      delegate_to: "{{ pooled_leader }}"
+
+    - name: Query the pooled listener once the pooler is back
+      command: >
+        psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+        dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+      register: pooled_after
+      changed_when: false
+      failed_when: false
+      retries: 10
+      delay: 3
+      until: pooled_after.rc == 0
+
+    - name: Assert the pooled endpoint came back
+      assert:
+        that: pooled_after.stdout == '1'
+        fail_msg: >-
+          The pooled listener on
+          {{ proxies | first }}:{{ pooler_port | default(6432) }} did not
+          recover after pgBouncer was restarted on {{ pooled_leader }}:
+          rc={{ pooled_after.rc }},
+          stderr="{{ pooled_after.stderr | default('') }}"
+
+    when:
+    - proxies | length > 0
+    - pooled_in_zone | length > 0

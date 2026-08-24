@@ -23,6 +23,15 @@
       {{ '/var/log/pgbouncer/pgbouncer.log'
          if ansible_facts['os_family'] == 'RedHat'
          else '/var/log/postgresql/pgbouncer.log' }}
+    # What a logrotate configuration has to name for that log to be rotated,
+    # which on Debian is not the log's own path: the pooler logs beside
+    # Postgres and pgedge-postgresql-common rotates the whole directory with a
+    # glob. Character classes rather than backslash escapes, because this ends
+    # up in a regex and a backslash does not survive a folded scalar.
+    pgbouncer_logrotate_pattern: >-
+      {{ '/var/log/pgbouncer/pgbouncer[.]log'
+         if ansible_facts['os_family'] == 'RedHat'
+         else '/var/log/postgresql/[*][.]log' }}
     # Set explicitly by the role; asserted here rather than read back from the
     # rendered file, so a change to either side has to be deliberate.
     pgbouncer_socket_dir_path: >-
@@ -421,8 +430,12 @@
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
   # Each platform's own log path, which is also the one its logrotate
-  # configuration already covers: RHEL ships /etc/logrotate.d/pgbouncer, and on
-  # Debian pgedge-postgresql-common rotates /var/log/postgresql/*.log.
+  # configuration already covers: RHEL ships /etc/logrotate.d/pgbouncer with
+  # the pooler's package, and on Debian pgedge-postgresql-common rotates
+  # /var/log/postgresql/*.log. Both are asserted, not assumed — that coverage
+  # is the entire reason this collection keeps the pooler on the native paths
+  # and ships no logrotate file of its own, so a packaging change that dropped
+  # it has to fail here rather than be discovered by a full disk.
 
   - name: Stat the pooler log file
     stat:
@@ -435,6 +448,24 @@
       that: pgbouncer_log.stat.exists
       fail_msg: >-
         No pgBouncer log at the platform's path on {{ inventory_hostname }}
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Find the logrotate configuration that covers the pooler log
+    find:
+      paths: /etc/logrotate.d
+      contains: "{{ pgbouncer_logrotate_pattern }}"
+    register: pgbouncer_logrotate
+    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+
+  - name: Assert the platform rotates the pooler log
+    assert:
+      that: pgbouncer_logrotate.files | length > 0
+      fail_msg: >-
+        Nothing in /etc/logrotate.d on {{ inventory_hostname }} names
+        {{ pgbouncer_logrotate_pattern }}, so the pooler's log grows until the
+        filesystem fills. Either the packaging stopped shipping the rule this
+        platform used to carry, or the pooler was moved off the path that rule
+        covers.
     when: inventory_hostname in (groups['pgbouncer'] | default([]))
 
 # Verify the access gates from a host that no pg_hba rule names and no role was
