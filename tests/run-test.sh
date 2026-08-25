@@ -88,7 +88,7 @@ trap cleanup EXIT
 
 # Step 0: Offline template checks. No containers involved, so run them first:
 # they are the only tests that can observe a topology this harness does not
-# deploy, in particular a cluster with nothing in the 'pgbouncer' group.
+# deploy, in particular a cluster with pgbouncer_enabled unset.
 echo "==> Step 0: Checking rendered templates..."
 python3 "$SCRIPT_DIR/render/check-haproxy.py"
 

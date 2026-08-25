@@ -41,6 +41,14 @@
       {{ pgbouncer_socket_dir_path }}/.s.PGSQL.{{ pgbouncer_port | default(6432) }}
     pool_test_user: pooltest
     pool_test_password: PoolTest987
+    # Pooling is cluster-wide, so this reads the cluster's setting rather than
+    # the host's -- init_server refuses an inventory whose nodes disagree. The
+    # same expression serves the plays below, where the host carries no
+    # pgbouncer_enabled of its own.
+    cluster_is_pooled: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='pgbouncer_enabled', default=false) |
+      map('bool') | select | list | length > 0 }}
     client_protocol_version: "3.0"
 
   environment:
@@ -184,36 +192,34 @@
         A Spock DSN on {{ inventory_hostname }} points at the pooled port:
         {{ spock_dsns.stdout_lines }}
 
-  # Pooling is opt-in by group membership. The pgBouncer package itself is a
-  # dependency of the pgEdge metapackage, so it is present on every node; what
-  # the group gates is configuration and the service. Debian's packaging goes
-  # further and enables *and starts* the packaged pooler on install (bound to
-  # localhost, md5, empty userlist), so service state alone cannot tell a
-  # deployed pooler from an untouched node. Test the contract instead: pooled
-  # nodes run a pooler this collection configured; unpooled nodes are left with
-  # whatever the package installed.
+  # Pooling is opt-in per cluster, through pgbouncer_enabled. The pgBouncer
+  # package itself is a dependency of the pgEdge metapackage, so it is present on
+  # every node; what the setting gates is configuration and the service. Debian's
+  # packaging goes further and enables *and starts* the packaged pooler on
+  # install (bound to localhost, md5, empty userlist), so service state alone
+  # cannot tell a deployed pooler from an untouched node. Test the contract
+  # instead: a pooled cluster's nodes run a pooler this collection configured; an
+  # unpooled cluster's are left with whatever the package installed.
 
   - name: Read the pgBouncer configuration file
     slurp:
       src: /etc/pgbouncer/pgbouncer.ini
     register: pgbouncer_ini
 
-  - name: Assert only pooled nodes have an Ansible-managed pooler configuration
+  - name: Assert every node's pooler configuration matches the cluster setting
     assert:
       that: >-
         ('Managed by Ansible' in (pgbouncer_ini.content | b64decode))
-        == (inventory_hostname in (groups['pgbouncer'] | default([])))
+        == (cluster_is_pooled | bool)
       fail_msg: >-
         /etc/pgbouncer/pgbouncer.ini on {{ inventory_hostname }} is
-        {{ 'not ' if inventory_hostname in (groups['pgbouncer'] | default([]))
-           else '' }}Ansible-managed, but the host is
-        {{ 'in' if inventory_hostname in (groups['pgbouncer'] | default([]))
-           else 'not in' }} the pgbouncer group.
+        {{ 'not ' if cluster_is_pooled | bool else '' }}Ansible-managed, but
+        pgbouncer_enabled is {{ cluster_is_pooled }} for this cluster.
 
   - name: Check the pgBouncer service is running on pooled nodes
     command: systemctl is-active pgbouncer
     changed_when: false
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Query Postgres through the node's own pooler
     become_user: postgres
@@ -224,7 +230,7 @@
       PGPASSWORD: "{{ db_password }}"
     register: pooled_select
     changed_when: false
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert the pooled query returned
     assert:
@@ -232,7 +238,7 @@
       fail_msg: >-
         SELECT 1 through the pooler on {{ inventory_hostname }} returned
         "{{ pooled_select.stdout | default('') }}"
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   # Client credentials come from auth_query, not from a list on the pooler, so a
   # role this collection never created has to work through the pooled endpoint.
@@ -249,14 +255,14 @@
       login_port: "{{ pg_port | default(5432) }}"
       login_unix_socket: /var/run/postgresql
     become_user: postgres
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Read the pooler's userlist
     slurp:
       src: /etc/pgbouncer/userlist.txt
     register: pgbouncer_userlist
     no_log: true
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert the userlist holds nothing but the pooler's own login
     vars:
@@ -272,7 +278,7 @@
         {{ entries | length }} entries and does not begin with
         "{{ pgbouncer_auth_user }}", so the pooled connections below would not
         be testing auth_query.
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   # Client TLS is served from a copy of the certificate Postgres presents on its
   # own port, staged where the pooler's service user can read it. On RHEL that
@@ -283,7 +289,7 @@
     stat:
       path: /etc/pgbouncer/server.key
     register: pgbouncer_tls_key
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert the pooler holds a private key its own user can read
     vars:
@@ -301,7 +307,7 @@
            'owned by ' ~ pgbouncer_tls_key.stat.pw_name ~ ' mode ' ~
            pgbouncer_tls_key.stat.mode }}, so the pooler running as
         {{ service_user }} cannot serve client TLS from it.
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   # auth_type = hba puts this file, not a password on its own, in charge of who
   # may connect: pgBouncer matches the client's address, database and user
@@ -318,13 +324,13 @@
     stat:
       path: /etc/pgbouncer/pg_hba.conf
     register: pgbouncer_hba
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Read the pooler's HBA file
     slurp:
       src: /etc/pgbouncer/pg_hba.conf
     register: pgbouncer_hba_file
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert the pooler has rules its own user can read
     vars:
@@ -348,7 +354,7 @@
            'owned by ' ~ pgbouncer_hba.stat.pw_name ~ ' and holds ' ~
            (rules | length) ~ ' rules' }}, so the pooler running as
         {{ service_user }} cannot gate clients the way this inventory asked.
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Look for HBA rules the pooler could not parse
     command: >
@@ -356,7 +362,7 @@
     register: pgbouncer_hba_warnings
     changed_when: false
     failed_when: false
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert the pooler parsed every rule it was given
     assert:
@@ -366,7 +372,7 @@
         {{ pgbouncer_hba_warnings.stdout | trim }} unparsable HBA lines. It
         skips those with a warning rather than refusing to start, so the pooled
         endpoint is running with fewer rules than this inventory asked for.
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   # The pooler's socket is set explicitly rather than left at pgBouncer's
   # compiled default of /tmp, so it lands somewhere a package already owns:
@@ -381,7 +387,7 @@
     stat:
       path: "{{ pgbouncer_socket_path }}"
     register: pgbouncer_socket
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Reach the pooler's admin console over its unix socket
     command: >
@@ -393,7 +399,7 @@
     register: pgbouncer_console
     changed_when: false
     failed_when: false
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert local administration works over the socket
     assert:
@@ -407,7 +413,7 @@
         "{{ pgbouncer_console.stdout | default('') }}{{ pgbouncer_console.stderr | default('') }}".
         Local administration is the only path that does not depend on the
         network, so it has to work as {{ pgbouncer_auth_user }}.
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   # The drop-in has to raise the descriptor ceiling off systemd's default of
   # 1024, which is below max_client_conn on its own. The exact figure is derived
@@ -418,7 +424,7 @@
     command: systemctl show -p LimitNOFILE --value pgbouncer
     register: pgbouncer_nofile
     changed_when: false
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert the pooler's descriptor limit was raised
     assert:
@@ -427,7 +433,7 @@
         pgBouncer on {{ inventory_hostname }} has LimitNOFILE
         {{ pgbouncer_nofile.stdout }}, so the systemd drop-in did not take
         effect.
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   # Each platform's own log path, which is also the one its logrotate
   # configuration already covers: RHEL ships /etc/logrotate.d/pgbouncer with
@@ -441,21 +447,21 @@
     stat:
       path: "{{ pgbouncer_log_path }}"
     register: pgbouncer_log
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert the pooler logs where the platform expects
     assert:
       that: pgbouncer_log.stat.exists
       fail_msg: >-
         No pgBouncer log at the platform's path on {{ inventory_hostname }}
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Find the logrotate configuration that covers the pooler log
     find:
       paths: /etc/logrotate.d
       contains: "{{ pgbouncer_logrotate_pattern }}"
     register: pgbouncer_logrotate
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
   - name: Assert the platform rotates the pooler log
     assert:
@@ -466,7 +472,7 @@
         filesystem fills. Either the packaging stopped shipping the rule this
         platform used to carry, or the pooler was moved off the path that rule
         covers.
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: cluster_is_pooled | bool
 
 # Verify the access gates from a host that no pg_hba rule names and no role was
 # applied to. From a pgEdge node these checks are meaningless — every rule the
@@ -489,9 +495,16 @@
     pgedge_password: TestPass456
     pool_test_user: pooltest
     pool_test_password: PoolTest987
-    pooled_nodes: "{{ groups['pgbouncer'] | default([]) }}"
-    unpooled_nodes: >-
-      {{ groups['pgedge'] | difference(groups['pgbouncer'] | default([])) }}
+    pooled_nodes: >-
+      {{ groups['pgedge'] if cluster_is_pooled | bool else [] }}
+    # Pooling is cluster-wide, so any one node's flag speaks for the whole
+    # cluster -- init_server refuses an inventory whose nodes disagree. Read out
+    # of the nodes' own hostvars because a client host does not carry the
+    # setting itself.
+    cluster_is_pooled: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='pgbouncer_enabled', default=false) |
+      map('bool') | select | list | length > 0 }}
     proxies: "{{ groups['haproxy'] | default([]) }}"
     client_protocol_version: "3.0"
 
@@ -731,26 +744,3 @@
         the pooler's HBA rules require. rc={{ via_pooler_unnamed.rc }},
         stderr="{{ via_pooler_unnamed.stderr }}"
     when: pooled_nodes | length > 0
-
-  # Negative: an unpooled node has no pooler to reach. On RHEL nothing is
-  # listening; on Debian the packaged pooler the metapackage started is bound to
-  # localhost. Either way the client cannot get in, which is the assertion that
-  # holds on both platforms.
-
-  - name: Connect to an unpooled node's pooler port
-    command: >
-      psql "host={{ unpooled_nodes | first }}
-      port={{ pgbouncer_port | default(6432) }}
-      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
-    register: via_unpooled
-    changed_when: false
-    failed_when: false
-    when: unpooled_nodes | length > 0
-
-  - name: Assert an unpooled node serves nothing on the pooler port
-    assert:
-      that: via_unpooled.rc != 0
-      fail_msg: >-
-        {{ unpooled_nodes | first }} answered on
-        {{ pgbouncer_port | default(6432) }} but is not in the pgbouncer group.
-    when: unpooled_nodes | length > 0

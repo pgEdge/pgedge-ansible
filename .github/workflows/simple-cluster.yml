@@ -47,9 +47,9 @@ jobs:
         run: pip install ansible
 
       # Offline, and the only tests that can observe a topology this matrix
-      # does not deploy -- in particular a cluster with nothing in the
-      # 'pgbouncer' group, whose haproxy.cfg must stay what it was before
-      # pooling existed.
+      # does not deploy -- in particular a cluster with pgbouncer_enabled
+      # unset, whose haproxy.cfg must stay what it was before pooling
+      # existed.
       - name: Check rendered templates
         run: python3 tests/render/check-haproxy.py
 

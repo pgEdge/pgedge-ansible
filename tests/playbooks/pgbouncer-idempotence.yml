@@ -22,8 +22,8 @@
   tasks:
   - include_role:
       name: install_pgbouncer
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: pgbouncer_enabled | bool
 
   - include_role:
       name: setup_pgbouncer
-    when: inventory_hostname in (groups['pgbouncer'] | default([]))
+    when: pgbouncer_enabled | bool

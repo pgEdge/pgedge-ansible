@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Render setup_haproxy's template offline and compare it against fixtures.
 
-Pooling is additive: a cluster with no node in the 'pgbouncer' group must get
+Pooling is additive: a cluster that leaves pgbouncer_enabled unset must get
 exactly the haproxy.cfg it got before the pooler existed. The live matrix
-cannot observe that -- every zone in it pools -- so the invariant is checked
+cannot observe that -- every cluster in it pools -- so the invariant is checked
 here instead, against expected/haproxy-unpooled.cfg, which was captured by
 rendering the template as it stood on main before the pooled listener was
 added. The pooled fixture beside it is the counterpart: it holds the output a
-zone with pooled nodes should get, so a change to that listener has to be
-looked at rather than merely deployed.
+pooled cluster should get, so a change to that listener has to be looked at
+rather than merely deployed.
+
+The pooled set is derived here the way a real run derives it -- from
+role_config's own vars, off nothing but pgbouncer_enabled in hostvars -- so
+these fixtures also pin the rule that makes pooling cluster-wide: the pooled
+listener carries the same servers as the direct one, never a subset.
 
 Usage:
     python3 tests/render/check-haproxy.py            # check, exit 1 on drift
@@ -27,6 +32,7 @@ start, so this harness has to match the deployment exactly.
 """
 
 import argparse
+import ast
 import difflib
 import pathlib
 import re
@@ -40,53 +46,80 @@ REPO = HERE.parents[1]
 TEMPLATE = REPO / "roles" / "setup_haproxy" / "templates" / "haproxy.cfg.j2"
 FIXTURES = HERE / "expected"
 
-# One zone of a cluster, of which the first two nodes pool. Addresses rather
-# than names, as the test inventories use, and a third unpooled node so the
-# pooled listener's server list is visibly not the direct listener's.
+# One zone of a cluster. Addresses rather than names, as the test inventories
+# use. Every node either pools or none does, so the cases below are a single
+# boolean -- the same one an inventory sets on the 'pgedge' group.
 NODES = ["192.168.6.10", "192.168.6.11", "192.168.6.12"]
-POOLED = NODES[:2]
 
 CASES = {
-    "haproxy-unpooled.cfg": [],
-    "haproxy-pooled.cfg": POOLED,
+    "haproxy-unpooled.cfg": False,
+    "haproxy-pooled.cfg": True,
 }
 
 env = Environment(trim_blocks=True, keep_trailing_newline=True,
                   undefined=StrictUndefined)
-# The one Ansible filter the template uses. Ansible's version takes the same
-# arguments in the same order for this call.
+
+
+def ansible_bool(value):
+    """Ansible's bool filter, which accepts the strings an inventory may use."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "on", "1", "y", "t")
+    return bool(value)
+
+
+# The Ansible filters these templates and expressions use. Each takes the same
+# arguments in the same order as Ansible's for the calls made here.
 env.filters["regex_replace"] = lambda value, pattern, repl="": re.sub(
     pattern, repl, value)
+env.filters["extract"] = lambda key, container: container[key]
+env.filters["bool"] = ansible_bool
 
 
-def role_defaults(role):
-    path = REPO / "roles" / role / "defaults" / "main.yaml"
+def role_file(role, kind):
+    path = REPO / "roles" / role / kind / "main.yaml"
     return yaml.safe_load(path.read_text()) or {}
 
 
+def role_defaults(role):
+    return role_file(role, "defaults")
+
+
 def evaluate(expression, context):
-    """Resolve one role default, which is itself a Jinja expression."""
-    return env.from_string(expression).render(context).strip()
+    """Resolve one role variable, which is itself a Jinja expression.
+
+    Ansible hands back the value a whole-template expression evaluates to, not
+    its text, so a list stays a list and a boolean stays a boolean. literal_eval
+    reproduces that; anything that is not a Python literal is left as the string
+    it rendered to.
+    """
+    rendered = env.from_string(expression).render(context).strip()
+    try:
+        return ast.literal_eval(rendered)
+    except (ValueError, SyntaxError):
+        return rendered
 
 
 def context_for(pooled):
     """Everything setup_haproxy would have in scope, from the roles themselves.
 
-    Reading the defaults rather than restating them is deliberate: a change to
-    the connection budget or to a port shows up in the fixtures, where it can
-    be reviewed, instead of being papered over by a second copy of the values
-    that lives here.
+    Reading the roles rather than restating them is deliberate: a change to the
+    connection budget, to a port, or to how the pooled server list is derived
+    shows up in the fixtures, where it can be reviewed, instead of being
+    papered over by a second copy of the values that lives here.
     """
     haproxy = role_defaults("setup_haproxy")
     shared = role_defaults("role_config")
+    derived = role_file("role_config", "vars")
 
     context = {
         "nodes_in_zone": NODES,
-        "pooled_nodes_in_zone": pooled,
-        # Hostvars carry only what the template reads. Attribute lookups that
-        # miss -- pgbouncer_max_client_conn below -- fall through to the
-        # default, which is what an inventory that overrides nothing does.
-        "hostvars": {node: {"inventory_hostname": node} for node in NODES},
+        # Hostvars carry only what the template and the derived vars read.
+        # Attribute lookups that miss -- pgbouncer_max_client_conn below --
+        # fall through to the default, which is what an inventory that
+        # overrides nothing does.
+        "hostvars": {node: {"inventory_hostname": node,
+                            "pgbouncer_enabled": pooled} for node in NODES},
+        "groups": {"pgedge": NODES},
         "haproxy_extra_routes": haproxy["haproxy_extra_routes"],
         "pg_port": shared["pg_port"],
         "proxy_port": shared["proxy_port"],
@@ -95,12 +128,20 @@ def context_for(pooled):
         "pgbouncer_max_client_conn": shared["pgbouncer_max_client_conn"],
     }
 
-    # Only defined where the zone pools, as in a real run: the expression
-    # indexes hostvars by the first pooled node, so an unpooled zone must never
-    # reach it. Ansible resolves variables lazily and so does the conditional
-    # in haproxy_max_conn below; leaving this out of the unpooled context
-    # proves that path does not need it.
-    if pooled:
+    # Derived exactly as role_config derives them: whether the cluster pools is
+    # read out of the nodes' own hostvars, because a proxy host does not carry
+    # pgbouncer_enabled itself, and the pooled server list follows from it.
+    context["cluster_is_pooled"] = evaluate(
+        derived["cluster_is_pooled"], context)
+    context["pooled_nodes_in_zone"] = evaluate(
+        derived["pooled_nodes_in_zone"], context)
+
+    # Only defined where the cluster pools, as in a real run: the expression
+    # indexes hostvars by the zone's first node, so an unpooled cluster must
+    # never reach it. Ansible resolves variables lazily and so does the
+    # conditional in haproxy_max_conn below; leaving this out of the unpooled
+    # context proves that path does not need it.
+    if context["pooled_nodes_in_zone"]:
         context["haproxy_pooler_max_conn"] = evaluate(
             haproxy["haproxy_pooler_max_conn"], context)
 
