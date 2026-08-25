@@ -9,88 +9,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- new patroni_dcs parameter selects the distributed configuration store
+- New `patroni_dcs` parameter selects the distributed configuration store
   Patroni uses and passes arbitrary connection settings to it, allowing an
   externally managed store such as Consul or ZooKeeper. Accepted types are
-  etcd3, etcd, consul, zookeeper, and exhibitor. Patroni's kubernetes type is
-  not accepted, because it discovers the API server from a pod environment or a
-  kubeconfig rather than from a configured endpoint, and this collection
-  installs Patroni on ordinary hosts. (EE-33)
-- install_patroni now installs the Patroni client library that matches the
-  configured patroni_dcs type. (EE-33)
+  `etcd3`, `etcd`, `consul`, `zookeeper`, and `exhibitor`. Patroni's
+  `kubernetes` type is not accepted, because it discovers the API server from
+  a pod environment or a kubeconfig rather than from a configured endpoint,
+  and this collection installs Patroni on ordinary hosts. (EE-33)
+- `install_patroni` now installs the Patroni client library that matches the
+  configured `patroni_dcs` type. (EE-33)
 - Ultra-HA end-to-end test now covers an externally managed Consul store in
   addition to the default etcd cluster. (EE-33)
-- new patroni_namespace parameter sets the key prefix Patroni uses within the
-  distributed configuration store, so a store shared by more than one zone can
-  give each zone its own prefix. Defaults to /db/, which matches the previous
-  hardcoded value. (EE-33)
-- new patroni_scope parameter sets the cluster name Patroni uses within the
+- New `patroni_namespace` parameter sets the key prefix Patroni uses within
+  the distributed configuration store, so a store shared by more than one zone
+  can give each zone its own prefix. Defaults to `/db/`, which matches the
+  previous hardcoded value. (EE-33)
+- New `patroni_scope` parameter sets the cluster name Patroni uses within the
   distributed configuration store, so a store shared by more than one zone can
   give each zone its own scope instead of its own namespace prefix, which some
-  stores make load-bearing. Defaults to <pg_version>-<cluster_name>, which
-  matches the previous hardcoded value, and the patronictl invocations in
-  setup_patroni and setup_backrest now name the cluster with it. (EE-33)
-- init_server now asserts that patroni_dcs.parameters is present when
-  patroni_dcs.type names a store the collection does not deploy, so a missing
-  key fails before bootstrapping rather than while Patroni is configured.
-  (EE-33)
-
-- role_config gained a pg_feature_checks task file that asks the installed
-  Postgres binary which configuration parameters it recognizes. setup_postgres
-  and setup_patroni include it so configuration can be gated on parameters that
-  only some releases carry. (EE-34)
-
-- new install_pgbouncer and setup_pgbouncer roles deploy a pgBouncer connection
-  pooler on pgEdge nodes, giving each node a second endpoint on pgbouncer_port
-  beside Postgres's own. Pooling is opt-in through the new pgbouncer_enabled
-  parameter, which is cluster-wide the way is_ha_cluster is: set it on the
-  pgedge group and every node pools, leave it unset and the cluster renders
-  exactly the configuration it did before. init_server rejects an inventory
-  whose pgEdge nodes disagree, because a zone that pooled only some of its nodes
-  would lose its pooled endpoint on the first failover to one of the others.
-- pooled connections authenticate through pgBouncer's auth_query rather than a
-  maintained password list. setup_postgres creates a powerless pgbouncer_auth
-  role and a SECURITY DEFINER lookup wherever the cluster pools, so every Postgres
-  role works through the pooled endpoint, including roles created after
-  deployment, and a rotated password takes effect immediately. Only
-  pgbouncer_auth_password is written to disk, and init_server refuses to deploy
-  a pooled cluster while it is still the default.
-- the pooler enforces its own client authentication rules, rendered into
-  /etc/pgbouncer/pg_hba.conf from the same variables that drive the Postgres
-  rules. custom_hba_rules admits a client to both endpoints; the new
-  pgbouncer_hba_rules admits it to the pooled endpoint alone. init_server
-  validates both against the pg_hba subset pgBouncer can parse, since it skips
-  a line it cannot parse rather than refusing to start.
-- the pooled endpoint serves TLS from the same certificate Postgres presents,
-  staged from the controller rather than read out of PGDATA so an HA replica
-  does not race Patroni's clone. pgbouncer_client_tls_sslmode defaults to allow,
-  which accepts exactly what the direct endpoint accepts today.
-- new pooler_port parameter fronts the poolers from the proxy layer, the way
-  proxy_port fronts pg_port. Where the cluster pools, setup_haproxy emits a
-  pg-pooler listener on it carrying every node of the zone — the same servers as
-  the direct listener, differing only in the port — health-checked against
-  Patroni's REST API like the direct listeners, and sizes the global connection
-  ceiling to cover it. The existing listeners are unchanged, so Spock
-  replication never routes through a pooler.
-- new documentation for pooling: role pages for both new roles, a Pooling
-  Configuration reference, a pgBouncer troubleshooting page, the pooled listener
-  and the port model in Proxy Configuration, pgbouncer_enabled in Inventory
-  Structure, and an opt-in walkthrough in both tutorials.
+  stores make load-bearing. Defaults to `<pg_version>-<cluster_name>`, which
+  matches the previous hardcoded value, and the `patronictl` invocations in
+  `setup_patroni` and `setup_backrest` now name the cluster with it. (EE-33)
+- `init_server` now asserts that `patroni_dcs.parameters` is present when
+  `patroni_dcs.type` names a store the collection does not deploy, so a
+  missing key fails before bootstrapping rather than while Patroni is
+  configured. (EE-33)
+- `role_config` gained a `pg_feature_checks` task file that asks the installed
+  PostgreSQL binary which configuration parameters it recognizes.
+  `setup_postgres` and `setup_patroni` include it so configuration can be
+  gated on parameters that only some releases carry. (EE-34)
+- New `install_pgbouncer` and `setup_pgbouncer` roles deploy a pgBouncer
+  connection pooler on pgEdge nodes, giving each node a second endpoint on
+  `pgbouncer_port` beside PostgreSQL's own. Pooling is opt-in through the new
+  `pgbouncer_enabled` parameter, which is cluster-wide the way `is_ha_cluster`
+  is: set it on the `pgedge` group and every node pools, leave it unset and
+  the cluster renders exactly the configuration it did before. `init_server`
+  rejects an inventory whose pgEdge nodes disagree, because a zone that pooled
+  only some of its nodes would lose its pooled endpoint on the first failover
+  to one of the others.
+- Pooled connections authenticate through pgBouncer's `auth_query` rather than
+  a maintained password list. `setup_postgres` creates a powerless
+  `pgbouncer_auth` role and a `SECURITY DEFINER` lookup wherever the cluster
+  pools, so every PostgreSQL role works through the pooled endpoint, including
+  roles created after deployment, and a rotated password takes effect
+  immediately. Only `pgbouncer_auth_password` is written to disk, and
+  `init_server` refuses to deploy a pooled cluster while it is still the
+  default.
+- The pooler enforces its own client authentication rules, rendered into
+  `/etc/pgbouncer/pg_hba.conf` from the same variables that drive the
+  PostgreSQL rules. `custom_hba_rules` admits a client to both endpoints; the
+  new `pgbouncer_hba_rules` admits it to the pooled endpoint alone.
+  `init_server` validates both against the `pg_hba` subset pgBouncer can
+  parse, since it skips a line it cannot parse rather than refusing to start.
+- The pooled endpoint serves TLS from the same certificate PostgreSQL
+  presents, staged from the controller rather than read out of `PGDATA` so an
+  HA replica does not race Patroni's clone.
+  `pgbouncer_client_tls_sslmode` defaults to `allow`, which accepts exactly
+  what the direct endpoint accepts today.
+- New `pooler_port` parameter fronts the poolers from the proxy layer, the way
+  `proxy_port` fronts `pg_port`. Where the cluster pools, `setup_haproxy`
+  emits a `pg-pooler` listener on it carrying every node of the zone — the
+  same servers as the direct listener, differing only in the port —
+  health-checked against Patroni's REST API like the direct listeners, and
+  sizes the global connection ceiling to cover it. The existing listeners are
+  unchanged, so Spock replication never routes through a pooler.
+- New documentation for pooling: role pages for both new roles, a Pooling
+  Configuration reference, a pgBouncer troubleshooting page, the pooled
+  listener and the port model in Proxy Configuration, `pgbouncer_enabled` in
+  Inventory Structure, and an opt-in walkthrough in both tutorials.
 
 ### Fixed
 
-- Spock replication no longer breaks on Postgres releases carrying the fix for
-  CVE-2026-6471, which refuse to load an output plugin that
-  output_plugin_libraries does not name. Both simple and Ultra-HA clusters now
-  set the parameter, and only on releases that recognize it, since earlier
+- Spock replication no longer breaks on PostgreSQL releases carrying the fix
+  for CVE-2026-6471, which refuse to load an output plugin that
+  `output_plugin_libraries` does not name. Both simple and Ultra-HA clusters
+  now set the parameter, and only on releases that recognize it, since earlier
   releases refuse to start when it appears. (EE-34)
-- patroni_config_file and patroni_tls_dir now recognized by all roles.
+- `patroni_config_file` and `patroni_tls_dir` are now recognized by all roles.
 - HA failover example in the usage guide now passes the Patroni scope the
-  collection actually configures, which has included the Postgres version
+  collection actually configures, which has included the PostgreSQL version
   since v1.0.0.
-- Patroni replication user now connects to all databases for logical slot creation.
-- backup_repo_cipher default now properly deterministic.
-- manually install Postgres contrib on RHEL systems where it may be missing.
+- Patroni replication user now connects to all databases for logical slot
+  creation.
+- `backup_repo_cipher` default is now properly deterministic.
+- PostgreSQL contrib package is now installed explicitly on RHEL systems where
+  it may be missing.
 
 ## v1.0.0
 
