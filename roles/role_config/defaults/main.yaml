@@ -21,10 +21,16 @@ replication_password: secret
 
 custom_hba_rules: []
 
-# pgBouncer connection pooler. Pooling is opt-in by inventory group: a node
-# runs a pooler when it is a member of the 'pgbouncer' group, which must be a
-# subset of the 'pgedge' group. Nodes outside that group are untouched.
-#
+# pgBouncer connection pooler. Pooling is a property of the cluster, the way
+# is_ha_cluster is: set pgbouncer_enabled on the 'pgedge' group and every pgEdge
+# node gets a pooler in front of its own Postgres. It is deliberately not a
+# per-node choice. A pooled zone's HAProxy listener follows the Patroni leader,
+# so a zone that pools only some of its nodes has an endpoint that breaks the
+# moment the leader moves to one of the others, and init_server rejects a
+# cluster whose nodes disagree.
+
+pgbouncer_enabled: false
+
 # Only the settings more than one role reads live here. The pooler's own
 # tunables — listen address, pool mode, sizes, TLS, startup parameters — are
 # defaults of the roles that write them: install_pgbouncer for the package,
@@ -39,7 +45,7 @@ pgbouncer_max_client_conn: 1000
 # calls a SECURITY DEFINER lookup to fetch the requested user's stored SCRAM
 # verifier, so any Postgres role can use the pooled endpoint — including roles
 # created long after deployment. setup_postgres creates the role and the lookup
-# wherever the zone pools; this password is the only one written to disk, in
+# wherever pooling is on; this password is the only one written to disk, in
 # pgBouncer's auth_file, because the admin console cannot use the lookup.
 pgbouncer_auth_user: pgbouncer_auth
 pgbouncer_auth_password: secret
@@ -63,8 +69,7 @@ proxy_node: ''
 # pg_port: pooler_port fronts each pooled node's pgbouncer_port. It is a
 # separate setting because HAProxy may share a host with Postgres and pgBouncer
 # (see docs/configuration/proxy.md), and identical values collide there.
-# Nothing is emitted on this port unless the zone has a node in the 'pgbouncer'
-# group.
+# Nothing is emitted on this port unless pgbouncer_enabled is set.
 pooler_port: 6432
 
 pg_port: 5432

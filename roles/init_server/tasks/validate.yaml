@@ -65,20 +65,27 @@
     fail_msg: "A host cannot be in both the 'pgedge' and 'backup' groups."
   run_once: true
 
-# Pooling is opt-in by membership in the 'pgbouncer' group. A pooler forwards
-# to the Postgres instance on its own host, so a pooled host with no Postgres
-# has nothing to forward to.
+# Pooling is a property of the cluster, not of a node: pgbouncer_enabled belongs
+# on the 'pgedge' group, and every pgEdge node then runs a pooler in front of its
+# own Postgres. Per-node values are rejected here rather than honoured, because
+# a half-pooled zone is a broken zone. Its HAProxy pooled listener follows the
+# Patroni leader, so it works until the leader moves to a node with no pooler and
+# then has no backend at all — and the direct endpoint cannot stand in for it,
+# since the two resolve against different pg_hba rules.
 
-- name: Ensure every host in the pgbouncer group is also a pgEdge node
+- name: Ensure pooling is either on or off for the whole cluster
   assert:
     that:
-    - groups.pgbouncer | default([]) | difference(groups.pgedge | default([])) | length == 0
+    - pooling_flags | unique | length <= 1
     fail_msg: >-
-      The 'pgbouncer' group must be a subset of the 'pgedge' group. pgBouncer
-      runs on a pgEdge node, in front of that node's own Postgres. Offending
-      hosts:
-      {{ groups.pgbouncer | default([]) | difference(groups.pgedge | default([])) | join(', ') }}
+      pgbouncer_enabled must be the same on every pgEdge node: it is a
+      cluster-wide setting, like is_ha_cluster, and belongs in the vars of the
+      'pgedge' group. Values seen: {{ pooling_flags | unique | join(', ') }}.
   run_once: true
+  vars:
+    pooling_flags: >-
+      {{ groups['pgedge'] | default([]) | map('extract', hostvars) |
+      map(attribute='pgbouncer_enabled', default=false) | map('bool') | list }}
 
 # The pooler's own Postgres login is the one credential this collection still
 # writes to disk, so it gets the same treatment as the rest. Asserted only when
@@ -94,7 +101,7 @@
       the login pgBouncer uses to look up client credentials in Postgres, and it
       is written to the pooler's auth_file, so it must be set explicitly.
   run_once: true
-  when: groups.pgbouncer | default([]) | length > 0
+  when: cluster_is_pooled | bool
 
 # A typo here would render a pgbouncer.ini the pooler refuses to start on, and
 # the failure would surface as a systemd error several tasks later. verify-ca
@@ -116,7 +123,7 @@
       It must be one of disable, allow, prefer or require. Client certificates
       (verify-ca, verify-full) are not supported on the pooled endpoint.
   run_once: true
-  when: groups.pgbouncer | default([]) | length > 0
+  when: cluster_is_pooled | bool
 
 # A pooled node renders these rules into the pooler's own HBA file, and
 # pgBouncer's parser accepts a narrower syntax than Postgres's. What makes that
@@ -166,7 +173,7 @@
       Rejected methods: {{ bad_method | map(attribute='method') | list }}.
       Rejected sources: {{ bad_source }}.
   run_once: true
-  when: groups.pgbouncer | default([]) | length > 0
+  when: cluster_is_pooled | bool
 
 # A pooled node binds both Postgres and the pooler, and since the pooler's
 # unix_socket_dir is /var/run/postgresql on Debian — beside Postgres's own
@@ -183,7 +190,9 @@
       pgbouncer_port and pg_port are both {{ pg_port }} on
       {{ inventory_hostname }}, which runs Postgres and a pooler. They share a
       host, and on Debian a socket directory, so the two must differ.
-  when: inventory_hostname in (groups.pgbouncer | default([]))
+  when:
+  - cluster_is_pooled | bool
+  - inventory_hostname in (groups.pgedge | default([]))
 
 # proxy_port and pooler_port are proxy-layer ports, so they only collide with
 # the node-level ports when HAProxy shares a host with Postgres — a topology
@@ -195,15 +204,14 @@
     that:
     - pooler_port | int != pg_port | int
     - pooler_port | int != proxy_port | int
-    - pooler_port | int != pgbouncer_port | int or
-      inventory_hostname not in (groups.pgbouncer | default([]))
+    - pooler_port | int != pgbouncer_port | int
     fail_msg: >-
       pooler_port ({{ pooler_port }}) collides with another port on
       {{ inventory_hostname }}, which runs HAProxy alongside Postgres. It must
-      differ from pg_port ({{ pg_port }}), proxy_port ({{ proxy_port }}), and —
-      on a pooled node — pgbouncer_port ({{ pgbouncer_port }}).
+      differ from pg_port ({{ pg_port }}), proxy_port ({{ proxy_port }}) and
+      pgbouncer_port ({{ pgbouncer_port }}).
   when:
-  - groups.pgbouncer | default([]) | length > 0
+  - cluster_is_pooled | bool
   - inventory_hostname in (groups.haproxy | default([]))
   - inventory_hostname in (groups.pgedge | default([]))
 

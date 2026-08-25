@@ -56,9 +56,9 @@
 # privileges from a role granted to it either, and the only thing it may execute
 # is the lookup function, which reads pg_shadow as its superuser owner.
 #
-# Gated on the zone, not on the host: this file runs on every node of a simple
-# cluster but only on the primary of an HA zone, which is also where a pooled
-# replica's roles come from.
+# Gated on the cluster, not on the host: pooling is cluster-wide, and this file
+# runs on every node of a simple cluster but only on the primary of an HA zone,
+# which is also where a pooled replica's roles come from.
 
 - name: Create the pgBouncer authentication user
   community.postgresql.postgresql_user:
@@ -69,7 +69,7 @@
     login_unix_socket: /var/run/postgresql
   become: true
   become_user: postgres
-  when: pooled_nodes_in_zone | length > 0
+  when: pgbouncer_enabled | bool
 
 # auth_dbname pins the lookup to the maintenance database, so that is where the
 # schema and the function have to live. Its own schema, never public, with
@@ -102,4 +102,4 @@
   become: true
   become_user: postgres
   changed_when: false
-  when: pooled_nodes_in_zone | length > 0
+  when: pgbouncer_enabled | bool

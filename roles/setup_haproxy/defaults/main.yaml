@@ -6,9 +6,9 @@ haproxy_extra_routes:
 
 # HAProxy's global connection ceiling, which has to cover the sum of the
 # listeners' own. The direct listeners keep the budget this collection has
-# always given them, and a pooled zone adds the pooled listener's ceiling on
-# top — so a cluster with no pooled node renders exactly the file it did
-# before pooling existed.
+# always given them, and a pooled cluster adds the pooled listener's ceiling on
+# top — so a cluster with pgbouncer_enabled unset renders exactly the file it
+# did before pooling existed.
 
 haproxy_max_conn: >-
   {{ 100 + (haproxy_pooler_max_conn | int if pooled_nodes_in_zone else 0) }}
@@ -18,9 +18,9 @@ haproxy_max_conn: >-
 # sum across pooled nodes.
 #
 # HAProxy runs on hosts that are not pgEdge nodes, and role defaults never
-# appear in hostvars, so read the pooled node's own value where the inventory
-# sets one — the usual place is group vars on 'pgedge' — and otherwise fall
-# back to the default this host carries.
+# appear in hostvars, so read the node's own value where the inventory sets one
+# — the usual place is group vars on 'pgedge', beside pgbouncer_enabled itself —
+# and otherwise fall back to the default this host carries.
 
 haproxy_pooler_max_conn: >-
   {{ hostvars[pooled_nodes_in_zone | first].pgbouncer_max_client_conn

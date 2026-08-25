@@ -18,14 +18,24 @@ backups_in_zone: >-
   selectattr('zone', 'eq', zone) |
   map(attribute='inventory_hostname') | list }}
 
-# Pooling is opt-in by group membership. init_server asserts the 'pgbouncer'
-# group is a subset of 'pgedge', so filtering it by zone is the intersection
-# with nodes_in_zone. A zone may pool some of its nodes and not others.
-pooled_nodes_in_zone: >-
-  {{ groups['pgbouncer'] | default([]) |
-  map('extract', hostvars) |
-  selectattr('zone', 'eq', zone) |
-  map(attribute='inventory_hostname') | list }}
+# Whether this cluster pools, answerable from any host. pgbouncer_enabled is a
+# cluster-wide setting normally given to the 'pgedge' group, so a proxy or
+# backup host does not carry it itself — and role defaults never appear in
+# hostvars, hence the default on the extraction. init_server asserts the pgEdge
+# nodes agree, so any one of them speaks for the cluster; every node is read
+# anyway so that a disagreeing inventory renders a pooled endpoint and then
+# fails validation, rather than the reverse.
+cluster_is_pooled: >-
+  {{ groups['pgedge'] | map('extract', hostvars) |
+  map(attribute='pgbouncer_enabled', default=false) |
+  map('bool') | select | list | length > 0 }}
+
+# The servers a zone's pooled endpoint is built from, which is the whole zone or
+# nothing at all — that is the point of making pooling cluster-wide. Both
+# listeners in haproxy.cfg then carry the same nodes, differing only in the port
+# they reach, so a Patroni failover can never land on a node the pooled endpoint
+# does not know about.
+pooled_nodes_in_zone: "{{ nodes_in_zone if cluster_is_pooled | bool else [] }}"
 
 first_node_in_zone: "{{ nodes_in_zone | first }}"
 

@@ -5,7 +5,7 @@
 # where max_prepared_statements arrived — without it, transaction pooling breaks
 # every client that uses protocol-level prepared statements (see
 # pgbouncer_pool_mode in setup_pgbouncer). Note pgedge-enterprise-all pulls this
-# package in already, so joining the 'pgbouncer' group gates configuration and
-# the service, not the install.
+# package in already, so pgbouncer_enabled gates configuration and the service,
+# not the install.
 
 pgbouncer_package: pgedge-pgbouncer

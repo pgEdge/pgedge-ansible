@@ -49,14 +49,17 @@ listen pg-cluster-{{ route }}
     server {{ host_label }} {{ host_name }}:{{ pg_port }} check port 8008
 {% endfor %}
 {% endfor %}
-{# The pooled endpoint, emitted only where a zone has pooled nodes. The check #}
-{# is Patroni's REST API on 8008, exactly as the direct listeners use it: a   #}
-{# TCP check against pgbouncer_port would mark every pooled node up and send  #}
-{# writes to replicas. So a dead pooler on the leader is an outage of this    #}
-{# endpoint rather than a silent reroute to Postgres — pooled and direct      #}
-{# connections resolve against different pg_hba rules and are not             #}
-{# interchangeable. Restart=always in setup_pgbouncer is the mitigation.      #}
-{#                                                                           #}
+{# The pooled endpoint, emitted only when the cluster pools. Its servers are  #}
+{# the zone's whole node set, the same as the direct listener's, because      #}
+{# pooling is cluster-wide: a failover can never land on a node this endpoint #}
+{# does not know. The check is Patroni's REST API on 8008, exactly as the     #}
+{# direct listeners use it: a TCP check against pgbouncer_port would mark     #}
+{# every pooled node up and send writes to replicas. So a dead pooler on the  #}
+{# leader is an outage of this endpoint rather than a silent reroute to       #}
+{# Postgres — pooled and direct connections resolve against different pg_hba  #}
+{# rules and are not interchangeable. Restart=always in setup_pgbouncer is    #}
+{# the mitigation.                                                            #}
+{#                                                                            #}
 {# An endpoint that failed over to Postgres by itself would need a frontend   #}
 {# with two backends and nbsrv()-based selection, each backend carrying its   #}
 {# own check. It does not belong in this listener as another server line.     #}
