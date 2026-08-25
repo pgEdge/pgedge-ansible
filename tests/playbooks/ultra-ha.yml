@@ -40,7 +40,7 @@
 
   - include_role:
       name: install_pgbouncer
-    when: pgbouncer_enabled | bool
+    when: pgbouncer_enabled | default(false) | bool
 
   - include_role:
       name: setup_etcd
@@ -51,7 +51,7 @@
 
   - include_role:
       name: setup_pgbouncer
-    when: pgbouncer_enabled | bool
+    when: pgbouncer_enabled | default(false) | bool
 
   - include_role:
       name: setup_backrest
