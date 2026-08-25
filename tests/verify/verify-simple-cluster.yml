@@ -280,6 +280,44 @@
         be testing auth_query.
     when: cluster_is_pooled | bool
 
+  # The grant on the other end of auth_query. pgbouncer.get_auth is
+  # SECURITY DEFINER over pg_shadow, owned by a superuser, so anything that can
+  # call it can read every verifier in the cluster — which is why EXECUTE is held
+  # by the auth user alone and USAGE on the schema with it. That the auth user
+  # *can* call it is proven by the pooled login below, which resolves a verifier
+  # the pooler was never given; this is the negative half, from a role that has
+  # LOGIN and nothing more.
+  #
+  # Either revoke is enough to refuse the call and they fail with different
+  # messages — schema first, since the name is resolved before the function's own
+  # privileges are considered — so the assertion matches the part they share.
+
+  - name: Call the credential lookup as a role that was granted nothing
+    command: >
+      psql "host=127.0.0.1 port={{ pg_port | default(5432) }} dbname=postgres
+      user={{ pool_test_user }}" -t -A
+      -c "SELECT * FROM pgbouncer.get_auth('{{ db_user }}')"
+    environment:
+      PGPASSWORD: "{{ pool_test_password }}"
+    register: get_auth_unprivileged
+    changed_when: false
+    failed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert only the auth user can read verifiers through the lookup
+    assert:
+      that:
+      - get_auth_unprivileged.rc != 0
+      - "'permission denied' in get_auth_unprivileged.stderr"
+      - db_user not in get_auth_unprivileged.stdout
+      fail_msg: >-
+        {{ pool_test_user }} called pgbouncer.get_auth on
+        {{ inventory_hostname }} without being refused, so a SECURITY DEFINER
+        function over pg_shadow is reachable by a role that holds no grant on
+        it. rc={{ get_auth_unprivileged.rc }},
+        stderr="{{ get_auth_unprivileged.stderr | default('') }}"
+    when: cluster_is_pooled | bool
+
   # Client TLS is served from a copy of the certificate Postgres presents on its
   # own port, staged where the pooler's service user can read it. On RHEL that
   # user is pgbouncer while PGDATA is 0700 postgres, so the ownership and mode
@@ -413,6 +451,46 @@
         "{{ pgbouncer_console.stdout | default('') }}{{ pgbouncer_console.stderr | default('') }}".
         Local administration is the only path that does not depend on the
         network, so it has to work as {{ pgbouncer_auth_user }}.
+    when: cluster_is_pooled | bool
+
+  # The other half of that rule pair: the socket above, and nothing else. This
+  # account's one privilege is the credential lookup, which returns any role's
+  # stored SCRAM verifier, so a network login for it would put every verifier in
+  # the cluster behind a single password — and the loopback rule and the proxy
+  # rules both name every role, so only an explicit reject keeps it off them.
+  #
+  # This is also what proves that reject line parsed. pgBouncer skips a rule it
+  # cannot read with only a warning, so if it dropped this one the connection
+  # below would be admitted by the loopback rule instead of refused, and the
+  # only other trace would be a line in the log. The pooler is known to be
+  # listening on this address, because the pooled query further up used it.
+  #
+  # pgBouncer words a rejecting rule and no matching rule differently, and both
+  # are refusals, so the match below accepts either.
+
+  - name: Connect to the pooler as the auth user over TCP
+    command: >
+      psql "host=127.0.0.1 port={{ pgbouncer_port | default(6432) }}
+      dbname=postgres user={{ pgbouncer_auth_user }}" -t -A -c "SELECT 1"
+    environment:
+      PGPASSWORD: "{{ pgbouncer_auth_password }}"
+    register: auth_user_over_tcp
+    changed_when: false
+    failed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert the pooler refused the auth user over TCP
+    assert:
+      that:
+      - auth_user_over_tcp.rc != 0
+      - "auth_user_over_tcp.stdout | trim != '1'"
+      - "auth_user_over_tcp.stderr is search('no authentication method is found|[Rr]eject|pg_hba')"
+      fail_msg: >-
+        {{ pgbouncer_auth_user }} reached the pooled endpoint on
+        {{ inventory_hostname }} over TCP, so the reject rule for it is missing
+        or was skipped as unparsable. rc={{ auth_user_over_tcp.rc }},
+        stdout="{{ auth_user_over_tcp.stdout | default('') }}",
+        stderr="{{ auth_user_over_tcp.stderr | default('') }}"
     when: cluster_is_pooled | bool
 
   # The drop-in has to raise the descriptor ceiling off systemd's default of

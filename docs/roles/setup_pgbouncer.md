@@ -153,6 +153,12 @@ file admits the following, in order:
 
 - `pgbouncer_auth_user` over the unix socket, for the admin console.
 - `postgres` over the unix socket, mirroring PostgreSQL's own local rule.
+- Nothing else as `pgbouncer_auth_user`: the next rules reject it on every
+  address, including the replication pseudo-database, which the `all` keyword
+  does not cover. Its one privilege is the credential lookup, which returns any
+  role's stored verifier, and the loopback and proxy rules below name every
+  role — so without an explicit rejection it would be a network login as well.
+  Administration is over the socket only.
 - The node's own loopback address.
 - Every pgEdge node in the cluster, for `pgedge_user` and `db_user`.
 - The zone's HAProxy nodes, plus `proxy_node` when it is set, for every role.
@@ -160,13 +166,14 @@ file admits the following, in order:
 - `pgbouncer_hba_rules`, which apply to the pooled endpoint alone.
 
 The rules are rendered from the same variables that drive the PostgreSQL
-rules, so the two lists stay in step. They differ deliberately in five ways:
+rules, so the two lists stay in step. They differ deliberately in six ways:
 physical replication rules are not mirrored, because a replication connection
 cannot be pooled; the rules `setup_backrest` adds for the backup host are not
 mirrored either; `pgbouncer_hba_rules` has no PostgreSQL counterpart; the
-proxy rules admit every role rather than the cluster's two; and the local rule
+proxy rules admit every role rather than the cluster's two; the local rule
 for the authentication user exists because the pooler has an admin console and
-PostgreSQL does not.
+PostgreSQL does not; and that user is rejected on every host rule, which
+PostgreSQL needs no counterpart to because it has no such account.
 
 The proxy rules are the one place the pooled rules are wider than the direct
 ones. HAProxy's pooled listener is TCP passthrough, so the pooler sees the

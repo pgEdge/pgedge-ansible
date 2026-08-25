@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new `pgbouncer_hba_rules` admits it to the pooled endpoint alone.
   `init_server` validates both against the `pg_hba` subset pgBouncer can
   parse, since it skips a line it cannot parse rather than refusing to start.
+  `pgbouncer_auth` reaches the pooler over its unix socket only: the rendered
+  rules reject it on every address, ahead of the loopback and proxy rules that
+  name every role, so the one account that can read stored verifiers is not
+  also a network login.
 - The pooled endpoint serves TLS from the same certificate PostgreSQL
   presents, staged from the controller rather than read out of `PGDATA` so an
   HA replica does not race Patroni's clone.

@@ -56,6 +56,12 @@ zone's HAProxy nodes, the node's loopback, and local administration. Name the
 client in `pgbouncer_hba_rules` to admit it to the pooled endpoint alone, or in
 `custom_hba_rules` to admit it to both endpoints, then re-run the playbook.
 
+The one connection this cannot fix is `pgbouncer_auth_user` over TCP. It is
+rejected on every address by design, ahead of every other host rule, because
+its only privilege is the credential lookup that returns any role's stored
+verifier. Rules are first-match, so naming it in `pgbouncer_hba_rules` will
+not admit it. Administer the pooler over its unix socket instead.
+
 In a high availability cluster the pooler sees the proxy's address rather than
 the client's, because the pooled HAProxy listener is TCP passthrough. A rule
 naming the client's own address cannot admit a connection arriving that way.

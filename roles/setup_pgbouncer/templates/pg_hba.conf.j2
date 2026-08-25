@@ -18,16 +18,17 @@
 # Postgres's pg_hba.conf: on RHEL that file lives in a 0700 PGDATA owned by
 # postgres, while the pooler runs as pgbouncer.
 #
-# Five deliberate differences from the Postgres rules. Physical replication is
+# Six deliberate differences from the Postgres rules. Physical replication is
 # not mirrored, because a replication connection cannot be pooled and a rule
 # permitting one here would only mislead. Neither are the rules setup_backrest
 # patches in for the backup host, for the same reason. pgbouncer_hba_rules is
 # pooler-only: it names clients that should reach the pooled endpoint and
 # nothing else, which naming them in custom_hba_rules could not express, since
 # those rules open the direct endpoint too. The proxy rules admit every role,
-# for the reason given where they are rendered. And there is a local rule for
-# the auth user that Postgres has no counterpart to, because the pooler has an
-# admin console and Postgres does not.
+# for the reason given where they are rendered. There is a local rule for the
+# auth user that Postgres has no counterpart to, because the pooler has an
+# admin console and Postgres does not. And that rule is paired with a reject
+# that keeps the same account off every host rule below it.
 #
 # A line pgBouncer cannot parse is skipped with a WARNING rather than refused,
 # so an unsupported rule fails open — a dropped "reject" would leave the pooler
@@ -51,6 +52,24 @@ local all {{ pgbouncer_auth_user }} scram-sha-256
 # directory, which on RHEL's 0700 /run/pgbouncer is nowhere — harmless there,
 # and the rule that makes local psql work on Debian.
 local all postgres peer
+
+# And the auth user nowhere else. Every rule below this line is a host rule, and
+# the two widest of them name every role — the loopback rule just below, and the
+# proxy rules further down — so without this the one account whose privilege is
+# reading SCRAM verifiers out of pg_shadow would also be a network login. First
+# match wins, so the local rule above still stands and the admin console still
+# answers over the unix socket. The pooler's own login to Postgres is untouched
+# either way, because that hop is matched by Postgres's HBA and not by this
+# file, and nothing else in this collection connects as this role.
+#
+# The database column names the replication pseudo-database explicitly, because
+# "all" does not cover it — the same rule Postgres's own parser follows. It is
+# worth naming: a replication connection can read arbitrary files off the server
+# through the protocol, so it is the last thing this account should be able to
+# open, and a pooled replication connection is of no use to this collection
+# anyway.
+host all,replication {{ pgbouncer_auth_user }} 0.0.0.0/0 reject
+host all,replication {{ pgbouncer_auth_user }} ::/0 reject
 
 # The node itself: this is the path the pooler's own host uses, and the only one
 # that exists on a node with no proxy in front of it.
