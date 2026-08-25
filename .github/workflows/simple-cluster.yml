@@ -56,7 +56,9 @@ jobs:
       - name: Generate SSH keypair
         run: |
           mkdir -p tests/.ssh
-          ssh-keygen -t ed25519 -f tests/.ssh/id_ed25519 -N "" -q
+          if [ ! -f tests/.ssh/id_ed25519 ]; then
+            ssh-keygen -t ed25519 -f tests/.ssh/id_ed25519 -N "" -q
+          fi
           cp tests/.ssh/id_ed25519.pub tests/docker/authorized_keys
 
       - name: Build and install collection
