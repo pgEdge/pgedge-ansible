@@ -18,6 +18,8 @@ apply across roles unless noted otherwise.
   configure etcd, Patroni, and streaming replication.
 - [HAProxy Parameters](#haproxy-parameters) - Configure HAProxy listeners and
   routing.
+- [Pooling Parameters](#pooling-parameters) - Configure the pgBouncer
+  connection pooler and the pooled endpoint.
 - [Server Configuration Parameters](#server-configuration-parameters) - Control
   server-level settings like ports and SELinux.
 - [Backup Configuration Parameters](#backup-configuration-parameters) -
@@ -105,6 +107,37 @@ The following table describes parameters that control HAProxy configuration:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | haproxy_extra_routes | {replica: {port: 5433}} | Additional HAProxy listeners corresponding to [Patroni REST endpoint](https://patroni.readthedocs.io/en/latest/rest_api.html) check types. Each entry requires a port sub-key and accepts an optional lag sub-key for maximum replica lag. |
+| pooler_port | 6432 | Proxy-layer port for the pooled listener, mirroring the way proxy_port fronts pg_port. Nothing is emitted on this port unless the zone has a node in the pgbouncer group. |
+| haproxy_max_conn | 100 (plus the pooled listener's ceiling where the zone pools) | HAProxy's global connection ceiling, which must cover the sum of the listeners' own. |
+| haproxy_pooler_max_conn | pgbouncer_max_client_conn on the zone's first pooled node | Connection ceiling for the pooled listener. Only the leader's pooler takes traffic, so this is one pooler's limit rather than the sum across pooled nodes. |
+
+## Pooling Parameters
+
+The following table describes parameters that control the pgBouncer connection
+pooler. They apply only to nodes in the `pgbouncer` inventory group, which must
+be a subset of the `pgedge` group:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| pgbouncer_package | pgedge-pgbouncer | Package install_pgbouncer installs. The collection requires pgBouncer 1.21 or later. |
+| pgbouncer_port | 6432 | Port each pooler listens on. Must differ from pg_port. |
+| pgbouncer_listen_addr | * | Addresses the pooler binds. |
+| pgbouncer_auth_user | pgbouncer_auth | PostgreSQL role the pooler logs in as to look up client credentials. Also the only account admitted to the pooler's admin console. |
+| pgbouncer_auth_password | secret | Password for pgbouncer_auth_user. The only password written to disk, and init_server refuses to deploy a pooled cluster while it is unchanged. |
+| pgbouncer_pool_mode | session | How much of a session the pooler reuses. Accepted values are session and transaction. |
+| pgbouncer_max_client_conn | 1000 | Client connections the pooler accepts. Also sizes the pooler's file descriptor limit and the pooled HAProxy listener. |
+| pgbouncer_default_pool_size | 25 | Backend connections per user and database pair. |
+| pgbouncer_max_prepared_statements | 0 | Protocol-level prepared statements tracked per connection, which is what makes prepared statements usable in transaction mode. |
+| pgbouncer_ignore_startup_parameters | extra_float_digits | Startup parameters the pooler accepts from a client and then discards rather than forwarding. |
+| pgbouncer_client_tls_sslmode | allow | TLS policy on the pooled endpoint. Accepted values are disable, allow, prefer, and require. |
+| pgbouncer_tls_cert_source | tls/postgres/server.crt | Controller-side certificate the pooled endpoint presents. |
+| pgbouncer_tls_key_source | tls/postgres/server.key | Controller-side private key for that certificate. |
+| pgbouncer_hba_rules | [] | Additional client authentication rules for the pooled endpoint only, in the same shape as custom_hba_rules. |
+| pgbouncer_limit_nofile | pgbouncer_max_client_conn * 2 + 1024 | File descriptor limit in the pooler's systemd drop-in. |
+
+The [Pooling Configuration](configuration/pooling.md) document describes the
+authentication model, the client authentication rules the pooler enforces, and
+the rules it cannot.
 
 ## Server Configuration Parameters
 
@@ -183,6 +216,11 @@ collection roles. The values differ by operating system family.
 | pg_service_name | postgresql@VERSION-CLUSTER | pgedge-postgres-VERSION | Systemd service name for PostgreSQL. |
 | patroni_service_name | patroni@VERSION-CLUSTER | patroni | Systemd service name for Patroni. |
 | nodes_in_zone | (computed) | (computed) | List of all nodes in the pgedge host group that share the same zone as the current node. |
+| pooled_nodes_in_zone | (computed) | (computed) | List of nodes in the pgbouncer host group that share the same zone as the current node. |
+| pgbouncer_user | postgres | pgbouncer | System user the pgBouncer service runs as. The Debian package creates no pgbouncer user. |
+| pgbouncer_log_file | /var/log/postgresql/pgbouncer.log | /var/log/pgbouncer/pgbouncer.log | Path to the pooler's log file. Each platform's own path, so the packaged logrotate rule already covers it. |
+| pgbouncer_pid_file | /var/run/postgresql/pgbouncer.pid | /run/pgbouncer/pgbouncer.pid | Path to the pooler's pid file. |
+| pgbouncer_socket_dir | /var/run/postgresql | /run/pgbouncer | Directory holding the pooler's unix socket. Its permissions decide who can administer the pooler locally. |
 
 ## etcd Internal Parameters
 

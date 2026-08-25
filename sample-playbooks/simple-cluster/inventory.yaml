@@ -5,6 +5,16 @@
 #
 # Note: zones are currently a logical node assignment. This is also
 #       used for snowflake IDs.
+#
+# To give a node a pooled endpoint as well, add it to an optional 'pgbouncer'
+# group -- a subset of 'pgedge' -- and set pgbouncer_auth_password, which the
+# playbook refuses to leave at its default. Pooled clients then use
+# pgbouncer_port (6432) where direct ones use pg_port (5432):
+#
+# pgbouncer:
+#   hosts:
+#     192.168.6.10:
+#     192.168.6.11:
 
 pgedge:
   vars:

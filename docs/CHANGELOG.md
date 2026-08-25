@@ -40,6 +40,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and setup_patroni include it so configuration can be gated on parameters that
   only some releases carry. (EE-34)
 
+- new install_pgbouncer and setup_pgbouncer roles deploy a pgBouncer connection
+  pooler on pgEdge nodes, giving each pooled node a second endpoint on
+  pgbouncer_port beside Postgres's own. Pooling is opt-in by membership in a new
+  optional pgbouncer inventory group, which must be a subset of pgedge; a
+  cluster with no member renders exactly the configuration it did before.
+- pooled connections authenticate through pgBouncer's auth_query rather than a
+  maintained password list. setup_postgres creates a powerless pgbouncer_auth
+  role and a SECURITY DEFINER lookup wherever a zone pools, so every Postgres
+  role works through the pooled endpoint, including roles created after
+  deployment, and a rotated password takes effect immediately. Only
+  pgbouncer_auth_password is written to disk, and init_server refuses to deploy
+  a pooled cluster while it is still the default.
+- the pooler enforces its own client authentication rules, rendered into
+  /etc/pgbouncer/pg_hba.conf from the same variables that drive the Postgres
+  rules. custom_hba_rules admits a client to both endpoints; the new
+  pgbouncer_hba_rules admits it to the pooled endpoint alone. init_server
+  validates both against the pg_hba subset pgBouncer can parse, since it skips
+  a line it cannot parse rather than refusing to start.
+- the pooled endpoint serves TLS from the same certificate Postgres presents,
+  staged from the controller rather than read out of PGDATA so an HA replica
+  does not race Patroni's clone. pgbouncer_client_tls_sslmode defaults to allow,
+  which accepts exactly what the direct endpoint accepts today.
+- new pooler_port parameter fronts the poolers from the proxy layer, the way
+  proxy_port fronts pg_port. setup_haproxy emits a pg-pooler listener on it in
+  any zone that has a pooled node, health-checked against Patroni's REST API
+  like the direct listeners, and sizes the global connection ceiling to cover
+  it. The existing listeners are unchanged, so Spock replication never routes
+  through a pooler.
+- new documentation for pooling: role pages for both new roles, a Pooling
+  Configuration reference, a pgBouncer troubleshooting page, the pooled listener
+  and the port model in Proxy Configuration, the pgbouncer group in Inventory
+  Structure, and an opt-in walkthrough in both tutorials.
+
 ### Fixed
 
 - Spock replication no longer breaks on Postgres releases carrying the fix for

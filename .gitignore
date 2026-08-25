@@ -12,3 +12,6 @@ __pycache__/
 # Built by the Makefile from galaxy.template.yml.
 galaxy.yml
 pgedge-platform-*.tar.gz
+
+# Built by "mkdocs build" from docs/ and mkdocs.yml.
+site/

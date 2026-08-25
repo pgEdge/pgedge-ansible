@@ -100,6 +100,49 @@ pgedge:
       zone: 2
 ```
 
+### pgbouncer (Optional)
+
+This group contains the pgEdge nodes that also run a pgBouncer connection
+pooler, giving each of them a second, pooled endpoint on `pgbouncer_port`
+beside PostgreSQL's own. Pooling is opt-in: a node that is not in this group is
+left untouched, and a cluster with an empty or absent group behaves exactly as
+it did before pooling existed.
+
+The group must be a subset of `pgedge`. A pooler forwards to the PostgreSQL
+instance on its own node, so there is nothing for one to do on a host that is
+not a pgEdge node. The `init_server` role rejects an inventory that names a
+host here and not in `pgedge`.
+
+In a high availability cluster, put every node of a zone in the group or none
+of them. The pooled HAProxy listener health-checks Patroni's leader endpoint,
+exactly as the direct listener does, so it can only route to a pooler running
+on the current leader. If the leader fails over to a node that is not pooled,
+the pooled endpoint has no reachable backend until the leader moves back.
+
+Set `pgbouncer_auth_password` when you use this group. It is the pooler's own
+PostgreSQL login, the one password the collection writes to disk, and
+`init_server` refuses to deploy while it is still the default.
+
+```yaml
+pgedge:
+  vars:
+    pgbouncer_auth_password: "{{ vault_pgbouncer_auth_password }}"
+  hosts:
+    pg-node1.example.com:
+      zone: 1
+    pg-node2.example.com:
+      zone: 2
+
+pgbouncer:
+  hosts:
+    pg-node1.example.com:
+    pg-node2.example.com:
+```
+
+Nodes in this group need the `install_pgbouncer` and `setup_pgbouncer` roles,
+which the sample playbooks apply to the whole `pgedge` group gated on
+membership here. See [Pooling Configuration](pooling.md).
+
 ### haproxy (Optional - HA Only)
 
 This group contains load balancer nodes for high-availability clusters. The
@@ -144,6 +187,7 @@ pgedge:
     is_ha_cluster: true
     db_password: "{{ vault_db_password }}"
     pgedge_password: "{{ vault_pgedge_password }}"
+    pgbouncer_auth_password: "{{ vault_pgbouncer_auth_password }}"
   hosts:
     pg-node1.example.com:
       zone: 1
@@ -157,6 +201,15 @@ pgedge:
       zone: 2
     pg-node6.example.com:
       zone: 2
+
+pgbouncer:
+  hosts:
+    pg-node1.example.com:
+    pg-node2.example.com:
+    pg-node3.example.com:
+    pg-node4.example.com:
+    pg-node5.example.com:
+    pg-node6.example.com:
 
 haproxy:
   hosts:
@@ -172,3 +225,8 @@ backup:
     backup2.example.com:
       zone: 2
 ```
+
+The `pgbouncer` group above pools every node in both zones, so the pooled
+endpoint survives a failover to any of them. Clients that want pooled
+connections target `pooler_port` on the zone's HAProxy node; clients that want
+direct ones keep using `proxy_port`.
