@@ -30,18 +30,18 @@ The role also requires the following to have run already:
 - `install_pgbouncer` installs the pgBouncer package.
 - `setup_postgres` creates the pooler's PostgreSQL login and the
   `pgbouncer.get_auth` credential lookup that `auth_query` calls. Both are
-  created wherever a zone has a pooled node.
+  created wherever `pgbouncer_enabled` is set.
 
 ## When to Use
 
-Execute this role on the hosts in the `pgbouncer` group after PostgreSQL is
-running: after `setup_postgres` in a simple cluster, and after `setup_patroni`
-in a high availability cluster. In an HA cluster the pooler forwards to the
+Execute this role on the pgEdge nodes after PostgreSQL is running: after
+`setup_postgres` in a simple cluster, and after `setup_patroni` in a high
+availability cluster. In an HA cluster the pooler forwards to the
 node's local PostgreSQL whether that node is currently the primary or a
 replica, and HAProxy decides which pooler receives traffic.
 
-In the following example, the playbook configures the pooler on the pooled
-nodes only:
+In the following example, the playbook configures the pooler only where the
+cluster pools:
 
 ```yaml
 - hosts: pgedge
@@ -50,14 +50,13 @@ nodes only:
   roles:
     - setup_postgres
     - role: setup_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
 ```
 
-Run the play against the whole `pgedge` group and gate the role on group
-membership, as shown, rather than targeting `hosts: pgbouncer`. The pooler's
-HBA template reads `ansible_default_ipv4` out of `hostvars` for every pgEdge
-node and for the zone's proxies, and a narrower play leaves those facts
-ungathered.
+Run the play against the whole `pgedge` group and gate the role on
+`pgbouncer_enabled`, as shown. The pooler's HBA template reads
+`ansible_default_ipv4` out of `hostvars` for every pgEdge node and for the
+zone's proxies, and a narrower play leaves those facts ungathered.
 
 ## Configuration
 
@@ -210,7 +209,7 @@ endpoint by design.
 ## Usage Examples
 
 In the following example, the playbook configures the pooler with defaults on
-the nodes that joined the `pgbouncer` group:
+every node of a pooled cluster:
 
 ```yaml
 - hosts: pgedge
@@ -220,7 +219,7 @@ the nodes that joined the `pgbouncer` group:
     pgbouncer_auth_password: "{{ vault_pgbouncer_auth_password }}"
   roles:
     - role: setup_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
 ```
 
 In the following example, the playbook puts the pooler in transaction mode
@@ -243,7 +242,7 @@ admits one application subnet to that endpoint alone:
         method: scram-sha-256
   roles:
     - role: setup_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
 ```
 
 ## Artifacts

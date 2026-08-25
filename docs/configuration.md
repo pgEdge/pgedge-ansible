@@ -107,18 +107,19 @@ The following table describes parameters that control HAProxy configuration:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | haproxy_extra_routes | {replica: {port: 5433}} | Additional HAProxy listeners corresponding to [Patroni REST endpoint](https://patroni.readthedocs.io/en/latest/rest_api.html) check types. Each entry requires a port sub-key and accepts an optional lag sub-key for maximum replica lag. |
-| pooler_port | 6432 | Proxy-layer port for the pooled listener, mirroring the way proxy_port fronts pg_port. Nothing is emitted on this port unless the zone has a node in the pgbouncer group. |
-| haproxy_max_conn | 100 (plus the pooled listener's ceiling where the zone pools) | HAProxy's global connection ceiling, which must cover the sum of the listeners' own. |
-| haproxy_pooler_max_conn | pgbouncer_max_client_conn on the zone's first pooled node | Connection ceiling for the pooled listener. Only the leader's pooler takes traffic, so this is one pooler's limit rather than the sum across pooled nodes. |
+| pooler_port | 6432 | Proxy-layer port for the pooled listener, mirroring the way proxy_port fronts pg_port. Nothing is emitted on this port unless pgbouncer_enabled is set. |
+| haproxy_max_conn | 100 (plus the pooled listener's ceiling where the cluster pools) | HAProxy's global connection ceiling, which must cover the sum of the listeners' own. |
+| haproxy_pooler_max_conn | pgbouncer_max_client_conn on the zone's first node | Connection ceiling for the pooled listener. Only the leader's pooler takes traffic, so this is one pooler's limit rather than the sum across pooled nodes. |
 
 ## Pooling Parameters
 
 The following table describes parameters that control the pgBouncer connection
-pooler. They apply only to nodes in the `pgbouncer` inventory group, which must
-be a subset of the `pgedge` group:
+pooler. They apply only where `pgbouncer_enabled` is set, which is a
+cluster-wide choice made on the `pgedge` group:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| pgbouncer_enabled | false | When true, every pgEdge node runs a pooler in front of its own PostgreSQL and serves a pooled endpoint on pgbouncer_port. Cluster-wide, like is_ha_cluster: init_server rejects an inventory whose pgEdge nodes disagree. |
 | pgbouncer_package | pgedge-pgbouncer | Package install_pgbouncer installs. The collection requires pgBouncer 1.21 or later. |
 | pgbouncer_port | 6432 | Port each pooler listens on. Must differ from pg_port. |
 | pgbouncer_listen_addr | * | Addresses the pooler binds. |
@@ -216,7 +217,8 @@ collection roles. The values differ by operating system family.
 | pg_service_name | postgresql@VERSION-CLUSTER | pgedge-postgres-VERSION | Systemd service name for PostgreSQL. |
 | patroni_service_name | patroni@VERSION-CLUSTER | patroni | Systemd service name for Patroni. |
 | nodes_in_zone | (computed) | (computed) | List of all nodes in the pgedge host group that share the same zone as the current node. |
-| pooled_nodes_in_zone | (computed) | (computed) | List of nodes in the pgbouncer host group that share the same zone as the current node. |
+| cluster_is_pooled | (computed) | (computed) | Whether pgbouncer_enabled is set for this cluster, read from the pgEdge nodes' own variables so that a proxy or backup host can answer it too. |
+| pooled_nodes_in_zone | (computed) | (computed) | Nodes the zone's pooled endpoint routes to: every node of the zone where the cluster pools, and an empty list where it does not. |
 | pgbouncer_user | postgres | pgbouncer | System user the pgBouncer service runs as. The Debian package creates no pgbouncer user. |
 | pgbouncer_log_file | /var/log/postgresql/pgbouncer.log | /var/log/pgbouncer/pgbouncer.log | Path to the pooler's log file. Each platform's own path, so the packaged logrotate rule already covers it. |
 | pgbouncer_pid_file | /var/run/postgresql/pgbouncer.pid | /run/pgbouncer/pgbouncer.pid | Path to the pooler's pid file. |

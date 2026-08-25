@@ -88,12 +88,12 @@ A complete list of parameters is available in the
 
 ## Adding Connection Pooling
 
-Any node in the cluster can also run a pgBouncer connection pooler, giving it a
-second endpoint on port 6432 beside PostgreSQL's own on 5432. Pooling is
-opt-in: add the nodes that should run a pooler to a `pgbouncer` group, which
-must be a subset of `pgedge`.
+Every node in the cluster can also run a pgBouncer connection pooler, giving it
+a second endpoint on port 6432 beside PostgreSQL's own on 5432. Pooling is
+opt-in and cluster-wide, like `is_ha_cluster`: set `pgbouncer_enabled` on the
+`pgedge` group and every node gets a pooler in front of its own PostgreSQL.
 
-The following inventory pools two of the three nodes:
+The following inventory pools all three nodes:
 
 ```yaml
 all:
@@ -103,6 +103,7 @@ all:
 pgedge:
   vars:
     db_password: secret
+    pgbouncer_enabled: true
     pgbouncer_auth_password: poolsecret
   hosts:
     192.168.6.10:
@@ -111,19 +112,14 @@ pgedge:
       zone: 2
     192.168.6.12:
       zone: 3
-
-pgbouncer:
-  hosts:
-    192.168.6.10:
-    192.168.6.11:
 ```
 
 `pgbouncer_auth_password` is the pooler's own PostgreSQL login. It is the one
 password the collection writes to disk, and the playbook refuses to run while
 it is still the default `secret`, so set it here or take it from a vault.
 
-Add the two pooling roles to the playbook, gated on group membership so the
-unpooled node is untouched:
+Add the two pooling roles to the playbook, gated on `pgbouncer_enabled` so a
+cluster that does not pool is untouched:
 
 ```yaml
 - hosts: pgedge
@@ -136,15 +132,15 @@ unpooled node is untouched:
     - install_repos
     - install_pgedge
     - role: install_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
     - setup_postgres
     - role: setup_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
     - setup_pgedge
 ```
 
-After the playbook completes, each pooled node answers on two ports. Clients
-choose which one they want:
+After the playbook completes, every node answers on two ports. Clients choose
+which one they want:
 
 ```bash
 # Direct connection to PostgreSQL

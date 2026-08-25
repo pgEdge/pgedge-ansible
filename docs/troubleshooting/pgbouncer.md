@@ -1,7 +1,7 @@
 # pgBouncer Issues
 
-This page covers the pooled connection endpoint. Pooling is opt-in: only
-nodes in the `pgbouncer` inventory group run a pooler. See
+This page covers the pooled connection endpoint. Pooling is opt-in per
+cluster: nodes run a pooler only where `pgbouncer_enabled` is set. See
 [Pooling Configuration](../configuration/pooling.md) for the parameters
 referenced here.
 
@@ -97,8 +97,8 @@ sudo -i -u postgres psql -c '\df pgbouncer.get_auth'
 Use `-h /var/run/postgresql` on Debian-based systems. If the console refuses
 the password, `/etc/pgbouncer/userlist.txt` disagrees with the role's password
 in PostgreSQL. Re-run `setup_postgres` and `setup_pgbouncer` with the same
-`pgbouncer_auth_password`. If the function is missing, `setup_postgres` did not
-run with a pooled node in the zone.
+`pgbouncer_auth_password`. If the function is missing, `setup_postgres` ran
+before `pgbouncer_enabled` was set.
 
 A `trust` rule produces the same symptom from the other direction: it collects
 no password from the client, so the backend login then fails with `server login
@@ -176,11 +176,12 @@ The service unit carries `Restart=always`, so this state normally clears
 itself. A pooler that keeps dying is a configuration or resource problem, so
 check the log.
 
-The same symptom appears with every pooler healthy when the zone pools only
-some of its nodes and the leader is one of the others: the pooled listener
-routes only to the pooler on the current leader, so it has no reachable
-backend. Add the remaining nodes of the zone to the `pgbouncer` group and
-re-run the playbook.
+The same symptom appears with every pooler healthy if the pooled listener is
+missing a node of the zone, because it routes only to the pooler on the current
+leader. That cannot come from the inventory — `pgbouncer_enabled` is
+cluster-wide and `init_server` rejects nodes that disagree about it — so compare
+the `pg-pooler` stanza in `/etc/haproxy/haproxy.cfg` against the zone's nodes
+and re-run the playbook against the proxy if one is absent.
 
 ## Session State Leaks Between Clients
 

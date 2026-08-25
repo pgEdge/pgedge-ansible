@@ -5,10 +5,12 @@ pooled connection endpoint beside the direct PostgreSQL one. The
 `install_pgbouncer` and `setup_pgbouncer` roles use the parameters on this
 page.
 
-Pooling is opt-in by inventory group. A node runs a pooler when it belongs to
-the `pgbouncer` group, which must be a subset of the `pgedge` group; nodes
-outside that group are untouched. See
-[Inventory Structure](inventory.md#pgbouncer-optional) for the group, and
+Pooling is opt-in per cluster, through `pgbouncer_enabled`. Set it on the
+`pgedge` group and every pgEdge node runs a pooler in front of its own
+PostgreSQL; leave it unset and no node is touched. It is a cluster-wide
+setting, like `is_ha_cluster`, and not a per-node one — see
+[pgbouncer_enabled](#pgbouncer_enabled) for why. See
+[Inventory Structure](inventory.md#connection-pooling) for where it goes, and
 [Proxy Configuration](proxy.md#pooler_port) for the HAProxy listener that
 fronts the poolers in a high availability cluster.
 
@@ -28,10 +30,43 @@ Spock replication never routes through a pooler. Cross-zone subscriptions use
 `proxy_port` on the direct listener, so pooling changes nothing about
 replication.
 
-In a high availability cluster, pool every node of a zone or none of them. The
-pooled HAProxy listener health-checks Patroni's leader endpoint, so it routes
-only to the pooler on the current leader, and a failover to an unpooled node
-leaves the pooled endpoint with no reachable backend.
+In a high availability cluster, every node of a zone pools, because
+`pgbouncer_enabled` applies to the whole cluster. That is what keeps the pooled
+endpoint available: the pooled HAProxy listener health-checks Patroni's leader
+endpoint, so it routes only to the pooler on the current leader, and any node
+of the zone can become that leader.
+
+## pgbouncer_enabled
+
+- Type: Boolean
+- Default: `false`
+- Description: This parameter enables the connection pooler. When it is `true`,
+  every pgEdge node runs pgBouncer in front of its own PostgreSQL and serves a
+  pooled endpoint on `pgbouncer_port`; when it is `false`, no pooler is
+  configured and no pooled endpoint exists. It belongs in the vars of the
+  `pgedge` group.
+
+  Pooling is a property of the cluster rather than of a node, and the
+  `init_server` role rejects an inventory whose pgEdge nodes disagree about it.
+  A zone that pooled only some of its nodes would have a pooled endpoint that
+  worked until the Patroni leader moved to a node with no pooler, at which
+  point the endpoint would have no backend at all — and the direct endpoint
+  cannot stand in for it, because the two resolve against different client
+  authentication rules.
+
+  Set `pgbouncer_auth_password` alongside it. The pooler's own PostgreSQL login
+  is written to disk, so `init_server` refuses to deploy a pooled cluster while
+  that password is still the default.
+
+In the following example, the inventory gives every node in the cluster a
+pooled endpoint:
+
+```yaml
+pgedge:
+  vars:
+    pgbouncer_enabled: true
+    pgbouncer_auth_password: "{{ vault_pgbouncer_auth_password }}"
+```
 
 ## pgbouncer_port
 
@@ -270,7 +305,7 @@ auth_dbname = postgres
 ```
 
 The `setup_postgres` role creates the role and the lookup in the maintenance
-database wherever a zone has a pooled node. The function reads `pg_shadow` as
+database wherever `pgbouncer_enabled` is set. The function reads `pg_shadow` as
 its superuser owner, has a pinned `search_path`, lives in its own schema, and
 grants `EXECUTE` to the authentication user alone.
 

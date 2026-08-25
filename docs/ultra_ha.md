@@ -180,40 +180,34 @@ backup_repo_params:
 
 pgEdge nodes can also run a pgBouncer connection pooler, and HAProxy fronts the
 poolers on `pooler_port` the way it fronts PostgreSQL on `proxy_port`. Pooling
-is opt-in: add the nodes that should run a pooler to a `pgbouncer` group, which
-must be a subset of `pgedge`.
+is opt-in and cluster-wide, like `is_ha_cluster`: set `pgbouncer_enabled` on the
+`pgedge` group and every node runs a pooler in front of its own PostgreSQL.
 
-Pool every node of a zone, or none of them. The pooled HAProxy listener
-health-checks Patroni's leader endpoint, exactly as the direct listener does,
-so it routes only to the pooler on the current leader, and a failover to an
-unpooled node would leave the pooled endpoint with no reachable backend.
+It is cluster-wide by design. The pooled HAProxy listener health-checks
+Patroni's leader endpoint, exactly as the direct listener does, so it routes
+only to the pooler on the current leader — and any node of the zone can become
+that leader. A zone that pooled only some of its nodes would lose the pooled
+endpoint on the first failover to one of the others, which is why `init_server`
+rejects an inventory whose nodes disagree.
 
-Add the group to the inventory:
+Add the setting to the inventory:
 
 ```yaml
 pgedge:
   vars:
+    pgbouncer_enabled: true
     pgbouncer_auth_password: "{{ vault_pgbouncer_auth_password }}"
   # ... hosts as above ...
-
-pgbouncer:
-  hosts:
-    192.168.6.10:
-    192.168.6.11:
-    192.168.6.12:
-    192.168.6.13:
-    192.168.6.14:
-    192.168.6.15:
 ```
 
 `pgbouncer_auth_password` is the pooler's own PostgreSQL login, the one
 password the collection writes to disk. The playbook refuses to run while it is
 still the default.
 
-Then add the two pooling roles to the `pgedge` play, gated on group membership.
-`install_pgbouncer` goes with the other install roles, and `setup_pgbouncer`
-after `setup_patroni`, because the pooler forwards to the PostgreSQL instance
-Patroni manages on its own node:
+Then add the two pooling roles to the `pgedge` play, gated on
+`pgbouncer_enabled`. `install_pgbouncer` goes with the other install roles, and
+`setup_pgbouncer` after `setup_patroni`, because the pooler forwards to the
+PostgreSQL instance Patroni manages on its own node:
 
 ```yaml
 - hosts: pgedge
@@ -229,17 +223,17 @@ Patroni manages on its own node:
     - install_patroni
     - install_backrest
     - role: install_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
     - setup_etcd
     - setup_patroni
     - role: setup_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
     - setup_backrest
 ```
 
 The `haproxy` play needs no change. `setup_haproxy` emits the pooled listener
-by itself in any zone that has a pooled node, and emits nothing extra in a zone
-that has none.
+by itself wherever the cluster pools, with every node of the zone behind it, and
+emits nothing extra where it does not.
 
 After deployment, each zone's HAProxy node offers both endpoints. Clients
 choose which one they want:

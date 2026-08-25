@@ -23,7 +23,7 @@ following list shows the correct execution sequence:
 7. [`install_backrest`](roles/install_backrest.md) - Installs PgBackRest on
    backup-capable nodes.
 8. [`install_pgbouncer`](roles/install_pgbouncer.md) - Installs pgBouncer on
-   nodes in the pgbouncer group (pooled nodes only).
+   pgEdge nodes (pooled clusters only).
 9. [`setup_etcd`](roles/setup_etcd.md) - Configures and starts etcd (HA only).
 10. [`setup_patroni`](roles/setup_patroni.md) - Configures Patroni and starts
     the HA cluster (HA only).
@@ -37,8 +37,8 @@ following list shows the correct execution sequence:
     runs the first backup.
 
 The two pgBouncer roles are the only optional pair in the sequence. Pooling is
-opt-in by inventory group, so both are gated on membership in the `pgbouncer`
-group; a cluster that does not pool omits them and is otherwise unchanged. See
+opt-in per cluster, so both are gated on `pgbouncer_enabled`; a cluster that
+does not pool omits them and is otherwise unchanged. See
 [Pooling Configuration](configuration/pooling.md).
 
 ## Role Categories

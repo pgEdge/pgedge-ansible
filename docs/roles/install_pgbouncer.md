@@ -19,12 +19,12 @@ Run `install_repos` before this role so the pgEdge repository is available.
 
 ## When to Use
 
-Pooling is opt-in by inventory group. Execute this role on the hosts in the
-`pgbouncer` group, which must be a subset of the `pgedge` group, after
-`install_repos` and before `setup_pgbouncer`.
+Pooling is opt-in per cluster, through `pgbouncer_enabled` on the `pgedge`
+group. Execute this role on the pgEdge nodes after `install_repos` and before
+`setup_pgbouncer`.
 
-In the following example, the playbook installs pgBouncer on the pooled
-nodes only:
+In the following example, the playbook installs pgBouncer only where the
+cluster pools:
 
 ```yaml
 - hosts: pgedge
@@ -34,7 +34,7 @@ nodes only:
     - install_repos
     - install_pgedge
     - role: install_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
 ```
 
 ## Configuration
@@ -74,7 +74,7 @@ package name:
     - pgedge.platform
   roles:
     - role: install_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
 ```
 
 In the following example, the playbook installs a specific pgBouncer build:
@@ -87,13 +87,12 @@ In the following example, the playbook installs a specific pgBouncer build:
     pgbouncer_package: pgedge-pgbouncer-1.25.1
   roles:
     - role: install_pgbouncer
-      when: inventory_hostname in (groups['pgbouncer'] | default([]))
+      when: pgbouncer_enabled | bool
 ```
 
 Both examples run the play against the whole `pgedge` group and gate the role
-on group membership rather than targeting `hosts: pgbouncer` directly. The
-`setup_pgbouncer` role requires that form, so the sample playbooks use it for
-both roles.
+on `pgbouncer_enabled`. Pooling is a cluster-wide setting, not a separate
+inventory group, so there is no host list to target instead.
 
 ## Artifacts
 
@@ -128,6 +127,6 @@ manager reports no change when the package is already present.
 
 !!! info "The Package Is Already There"
     `pgedge-enterprise-all` depends on `pgedge-pgbouncer`, so the package is
-    installed on every pgEdge node whether or not the node joined the
-    `pgbouncer` group. Membership in that group gates the configuration and
-    the running service, not the installation.
+    installed on every pgEdge node whether or not the cluster pools.
+    `pgbouncer_enabled` gates the configuration and the running service, not
+    the installation.

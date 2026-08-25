@@ -73,8 +73,8 @@ hosts:
 - Default: `6432`
 - Description: This parameter specifies the proxy-layer port for the pooled
   listener, mirroring the way `proxy_port` fronts `pg_port`. Nothing is
-  emitted on this port unless the zone has a node in the `pgbouncer` group, so
-  the parameter is inert in a cluster that does not pool.
+  emitted on this port unless `pgbouncer_enabled` is set, so the parameter is
+  inert in a cluster that does not pool.
 
 In the following example, the inventory runs HAProxy on a pgEdge node and
 gives all four ports distinct values:
@@ -121,25 +121,25 @@ pooler.
 ## haproxy_max_conn
 
 - Type: Integer
-- Default: `100`, plus `haproxy_pooler_max_conn` where the zone pools
+- Default: `100`, plus `haproxy_pooler_max_conn` where the cluster pools
 - Description: This parameter specifies HAProxy's global connection ceiling,
   which has to cover the sum of the listeners' own. The direct listeners keep
-  the budget this collection has always given them, and a pooled zone adds the
-  pooled listener's ceiling on top, so a cluster with no pooled node renders
+  the budget this collection has always given them, and a pooled cluster adds
+  the pooled listener's ceiling on top, so a cluster that does not pool renders
   exactly the configuration it did before pooling existed.
 
 ## haproxy_pooler_max_conn
 
 - Type: Integer
-- Default: `pgbouncer_max_client_conn` on the zone's first pooled node
+- Default: `pgbouncer_max_client_conn` on the zone's first node
 - Description: This parameter specifies what the pooled listener accepts. Only
   the leader's pooler takes traffic at any moment, so the ceiling is one
   pooler's `max_client_conn` rather than the sum across pooled nodes.
 
 ## The Pooled Listener
 
-When a zone has at least one node in the `pgbouncer` group, `setup_haproxy`
-emits an additional listener:
+When `pgbouncer_enabled` is set, `setup_haproxy` emits an additional listener
+in every zone:
 
 ```
 listen pg-pooler
@@ -151,15 +151,16 @@ listen pg-pooler
 
     server 192_168_6_10 192.168.6.10:6432 check port 8008
     server 192_168_6_11 192.168.6.11:6432 check port 8008
+    server 192_168_6_12 192.168.6.12:6432 check port 8008
 ```
 
 Three properties of that listener are deliberate.
 
-**Its backends are the pooled nodes in the proxy's own zone**, which may be a
-subset of the zone's pgEdge nodes. Because the check is the leader endpoint,
-only the pooler on the current leader is ever up, so in a high availability
-zone, pool every node or none. A leader that fails over to an unpooled node
-leaves this listener with no reachable backend.
+**Its backends are every pgEdge node in the proxy's own zone**, the same
+servers the direct listener carries, differing only in the port. That follows
+from pooling being cluster-wide, and it is what keeps the endpoint available:
+because the check is the leader endpoint, only the pooler on the current leader
+is ever up, and any node of the zone can become the leader.
 
 **Its health check is Patroni's REST API on port 8008**, exactly as the direct
 listeners use it. A TCP check against `pgbouncer_port` would mark every pooled
@@ -202,8 +203,8 @@ multiplier. See [Pooling Configuration](pooling.md#pgbouncer_pool_mode).
 !!! note "Reading the Defaults From the Pooled Node"
     HAProxy runs on hosts that are not pgEdge nodes, and role defaults never
     appear in `hostvars`. `haproxy_pooler_max_conn` therefore reads
-    `pgbouncer_max_client_conn` from the zone's first pooled node where the
-    inventory sets one (group variables on `pgedge` is the usual place), and
-    otherwise falls back to the default the HAProxy host itself carries. Set
-    the value on the `pgedge` group, not on individual hosts, so every pooled
-    node in a zone agrees.
+    `pgbouncer_max_client_conn` from the zone's first node where the inventory
+    sets one (group variables on `pgedge` is the usual place, beside
+    `pgbouncer_enabled` itself), and otherwise falls back to the default the
+    HAProxy host itself carries. Set the value on the `pgedge` group, not on
+    individual hosts, so every node in a zone agrees.
