@@ -95,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `output_plugin_libraries` does not name. Both simple and Ultra-HA clusters
   now set the parameter, and only on releases that recognize it, since earlier
   releases refuse to start when it appears. (EE-34)
+- `init_server` now rejects an inventory that gives `proxy_port` the same value
+  as `pg_port` on a host that runs HAProxy alongside a pgEdge node, a topology
+  the proxy documentation supports. HAProxy could not bind its listener there,
+  which surfaced as a service failure well after the playbook had configured
+  the node rather than as a validation error before it started.
 - `patroni_config_file` and `patroni_tls_dir` are now recognized by all roles.
 - HA failover example in the usage guide now passes the Patroni scope the
   collection actually configures, which has included the PostgreSQL version

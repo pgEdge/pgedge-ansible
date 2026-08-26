@@ -194,6 +194,24 @@
   - cluster_is_pooled | bool
   - inventory_hostname in (groups.pgedge | default([]))
 
+# The one port check here that pooling has nothing to do with: proxy_port fronts
+# pg_port in every cluster, so a co-resident HAProxy configured with the same
+# value cannot bind its listener whether the cluster pools or not. This is the
+# topology docs/configuration/proxy.md tells the reader to change proxy_port
+# for, so catch the omission rather than leaving HAProxy to fail at startup.
+
+- name: Ensure proxy_port does not collide with pg_port on a host running both
+  assert:
+    that:
+    - proxy_port | int != pg_port | int
+    fail_msg: >-
+      proxy_port and pg_port are both {{ pg_port }} on {{ inventory_hostname }},
+      which runs HAProxy alongside Postgres, so HAProxy cannot bind its
+      listener. Set proxy_port to a port Postgres does not hold.
+  when:
+  - inventory_hostname in (groups.haproxy | default([]))
+  - inventory_hostname in (groups.pgedge | default([]))
+
 # proxy_port and pooler_port are proxy-layer ports. Both checks below are gated
 # on the cluster pooling, since pooler_port is otherwise inert.
 #

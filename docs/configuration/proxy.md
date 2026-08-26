@@ -32,7 +32,8 @@ collides, which is why `pooler_port` and `pgbouncer_port` can both keep the
 - Description: This parameter specifies the port that Spock uses for
   subscription connections to remote zones. Setting this to a value different
   from `pg_port` allows HAProxy to run on the same host as Postgres, with
-  HAProxy listening on one port and Postgres on another.
+  HAProxy listening on one port and Postgres on another. `init_server` requires
+  it on such a host, since HAProxy cannot bind a port Postgres already holds.
 
 In the following example, the inventory moves Postgres to port 5433 and
 leaves the standard port for HAProxy:
