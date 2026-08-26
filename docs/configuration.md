@@ -107,7 +107,7 @@ The following table describes parameters that control HAProxy configuration:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | haproxy_extra_routes | {replica: {port: 5433}} | Additional HAProxy listeners corresponding to [Patroni REST endpoint](https://patroni.readthedocs.io/en/latest/rest_api.html) check types. Each entry requires a port sub-key and accepts an optional lag sub-key for maximum replica lag. |
-| pooler_port | 6432 | Proxy-layer port for the pooled listener, mirroring the way proxy_port fronts pg_port. Nothing is emitted on this port unless pgbouncer_enabled is set. |
+| pooler_port | 6432 | Port the HAProxy node listens on for pooled connections, forwarding them to pgbouncer_port on the zone's current primary, exactly as proxy_port fronts pg_port. It is the client-facing half of the pair: clients connect here, not to pgbouncer_port. Nothing is emitted on this port unless pgbouncer_enabled is set. |
 | haproxy_max_conn | 100 (plus the pooled listener's ceiling where the cluster pools) | HAProxy's global connection ceiling, which must cover the sum of the listeners' own. |
 | haproxy_pooler_max_conn | pgbouncer_max_client_conn on the zone's first node | Connection ceiling for the pooled listener. Only the leader's pooler takes traffic, so this is one pooler's limit rather than the sum across pooled nodes. |
 
@@ -121,7 +121,7 @@ cluster-wide choice made on the `pgedge` group:
 |-----------|---------|-------------|
 | pgbouncer_enabled | false | When true, every pgEdge node runs a pooler in front of its own PostgreSQL and serves a pooled endpoint on pgbouncer_port. Cluster-wide, like is_ha_cluster: init_server rejects an inventory whose pgEdge nodes disagree. |
 | pgbouncer_package | pgedge-pgbouncer | Package install_pgbouncer installs. The collection requires pgBouncer 1.21 or later. |
-| pgbouncer_port | 6432 | Port each pooler listens on. Must differ from pg_port. |
+| pgbouncer_port | 6432 | Port each pooled pgEdge node's own pooler listens on, behind pooler_port. Must differ from pg_port. Sharing its default with pooler_port is fine while HAProxy has a host to itself; the two must differ where HAProxy shares a host with pgBouncer. See [The Port Model](configuration/proxy.md#the-port-model). |
 | pgbouncer_listen_addr | * | Addresses the pooler binds. |
 | pgbouncer_auth_user | pgbouncer_auth | PostgreSQL role the pooler logs in as to look up client credentials. Also the only account admitted to the pooler's admin console. |
 | pgbouncer_auth_password | secret | Password for pgbouncer_auth_user. The only password written to disk, and init_server refuses to deploy a pooled cluster while it is unchanged. |

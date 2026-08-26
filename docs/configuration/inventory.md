@@ -159,6 +159,14 @@ pgedge:
       zone: 2
 ```
 
+Pooling adds a port at each layer, and the two are easy to conflate.
+`pgbouncer_port` is where a node's own pooler listens; `pooler_port` is where
+the HAProxy node accepts pooled connections and forwards them to
+`pgbouncer_port` on the current primary. Clients use `pooler_port`, the same
+way they use `proxy_port` rather than `pg_port`. Both default to 6432, which
+only matters when HAProxy shares a host with pgBouncer, where the two must
+differ. [The Port Model](proxy.md#the-port-model) lays out all four ports.
+
 A pooled cluster needs the `install_pgbouncer` and `setup_pgbouncer` roles,
 which the sample playbooks apply to the whole `pgedge` group gated on
 `pgbouncer_enabled`. See [Pooling Configuration](pooling.md).
@@ -213,4 +221,6 @@ backup:
 The `pgbouncer_enabled` setting above pools every node in both zones, so the
 pooled endpoint survives a failover to any of them. Clients that want pooled
 connections target `pooler_port` on the zone's HAProxy node; clients that want
-direct ones keep using `proxy_port`.
+direct ones keep using `proxy_port`. Neither ever connects to `pgbouncer_port`
+directly, since only the leader's pooler carries traffic and the leader can
+move.
