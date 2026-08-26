@@ -78,7 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same servers as the direct listener, differing only in the port —
   health-checked against Patroni's REST API like the direct listeners, and
   sizes the global connection ceiling to cover it. The existing listeners are
-  unchanged, so Spock replication never routes through a pooler.
+  unchanged, so Spock replication never routes through a pooler. `init_server`
+  asserts the ports a host actually binds do not collide: the two proxy-layer
+  ports against each other on any HAProxy node, and against `pg_port` and
+  `pgbouncer_port` only where HAProxy shares a host with a pgEdge node, since
+  that is the only topology where all four bind the same address.
 - New documentation for pooling: role pages for both new roles, a Pooling
   Configuration reference, a pgBouncer troubleshooting page, the pooled
   listener and the port model in Proxy Configuration, `pgbouncer_enabled` in

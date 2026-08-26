@@ -20,7 +20,10 @@ when the node runs one. On the proxy layer, `proxy_port` fronts `pg_port` and
 
 The proxy-layer ports are separate settings from the node ports because
 HAProxy may share a host with PostgreSQL and pgBouncer, where identical values
-collide. The `init_server` role rejects a collision before deployment.
+collide. The `init_server` role rejects a collision before deployment, judging
+each host by the ports it actually binds: on a dedicated HAProxy host nothing
+collides, which is why `pooler_port` and `pgbouncer_port` can both keep the
+6432 default there.
 
 ## proxy_port
 

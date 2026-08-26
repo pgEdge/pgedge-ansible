@@ -194,22 +194,46 @@
   - cluster_is_pooled | bool
   - inventory_hostname in (groups.pgedge | default([]))
 
-# proxy_port and pooler_port are proxy-layer ports, so they only collide with
-# the node-level ports when HAProxy shares a host with Postgres — a topology
-# docs/configuration/proxy.md explicitly supports. Checked only when the
-# cluster actually pools, since pooler_port is otherwise inert.
+# proxy_port and pooler_port are proxy-layer ports. Both checks below are gated
+# on the cluster pooling, since pooler_port is otherwise inert.
+#
+# A dedicated HAProxy host binds nothing but the two proxy ports, so that is the
+# only pair it can collide on. Its pooler_port matching the pgbouncer_port of the
+# nodes it fronts is not a collision: those are other hosts, and the shared 6432
+# default is the ordinary case.
 
-- name: Ensure pooler_port does not collide on hosts that also run Postgres
+- name: Ensure the two proxy-layer ports do not collide with each other
+  assert:
+    that:
+    - pooler_port | int != proxy_port | int
+    fail_msg: >-
+      pooler_port and proxy_port are both {{ proxy_port }} on
+      {{ inventory_hostname }}, which serves both listeners, so the two must
+      differ.
+  when:
+  - cluster_is_pooled | bool
+  - inventory_hostname in (groups.haproxy | default([]))
+
+# The proxy-layer ports meet the node-level ones only where HAProxy shares a
+# host with Postgres and its pooler — a topology docs/configuration/proxy.md
+# explicitly supports, and the only one where all four ports bind on the same
+# address. Hence both group conditions: a pooler_port equal to the pgbouncer_port
+# of a node this host merely fronts is not a collision, so a dedicated HAProxy
+# host has nothing to check here.
+
+- name: Ensure the proxy-layer ports do not collide with the node's own
   assert:
     that:
     - pooler_port | int != pg_port | int
-    - pooler_port | int != proxy_port | int
     - pooler_port | int != pgbouncer_port | int
+    - proxy_port | int != pgbouncer_port | int
     fail_msg: >-
-      pooler_port ({{ pooler_port }}) collides with another port on
-      {{ inventory_hostname }}, which runs HAProxy alongside Postgres. It must
-      differ from pg_port ({{ pg_port }}), proxy_port ({{ proxy_port }}) and
-      pgbouncer_port ({{ pgbouncer_port }}).
+      The proxy-layer ports collide with the node's own on
+      {{ inventory_hostname }}, which runs HAProxy alongside Postgres and its
+      pooler. pooler_port ({{ pooler_port }}) must differ from pg_port
+      ({{ pg_port }}) and pgbouncer_port ({{ pgbouncer_port }}), and proxy_port
+      ({{ proxy_port }}) must differ from pgbouncer_port
+      ({{ pgbouncer_port }}).
   when:
   - cluster_is_pooled | bool
   - inventory_hostname in (groups.haproxy | default([]))
