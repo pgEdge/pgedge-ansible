@@ -73,15 +73,20 @@ jobs:
       - name: Wait for SSH
         run: |
           for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.30; do
+            ready=0
             for i in $(seq 1 30); do
               ssh -i tests/.ssh/id_ed25519 \
                 -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null \
                 -o ConnectTimeout=2 \
                 -o BatchMode=yes \
-                ansible@$host true 2>/dev/null && break
+                ansible@$host true 2>/dev/null && { ready=1; break; }
               sleep 2
             done
+            if [ "$ready" -ne 1 ]; then
+              echo "ERROR: SSH not ready for $host after 30 attempts" >&2
+              exit 1
+            fi
           done
 
       - name: Run playbook
