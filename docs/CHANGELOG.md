@@ -100,6 +100,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the proxy documentation supports. HAProxy could not bind its listener there,
   which surfaced as a service failure well after the playbook had configured
   the node rather than as a validation error before it started.
+- `init_server` validations that read a host's own variables now run on the
+  hosts that carry them rather than `run_once`. Ansible runs a `run_once` task
+  on the first host of the play and evaluates its condition only there, so on an
+  inventory that ordered a proxy, backup or client host first, these checks read
+  variables that host did not have — reporting a failure against the wrong host,
+  or skipping silently and reporting nothing at all. Affected the default
+  password check, `pgbouncer_auth_password`, the pooler's TLS mode and HBA rule
+  checks, the per-zone node check, the supported-OS check and both DCS checks.
+  The two assertions that read the inventory as a whole, and so resolve the same
+  from any host, still run once.
 - `patroni_config_file` and `patroni_tls_dir` are now recognized by all roles.
 - HA failover example in the usage guide now passes the Patroni scope the
   collection actually configures, which has included the PostgreSQL version

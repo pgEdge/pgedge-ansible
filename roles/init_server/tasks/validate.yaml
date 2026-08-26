@@ -1,6 +1,17 @@
 # There are some Best Practices and basic sanity-checks we'd like to enforce
 # before any bootstrapping steps take place. Those take place here under the
 # assumption this role is required for all hosts managed by this collection.
+#
+# A note on run_once, since most of these assertions deliberately do without it.
+# Ansible runs such a task on the first host of the play and evaluates its
+# condition there and nowhere else, so a check gated on group membership, or one
+# reading a variable a group carries, answers for that host alone. Where the
+# first host is not the kind of host the check is about, the assertion is not
+# merely wrong: it is skipped, and the run reports nothing at all. Inventory
+# order is enough to decide it, so run_once appears below only on assertions
+# that read the inventory as a whole -- groups and hostvars, resolving the same
+# from anywhere -- and every check of a host's own variables is gated on the
+# group that carries them and left to run on each of those hosts.
 
 ---
 
@@ -17,14 +28,13 @@
       Non-HA clusters cannot have more than one pgEdge node per zone. Zones
       define node-to-node communication channels and must be unique across the
       cluster.
-  run_once: true
   vars:
     zone_map: >-
       {{ groups['pgedge'] | map('extract', hostvars) |
       map(attribute='zone', default='') | list }}
   when:
   - not is_ha_cluster
-  - inventory_hostname in groups.pgedge
+  - inventory_hostname in (groups.pgedge | default([]))
 
 # Begin by disallowing the use of default passwords. This should go without
 # saying, but there are several of these and it's easy to miss one.
@@ -40,8 +50,7 @@
       One or more passwords are still set to the default value 'secret'. Please
       make sure to specify the following variables:
       db_password, pgedge_password, replication_password, backup_password
-  run_once: true
-  when: inventory_hostname in groups.pgedge | union(groups.backup | default([]))
+  when: inventory_hostname in (groups.pgedge | default([]))
 
 # These roles simply won't work on anything but RHEL / Debian systems right
 # now. There may be workarounds, but for now it's best to fail early.
@@ -53,7 +62,6 @@
     fail_msg: >-
       These roles make many assumptions based on OS distribution. Currently
       only distributions in the RedHat and Debian families are supported.
-  run_once: true
 
 # Don't let backup servers and pgEdge servers overlap. The intention here is
 # that there's a dedicated backup server.
@@ -92,6 +100,15 @@
 # the cluster actually pools: an unpooled cluster never creates the role, and
 # demanding a password for it would change what an existing inventory needs.
 
+# Checked on the pgEdge nodes, which are the hosts that carry the value:
+# pgbouncer_auth_password is normally given to the 'pgedge' group, so a proxy,
+# backup or client host does not have it. Deliberately not run_once — Ansible
+# evaluates a run_once task's condition against the first host of the play
+# alone, so a group gate there would skip the assert outright whenever that
+# host is not a pgEdge node, turning a validation into a no-op. Every node
+# reports instead, which costs a repeated message on an inventory that is
+# wrong anyway.
+
 - name: Ensure the pgBouncer authentication password has been changed
   assert:
     that:
@@ -100,8 +117,9 @@
       pgbouncer_auth_password is still set to the default value 'secret'. It is
       the login pgBouncer uses to look up client credentials in Postgres, and it
       is written to the pooler's auth_file, so it must be set explicitly.
-  run_once: true
-  when: cluster_is_pooled | bool
+  when:
+  - cluster_is_pooled | bool
+  - inventory_hostname in (groups.pgedge | default([]))
 
 # A typo here would render a pgbouncer.ini the pooler refuses to start on, and
 # the failure would surface as a systemd error several tasks later. verify-ca
@@ -122,8 +140,9 @@
       pgbouncer_client_tls_sslmode is "{{ pgbouncer_client_tls_sslmode | default('') }}".
       It must be one of disable, allow, prefer or require. Client certificates
       (verify-ca, verify-full) are not supported on the pooled endpoint.
-  run_once: true
-  when: cluster_is_pooled | bool
+  when:
+  - cluster_is_pooled | bool
+  - inventory_hostname in (groups.pgedge | default([]))
 
 # A pooled node renders these rules into the pooler's own HBA file, and
 # pgBouncer's parser accepts a narrower syntax than Postgres's. What makes that
@@ -172,8 +191,9 @@
       Rejected contypes: {{ bad_contype | map(attribute='contype') | list }}.
       Rejected methods: {{ bad_method | map(attribute='method') | list }}.
       Rejected sources: {{ bad_source }}.
-  run_once: true
-  when: cluster_is_pooled | bool
+  when:
+  - cluster_is_pooled | bool
+  - inventory_hostname in (groups.pgedge | default([]))
 
 # A pooled node binds both Postgres and the pooler, and since the pooler's
 # unix_socket_dir is /var/run/postgresql on Debian — beside Postgres's own
@@ -268,13 +288,13 @@
 # hosts, where neither source exists, so the type cannot work here.
 
 - name: Check DCS type for HA clusters
-  run_once: true
   assert:
     that:
     - patroni_dcs.type | default('') in ('etcd', 'etcd3', 'consul', 'zookeeper', 'exhibitor')
     fail_msg: "DCS type must be one of: etcd, etcd3, consul, zookeeper, exhibitor"
   when:
   - is_ha_cluster
+  - inventory_hostname in (groups.pgedge | default([]))
 
 # The collection only knows how to reach the etcd cluster it builds itself, so
 # it can substitute connection defaults for the etcd types alone. Every other
@@ -284,7 +304,6 @@
 # already been provisioned.
 
 - name: Check DCS parameters are supplied for unmanaged stores
-  run_once: true
   assert:
     that:
     - patroni_dcs.parameters is defined
@@ -299,4 +318,5 @@
       Configuration document for the settings each store accepts.
   when:
   - is_ha_cluster
+  - inventory_hostname in (groups.pgedge | default([]))
   - patroni_dcs.type | default('etcd3') not in ('etcd', 'etcd3')
