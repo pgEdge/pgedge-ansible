@@ -5,12 +5,20 @@ cluster: nodes run a pooler only where `pgbouncer_enabled` is set. See
 [Pooling Configuration](../configuration/pooling.md) for the parameters
 referenced here.
 
-The pooler's log is the first place to look. It is at
-`/var/log/pgbouncer/pgbouncer.log` on RHEL-based systems and
-`/var/log/postgresql/pgbouncer.log` on Debian-based systems:
+The pooler's log is the first place to look. Its path differs by platform, as
+does the pooler's socket directory, so the commands below are marked with the
+platform they apply to wherever that matters. The collection resolves the two
+as `pgbouncer_log_file` and `pgbouncer_socket_dir`, and
+[setup_pgbouncer](../roles/setup_pgbouncer.md#platform-specific-behavior)
+tabulates every platform-dependent path.
 
 ```bash
+# RHEL-based
 sudo tail -n 50 /var/log/pgbouncer/pgbouncer.log
+# Debian-based
+sudo tail -n 50 /var/log/postgresql/pgbouncer.log
+
+# either platform
 sudo journalctl -u pgbouncer -n 50 --no-pager
 ```
 
@@ -75,7 +83,10 @@ effect on the pooled endpoint, and the log carries a warning.
 cannot parse with a warning rather than refusing to start. Count them:
 
 ```bash
+# RHEL-based
 sudo grep 'could not parse hba' /var/log/pgbouncer/pgbouncer.log
+# Debian-based
+sudo grep 'could not parse hba' /var/log/postgresql/pgbouncer.log
 ```
 
 The `ident` method and option syntax such as `clientcert=verify-ca` are the
@@ -96,15 +107,19 @@ rather than the client's. Check that the pooler can authenticate and that the
 lookup is in place:
 
 ```bash
+# RHEL-based
 sudo psql -h /run/pgbouncer -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW VERSION'
+# Debian-based
+sudo psql -h /var/run/postgresql -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW VERSION'
+
+# either platform
 sudo -i -u postgres psql -c '\df pgbouncer.get_auth'
 ```
 
-Use `-h /var/run/postgresql` on Debian-based systems. If the console refuses
-the password, `/etc/pgbouncer/userlist.txt` disagrees with the role's password
-in PostgreSQL. Re-run `setup_postgres` and `setup_pgbouncer` with the same
-`pgbouncer_auth_password`. If the function is missing, `setup_postgres` ran
-before `pgbouncer_enabled` was set.
+If the console refuses the password, `/etc/pgbouncer/userlist.txt` disagrees
+with the role's password in PostgreSQL. Re-run `setup_postgres` and
+`setup_pgbouncer` with the same `pgbouncer_auth_password`. If the function is
+missing, `setup_postgres` ran before `pgbouncer_enabled` was set.
 
 A `trust` rule produces the same symptom from the other direction: it collects
 no password from the client, so the backend login then fails with `server login
@@ -158,7 +173,10 @@ rule a no-op there. On Debian-based systems the directory is mode `2775` and
 owned by `postgres`, so `root` and `postgres` both reach it.
 
 ## Pooled Endpoint Fails While the Direct One Works
+# RHEL-based
 
+# Debian-based
+sudo psql -h /var/run/postgresql -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW POOLS'
 **Symptom:** Connections to `pooler_port` on an HAProxy node fail with
 `server closed the connection unexpectedly` after a couple of seconds, while
 `proxy_port` still serves.
@@ -267,7 +285,10 @@ application to transaction mode.
 
 !!! info "The Unpooled Node Still Has the Package"
     `pgedge-enterprise-all` depends on `pgedge-pgbouncer`, so the package is
+# RHEL-based
     present on every pgEdge node, and on Debian-based systems the package
+# Debian-based
+sudo psql -h /var/run/postgresql -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW POOLS'
     enables and starts the service against its own default configuration.
     Neither package presence nor service state tells you whether a node is
     pooled. The configuration does: a managed pooler's

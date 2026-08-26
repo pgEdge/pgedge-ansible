@@ -267,8 +267,11 @@ This role generates the following files on inventory hosts:
 
 ## Platform-Specific Behavior
 
-The role uses each platform's own paths and service user, so it adds no
-directories and ships no logrotate rule.
+The role uses each platform's own runtime paths and service user. It creates
+`/etc/pgbouncer` and `/etc/systemd/system/pgbouncer.service.d` to hold the
+files above, and no others: the log and socket directories come from the
+package, and log rotation is left to whatever the platform already provides
+rather than to a rule of the role's own.
 
 | | RHEL-based | Debian-based |
 |---|---|---|
