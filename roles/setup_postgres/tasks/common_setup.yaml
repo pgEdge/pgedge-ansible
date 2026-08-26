@@ -77,6 +77,14 @@
 # over pg_shadow hands out every verifier in the cluster to anyone who can call
 # it. search_path is pinned for the same reason.
 #
+# valuntil is pg_authid.rolvaliduntil as pg_shadow exposes it, and the filter is
+# what keeps an expired password from authenticating at the pooler. PostgreSQL
+# enforces the expiry itself, but auth_query is the pooler's own check: without
+# it the pooler hands back a verifier, accepts the client, and only then fails
+# the backend login. Returning no row refuses the client up front, the same way
+# an unknown role is refused. pg_shadow already covers the LOGIN attribute,
+# since the view selects only roles that hold it.
+#
 # Every statement here is idempotent, and DDL has no "nothing to do" signal to
 # report back, so the objects are declared on every run and the task does not
 # claim a change for having done so.
@@ -93,7 +101,9 @@
         RETURNS TABLE(username TEXT, password TEXT)
         LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS
       $$ SELECT usename::TEXT, passwd::TEXT
-           FROM pg_shadow WHERE usename = p_usename $$
+           FROM pg_shadow
+          WHERE usename = p_usename
+            AND (valuntil IS NULL OR valuntil > now()) $$
     - REVOKE ALL ON SCHEMA pgbouncer FROM PUBLIC
     - REVOKE ALL ON FUNCTION pgbouncer.get_auth(TEXT) FROM PUBLIC
     - GRANT USAGE ON SCHEMA pgbouncer TO "{{ pgbouncer_auth_user }}"

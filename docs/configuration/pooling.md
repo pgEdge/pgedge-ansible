@@ -307,15 +307,19 @@ auth_dbname = postgres
 The `setup_postgres` role creates the role and the lookup in the maintenance
 database wherever `pgbouncer_enabled` is set. The function reads `pg_shadow` as
 its superuser owner, has a pinned `search_path`, lives in its own schema, and
-grants `EXECUTE` to the authentication user alone.
+grants `EXECUTE` to the authentication user alone. It returns nothing for a
+role whose `VALID UNTIL` has passed, so the pooler refuses an expired password
+itself rather than accepting the client and failing the backend login.
 
-Three consequences follow, and they are the reason the collection maintains no
+Four consequences follow, and they are the reason the collection maintains no
 userlist:
 
 - Every PostgreSQL role works through the pooled endpoint, including a role
   created long after deployment.
 - A rotated password takes effect on the pooled endpoint immediately, and the
   old one is refused.
+- An expired `VALID UNTIL` is honored at the pooled endpoint, and the role is
+  refused there exactly as it is on `pg_port`.
 - Only one password is written to disk: `pgbouncer_auth_password`, in
   `/etc/pgbouncer/userlist.txt`. The pooler needs it before it can run the
   lookup, and it is stored in plain text because a stored SCRAM verifier

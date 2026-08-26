@@ -52,7 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pgbouncer_auth` role and a `SECURITY DEFINER` lookup wherever the cluster
   pools, so every PostgreSQL role works through the pooled endpoint, including
   roles created after deployment, and a rotated password takes effect
-  immediately. Only `pgbouncer_auth_password` is written to disk, and
+  immediately. The lookup filters on the role's `VALID UNTIL`, so an expired
+  password is refused at the pooler instead of being accepted there and failing
+  the backend login. Only `pgbouncer_auth_password` is written to disk, and
   `init_server` refuses to deploy a pooled cluster while it is still the
   default.
 - The pooler enforces its own client authentication rules, rendered into

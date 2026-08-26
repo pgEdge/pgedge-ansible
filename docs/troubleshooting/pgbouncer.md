@@ -125,6 +125,16 @@ A `trust` rule produces the same symptom from the other direction: it collects
 no password from the client, so the backend login then fails with `server login
 failed: wrong password type`. Use `password` or `scram-sha-256` instead.
 
+A role refused on both ports is a different problem, and an expired password is
+one cause. The lookup filters on `VALID UNTIL`, so it returns no row for such a
+role and the pooler refuses the client the same way it refuses an unknown one.
+Check the expiry and extend it in PostgreSQL:
+
+```bash
+sudo -i -u postgres psql -c '\du app_user'
+sudo -i -u postgres psql -c "ALTER ROLE app_user VALID UNTIL 'infinity'"
+```
+
 ## Client Reports a Duplicate Protocol Negotiation Message
 
 **Symptom:** A client fails to connect through the pooler with:
@@ -163,7 +173,10 @@ there. Connecting as `postgres` passes the HBA rule and is refused at this
 point. Use the authentication user:
 
 ```bash
+# RHEL-based
 sudo psql -h /run/pgbouncer -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW POOLS'
+# Debian-based
+sudo psql -h /var/run/postgresql -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW POOLS'
 ```
 
 On RHEL-based systems the socket directory is mode `0700` and owned by
@@ -173,10 +186,7 @@ rule a no-op there. On Debian-based systems the directory is mode `2775` and
 owned by `postgres`, so `root` and `postgres` both reach it.
 
 ## Pooled Endpoint Fails While the Direct One Works
-# RHEL-based
 
-# Debian-based
-sudo psql -h /var/run/postgresql -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW POOLS'
 **Symptom:** Connections to `pooler_port` on an HAProxy node fail with
 `server closed the connection unexpectedly` after a couple of seconds, while
 `proxy_port` still serves.
@@ -275,7 +285,10 @@ connection, so `pgbouncer_default_pool_size` is a hard concurrency limit and
 further clients wait. Look at the pools:
 
 ```bash
+# RHEL-based
 sudo psql -h /run/pgbouncer -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW POOLS'
+# Debian-based
+sudo psql -h /var/run/postgresql -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW POOLS'
 ```
 
 A non-zero `cl_waiting` with `sv_idle` at zero is pool exhaustion. Raise
@@ -285,10 +298,7 @@ application to transaction mode.
 
 !!! info "The Unpooled Node Still Has the Package"
     `pgedge-enterprise-all` depends on `pgedge-pgbouncer`, so the package is
-# RHEL-based
     present on every pgEdge node, and on Debian-based systems the package
-# Debian-based
-sudo psql -h /var/run/postgresql -p 6432 -U pgbouncer_auth pgbouncer -c 'SHOW POOLS'
     enables and starts the service against its own default configuration.
     Neither package presence nor service state tells you whether a node is
     pooled. The configuration does: a managed pooler's

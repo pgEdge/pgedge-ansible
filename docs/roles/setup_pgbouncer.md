@@ -134,7 +134,9 @@ auth_dbname = postgres
 
 Any PostgreSQL role therefore works through the pooler, including a role
 created long after deployment, and a rotated password takes effect
-immediately. `userlist.txt` holds one line, for `pgbouncer_auth_user` itself,
+immediately. The lookup also honors `VALID UNTIL`: it returns no row once a
+role's password has expired, so the pooler refuses the client rather than
+passing a doomed login to PostgreSQL. `userlist.txt` holds one line, for `pgbouncer_auth_user` itself,
 because the pooler has to authenticate to PostgreSQL before it can run the
 lookup. That password is stored in plain text because a stored SCRAM verifier
 cannot be used to log in; pgBouncer derives the verifier from it, so SCRAM is

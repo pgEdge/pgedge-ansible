@@ -42,6 +42,8 @@
       {{ pgbouncer_socket_dir_path }}/.s.PGSQL.{{ pgbouncer_port | default(6432) }}
     pool_test_user: pooltest
     pool_test_password: PoolTest987
+    pool_expired_user: poolexpired
+    pool_expired_password: PoolExpired987
     patroni_svc: >-
       {{ 'patroni@' + pg_version|string + '-' + cluster_name if ansible_os_family == 'Debian'
          else 'patroni' }}
@@ -399,6 +401,62 @@
         function over pg_shadow is reachable by a role that holds no grant on
         it. rc={{ get_auth_unprivileged.rc }},
         stderr="{{ get_auth_unprivileged.stderr | default('') }}"
+    when: cluster_is_pooled | bool
+
+  # VALID UNTIL is the one role attribute the lookup has to reproduce itself.
+  # Postgres enforces it on its own port, but auth_query runs before the backend
+  # login exists: hand the pooler a verifier for an expired role and it accepts
+  # the client, then drops the connection when the backend refuses it. The
+  # function filters on the expiry instead, so the pooler refuses an expired
+  # role the way it refuses an unknown one.
+  #
+  # Created on each zone's primary, like the role above, and read back on every
+  # pooled node — a replica's copy arrives over streaming replication, and the
+  # lookup is the same function there. Both calls run as postgres, which owns the
+  # function, so what is under test is the filter and not a grant. The valid role
+  # is the control: it proves an empty result for the expired one means the
+  # expiry and not a broken lookup.
+
+  - name: Create a Postgres role whose password has already expired
+    community.postgresql.postgresql_user:
+      name: "{{ pool_expired_user }}"
+      password: "{{ pool_expired_password }}"
+      role_attr_flags: LOGIN
+      expires: '2000-01-01 00:00:00+00'
+      login_port: "{{ pg_port | default(5432) }}"
+      login_unix_socket: /var/run/postgresql
+    become_user: postgres
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Look up the expired role through the credential lookup
+    command: >
+      psql -p {{ pg_port | default(5432) }} -d postgres -t -A
+      -c "SELECT username FROM pgbouncer.get_auth('{{ pool_expired_user }}')"
+    become_user: postgres
+    register: get_auth_expired
+    changed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Look up the unexpired role through the credential lookup
+    command: >
+      psql -p {{ pg_port | default(5432) }} -d postgres -t -A
+      -c "SELECT username FROM pgbouncer.get_auth('{{ pool_test_user }}')"
+    become_user: postgres
+    register: get_auth_valid
+    changed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert the lookup withholds an expired role's verifier
+    assert:
+      that:
+      - get_auth_expired.stdout | trim == ''
+      - get_auth_valid.stdout | trim == pool_test_user
+      fail_msg: >-
+        pgbouncer.get_auth on {{ inventory_hostname }} does not filter on
+        VALID UNTIL. {{ pool_expired_user }} expired in 2000 and the lookup
+        returned "{{ get_auth_expired.stdout | default('') }}";
+        {{ pool_test_user }} does not expire and returned
+        "{{ get_auth_valid.stdout | default('') }}".
     when: cluster_is_pooled | bool
 
   # Client TLS is served from a copy of the certificate Postgres presents on its
