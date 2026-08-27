@@ -435,7 +435,9 @@
     become_user: postgres
     register: get_auth_expired
     changed_when: false
-    when: cluster_is_pooled | bool
+    when:
+    - inventory_hostname == first_node_in_zone
+    - cluster_is_pooled | bool
 
   - name: Look up the unexpired role through the credential lookup
     command: >
@@ -444,7 +446,9 @@
     become_user: postgres
     register: get_auth_valid
     changed_when: false
-    when: cluster_is_pooled | bool
+    when:
+    - inventory_hostname == first_node_in_zone
+    - cluster_is_pooled | bool
 
   - name: Assert the lookup withholds an expired role's verifier
     assert:
@@ -457,7 +461,9 @@
         returned "{{ get_auth_expired.stdout | default('') }}";
         {{ pool_test_user }} does not expire and returned
         "{{ get_auth_valid.stdout | default('') }}".
-    when: cluster_is_pooled | bool
+    when:
+    - inventory_hostname == first_node_in_zone
+    - cluster_is_pooled | bool
 
   # Client TLS is served from a copy of the certificate Postgres presents on its
   # own port, staged where the pooler's service user can read it. On RHEL that

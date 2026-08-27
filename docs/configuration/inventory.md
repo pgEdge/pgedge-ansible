@@ -219,8 +219,8 @@ backup:
 ```
 
 The `pgbouncer_enabled` setting above pools every node in both zones, so the
-pooled endpoint survives a failover to any of them. Clients that want pooled
-connections target `pooler_port` on the zone's HAProxy node; clients that want
-direct ones keep using `proxy_port`. Neither ever connects to `pgbouncer_port`
-directly, since only the leader's pooler carries traffic and the leader can
-move.
+pooled endpoint survives a failover to any pooled node in the same zone. Clients
+that want pooled connections target `pooler_port` on the zone's HAProxy node;
+clients that want direct ones keep using `proxy_port`. Neither ever connects to
+`pgbouncer_port` directly, since only the leader's pooler carries traffic and the
+leader can move.
