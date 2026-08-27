@@ -45,3 +45,71 @@
   loop: "{{ ['spock', 'snowflake'] | product(db_names) | list }}"
   become: true
   become_user: postgres
+
+# Pooled connections authenticate through pgBouncer's auth_query rather than a
+# hand-maintained password list: the pooler logs in as this role and calls the
+# lookup below to fetch the requested user's stored SCRAM verifier. That is what
+# lets any Postgres role use the pooled endpoint, including roles created long
+# after deployment.
+#
+# The role is deliberately powerless. NOINHERIT means it cannot pick up
+# privileges from a role granted to it either, and the only thing it may execute
+# is the lookup function, which reads pg_shadow as its superuser owner.
+#
+# Gated on the cluster, not on the host: pooling is cluster-wide, and this file
+# runs on every node of a simple cluster but only on the primary of an HA zone,
+# which is also where a pooled replica's roles come from.
+
+- name: Create the pgBouncer authentication user
+  community.postgresql.postgresql_user:
+    name: "{{ pgbouncer_auth_user }}"
+    password: "{{ pgbouncer_auth_password }}"
+    role_attr_flags: LOGIN,NOINHERIT
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+  when: pgbouncer_enabled | bool
+
+# auth_dbname pins the lookup to the maintenance database, so that is where the
+# schema and the function have to live. Its own schema, never public, with
+# EXECUTE held by the authentication user alone: a SECURITY DEFINER function
+# over pg_shadow hands out every verifier in the cluster to anyone who can call
+# it. search_path is pinned for the same reason.
+#
+# valuntil is pg_authid.rolvaliduntil as pg_shadow exposes it, and the filter is
+# what keeps an expired password from authenticating at the pooler. PostgreSQL
+# enforces the expiry itself, but auth_query is the pooler's own check: without
+# it the pooler hands back a verifier, accepts the client, and only then fails
+# the backend login. Returning no row refuses the client up front, the same way
+# an unknown role is refused. pg_shadow already covers the LOGIN attribute,
+# since the view selects only roles that hold it.
+#
+# Every statement here is idempotent, and DDL has no "nothing to do" signal to
+# report back, so the objects are declared on every run and the task does not
+# claim a change for having done so.
+
+- name: Create the pgBouncer credential lookup in the maintenance database
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query:
+    - CREATE SCHEMA IF NOT EXISTS pgbouncer
+    - >-
+      CREATE OR REPLACE FUNCTION pgbouncer.get_auth(p_usename TEXT)
+        RETURNS TABLE(username TEXT, password TEXT)
+        LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS
+      $$ SELECT usename::TEXT, passwd::TEXT
+           FROM pg_shadow
+          WHERE usename = p_usename
+            AND (valuntil IS NULL OR valuntil > now()) $$
+    - REVOKE ALL ON SCHEMA pgbouncer FROM PUBLIC
+    - REVOKE ALL ON FUNCTION pgbouncer.get_auth(TEXT) FROM PUBLIC
+    - GRANT USAGE ON SCHEMA pgbouncer TO "{{ pgbouncer_auth_user }}"
+    - GRANT EXECUTE ON FUNCTION pgbouncer.get_auth(TEXT)
+      TO "{{ pgbouncer_auth_user }}"
+  become: true
+  become_user: postgres
+  changed_when: false
+  when: pgbouncer_enabled | bool

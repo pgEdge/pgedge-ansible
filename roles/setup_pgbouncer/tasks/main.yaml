@@ -1,0 +1,163 @@
+---
+
+# Configure and run pgBouncer on each pooled pgEdge node (the package is
+# installed by install_pgbouncer). pgBouncer listens on pgbouncer_port and
+# forwards to the node's local Postgres on 127.0.0.1, which Postgres already
+# permits: prep_instance.yaml writes "host all all 127.0.0.1/32 scram-sha-256"
+# in a simple cluster and patroni.yml.j2 renders the same rule in an HA one, so
+# neither Postgres's own configuration nor Patroni's needs changing here.
+#
+# Pooled and direct connections are not interchangeable — they resolve against
+# different pg_hba rules — so nothing here fails a pooled client over to
+# Postgres. A dead pooler is an outage of the pooled endpoint by design, and
+# Restart=always below is the mitigation.
+
+- name: Ensure pgBouncer configuration directory exists
+  file:
+    path: /etc/pgbouncer
+    state: directory
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "0750"
+  become: true
+
+# Written before the service is ever started, so the first start already has
+# the restart policy and the descriptor limit in place. StartLimitIntervalSec=0
+# disables the systemd rate-limit that would otherwise stop retrying after a
+# few crashes.
+
+- name: Ensure pgBouncer systemd drop-in directory exists
+  file:
+    path: /etc/systemd/system/pgbouncer.service.d
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Configure pgBouncer to always restart
+  copy:
+    dest: /etc/systemd/system/pgbouncer.service.d/override.conf
+    mode: "0644"
+    content: |
+      [Unit]
+      StartLimitIntervalSec=0
+
+      [Service]
+      Restart=always
+      RestartSec=2
+      LimitNOFILE={{ pgbouncer_limit_nofile }}
+  register: dropin_status
+  become: true
+
+# One line, for one account. Client credentials come from auth_query, but
+# pgBouncer has to authenticate to Postgres before it can run that query, and
+# its own login has nowhere else to come from. The password is plain because a
+# stored SCRAM verifier cannot be used to log in; pgBouncer derives the verifier
+# from this, so SCRAM is still what goes on the wire. It is also what admits the
+# auth user to the admin console over the unix socket, which is the one path
+# auth_query cannot serve.
+
+- name: Write pgBouncer userlist
+  copy:
+    dest: /etc/pgbouncer/userlist.txt
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "0640"
+    content: >
+      "{{ pgbouncer_auth_user | replace('"', '""') }}"
+      "{{ pgbouncer_auth_password | replace('"', '""') }}"
+  register: userlist_status
+  become: true
+  no_log: true
+
+# The pooler needs its own copy of the certificate: on RHEL the service user is
+# pgbouncer while PGDATA is 0700 postgres, so Postgres's copy is unreadable to
+# it. It comes from the controller rather than from PGDATA on the node, for the
+# same reason setup_postgres puts it there — on an HA replica the PGDATA copy
+# arrives with Patroni's clone, which this role cannot assume has finished. The
+# bytes are identical either way, so both endpoints present one certificate.
+# Skipped when client TLS is off, so nothing writes a key that nothing reads.
+
+- name: Stage the pooler's TLS certificate and key
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+  - src: "{{ pgbouncer_tls_cert_source }}"
+    dest: "{{ pgbouncer_tls_cert_file }}"
+    mode: "0640"
+  - src: "{{ pgbouncer_tls_key_source }}"
+    dest: "{{ pgbouncer_tls_key_file }}"
+    mode: "0600"
+  register: tls_status
+  become: true
+  when: pgbouncer_client_tls_sslmode != 'disable'
+
+# The pooler decides for itself which clients may connect, from rules rendered
+# out of the same variables as Postgres's. It cannot share Postgres's file: on
+# RHEL that lives in a 0700 PGDATA owned by postgres while the pooler runs as
+# pgbouncer, so pointing auth_hba_file at it would leave every client refused.
+# Written before pgbouncer.ini, which names it, so the file the pooler is told
+# to read exists by the time it is told.
+
+- name: Write the pooler's client authentication rules
+  template:
+    src: pg_hba.conf.j2
+    dest: "{{ pgbouncer_hba_file }}"
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "0640"
+  register: hba_status
+  become: true
+
+- name: Write pgBouncer configuration
+  template:
+    src: pgbouncer.ini.j2
+    dest: /etc/pgbouncer/pgbouncer.ini
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "0640"
+  register: config_status
+  become: true
+
+# Debian's package also ships a pgbouncer.socket listening on the same 6432,
+# for systemd socket activation. That is a real mechanism, not packaging debris
+# — pgBouncer links sd_listen_fds and can adopt a socket systemd holds, which
+# keeps the listener alive across a restart instead of refusing connections
+# during it. This collection does not use it. The pooler is always-on with
+# Restart=always, pgBouncer has its own online-restart path for the same
+# problem, and activation would move authority over the endpoint out of
+# pgbouncer.ini, where the port and listen_addr are already set. The packaged
+# unit's endpoints agree with the packaged ini, not with the one this role
+# renders. Mask it, on Debian only, so the two mechanisms can never both be
+# live; the package ships it disabled, so this only holds that state.
+
+- name: Mask the packaged pgBouncer socket unit
+  systemd:
+    name: pgbouncer.socket
+    state: stopped
+    enabled: false
+    masked: true
+  when: ansible_facts['os_family'] == 'Debian'
+  become: true
+
+# Only restart pgBouncer on subsequent runs if something it reads changed.
+# Otherwise, just make sure it's up and running. This is deliberately not a
+# handler: with any_errors_fatal, a notified handler never fires when a later
+# role fails, which would leave the pooler running stale configuration while
+# Ansible reported the change as applied.
+
+- name: Ensure pgBouncer is enabled and running
+  systemd:
+    name: pgbouncer
+    enabled: true
+    daemon_reload: "{{ dropin_status.changed }}"
+    state: >-
+      {{ 'restarted'
+         if (dropin_status.changed or userlist_status.changed or
+             tls_status.changed or hba_status.changed or
+             config_status.changed)
+         else 'started' }}
+  become: true

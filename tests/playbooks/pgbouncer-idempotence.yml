@@ -1,0 +1,35 @@
+---
+# Re-apply the pooler's two roles and expect nothing to change.
+#
+# A second consecutive run reporting a change means the role rewrites something
+# it did not have to, and for setup_pgbouncer that is not cosmetic: every file
+# it writes feeds the restart condition at the end of the role, so a task that
+# reports a spurious change bounces the pooled endpoint on every deployment run.
+# The caller checks the recap -- see tests/check-idempotence.sh, which is what
+# turns "changed=0" into a pass or a failure.
+#
+# Targets every host so the pooler's HBA template can read
+# ansible_default_ipv4 out of hostvars for the cluster's nodes and the zone's
+# proxies, exactly as it does during a deployment. The roles themselves are
+# applied only where the deployment applies them.
+#
+# pgbouncer_enabled needs its default spelled out here. It is a role_config
+# default, but include_role is dynamic, so nothing has loaded that default when
+# the conditional is evaluated -- the value comes from the inventory, which
+# sets it on the 'pgedge' group alone. Without the default this play fails on
+# every proxy, backup and client host instead of skipping them.
+
+- hosts: all
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: install_pgbouncer
+    when: pgbouncer_enabled | default(false) | bool
+
+  - include_role:
+      name: setup_pgbouncer
+    when: pgbouncer_enabled | default(false) | bool

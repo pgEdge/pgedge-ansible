@@ -15,6 +15,35 @@
     db_password: TestPass123
     pgedge_user: pgedge
     pgedge_password: TestPass456
+    pgbouncer_auth_user: pgbouncer_auth
+    # The address the pooler's own rules have to name for the client play below
+    # to get in, and the platform's log path, where an HBA line pgBouncer could
+    # not parse is the only trace it leaves.
+    client_host: "{{ groups['clients'] | default([]) | first | default('') }}"
+    pgbouncer_log_path: >-
+      {{ '/var/log/pgbouncer/pgbouncer.log'
+         if ansible_facts['os_family'] == 'RedHat'
+         else '/var/log/postgresql/pgbouncer.log' }}
+    # What a logrotate configuration has to name for that log to be rotated,
+    # which on Debian is not the log's own path: the pooler logs beside
+    # Postgres and pgedge-postgresql-common rotates the whole directory with a
+    # glob. Character classes rather than backslash escapes, because this ends
+    # up in a regex and a backslash does not survive a folded scalar.
+    pgbouncer_logrotate_pattern: >-
+      {{ '/var/log/pgbouncer/pgbouncer[.]log'
+         if ansible_facts['os_family'] == 'RedHat'
+         else '/var/log/postgresql/[*][.]log' }}
+    # Set explicitly by the role; asserted here rather than read back from the
+    # rendered file, so a change to either side has to be deliberate.
+    pgbouncer_socket_dir_path: >-
+      {{ '/run/pgbouncer' if ansible_facts['os_family'] == 'RedHat'
+         else '/var/run/postgresql' }}
+    pgbouncer_socket_path: >-
+      {{ pgbouncer_socket_dir_path }}/.s.PGSQL.{{ pgbouncer_port | default(6432) }}
+    pool_test_user: pooltest
+    pool_test_password: PoolTest987
+    pool_expired_user: poolexpired
+    pool_expired_password: PoolExpired987
     patroni_svc: >-
       {{ 'patroni@' + pg_version|string + '-' + cluster_name if ansible_os_family == 'Debian'
          else 'patroni' }}
@@ -24,12 +53,46 @@
       selectattr('zone', 'eq', zone) |
       map(attribute='inventory_hostname') | list }}
     first_node_in_zone: "{{ nodes_in_zone | first }}"
+    proxies_in_zone: >-
+      {{ groups['haproxy'] | default([]) |
+      map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    # Pooling is cluster-wide, so this reads the cluster's setting rather than
+    # the host's -- init_server refuses an inventory whose nodes disagree. The
+    # same expression serves the plays below, where the host carries no
+    # pgbouncer_enabled of its own.
+    cluster_is_pooled: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='pgbouncer_enabled', default=false) |
+      map('bool') | select | list | length > 0 }}
+    pooled_nodes_in_zone: >-
+      {{ nodes_in_zone if cluster_is_pooled | bool else [] }}
     dcs_type: "{{ patroni_dcs.type | default('etcd3') }}"
     patroni_cfg: >-
       {{ '/etc/patroni/' + pg_version|string + '-' + cluster_name + '.yml'
          if ansible_os_family == 'Debian' else '/etc/patroni/patroni.yml' }}
+    client_protocol_version: "3.0"
 
   environment:
+  # Pin the wire protocol these tests use. pgEdge's bookworm repo currently
+  # publishes the PG19 beta in 'release', and Debian builds one shared libpq5
+  # from the newest tree in the component, so every pgEdge bookworm host gets
+  # libpq5 19~beta3. During the PG19 beta libpq deliberately "greases" the
+  # handshake (version 3.9999) to flush out software that mis-negotiates, and
+  # pgBouncer <= 1.25.2 is such software: it answers NegotiateProtocolVersion
+  # twice whenever it cannot assign a server immediately, which auth_query
+  # always triggers because the login pauses for the lookup. Upstream
+  # https://github.com/pgbouncer/pgbouncer/issues/1459, fixed by PR #1460
+  # (merged 2026-05-30), unreleased as of 1.25.2.
+  #
+  # That is a transient packaging problem, not something this collection causes
+  # or can fix, so the suite does not encode it -- the pooler documentation
+  # carries the operator-facing note instead. 3.0 is the default for every
+  # stable libpq and the workaround the PostgreSQL docs name, so pinning it
+  # keeps these tests measuring our own configuration rather than the client
+  # library's beta behaviour.
+    PGMAXPROTOCOLVERSION: "{{ client_protocol_version }}"
     PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
   tasks:
@@ -155,9 +218,505 @@
       fail_msg: "Replication test failed on {{ inventory_hostname }}"
     when: inventory_hostname == first_node_in_zone
 
+  # The pooled endpoint, from a node rather than from the proxy: HAProxy has to
+  # pick the leader's pooler out of the zone, so pg_is_in_recovery() coming back
+  # false is the assertion that matters. Nothing on this path is gated by
+  # pg_hba on the client's address — the pooler answers HAProxy, then reaches
+  # Postgres over loopback — so a failure here is HAProxy's routing or the
+  # pooler, never an HBA rule.
+
+  - name: Query the pooled endpoint through HAProxy
+    become_user: postgres
+    command: >
+      psql "host={{ proxies_in_zone | first }}
+      port={{ pooler_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c
+      "SELECT pg_is_in_recovery()"
+    environment:
+      PGPASSWORD: "{{ db_password }}"
+    register: pooled_endpoint
+    changed_when: false
+    when:
+    - inventory_hostname == first_node_in_zone
+    - proxies_in_zone | length > 0
+    - pooled_nodes_in_zone | length > 0
+
+  - name: Assert the pooled endpoint lands on the zone's leader
+    assert:
+      that: pooled_endpoint.stdout == 'f'
+      fail_msg: >-
+        The pooled endpoint on {{ proxies_in_zone | first }} answered from a
+        replica (pg_is_in_recovery() = "{{ pooled_endpoint.stdout }}")
+    when:
+    - inventory_hostname == first_node_in_zone
+    - proxies_in_zone | length > 0
+    - pooled_nodes_in_zone | length > 0
+
+  # Spock must never route through the pooler: replication is a long-lived
+  # session on a fixed node, and pooled and direct connections do not resolve
+  # against the same rules. The DSNs name proxy_port or pg_port, both 5432 by
+  # default, so the assertion is that no interface mentions the pooled port.
+
+  - name: Read the Spock node interface DSNs
+    become_user: postgres
+    command: >
+      psql -d {{ db_names | first }} -t -A -c
+      "SELECT if_dsn FROM spock.node_interface"
+    register: spock_dsns
+    changed_when: false
+
+  - name: Assert no Spock DSN routes through the pooler
+    assert:
+      that: >-
+        spock_dsns.stdout_lines |
+        select('search', 'port=' ~ (pgbouncer_port | default(6432))) |
+        list | length == 0
+      fail_msg: >-
+        A Spock DSN on {{ inventory_hostname }} points at the pooled port:
+        {{ spock_dsns.stdout_lines }}
+
+  # Pooling is opt-in per cluster, through pgbouncer_enabled. The pgBouncer
+  # package itself is a dependency of the pgEdge metapackage, so it is present on
+  # every node; what the setting gates is configuration and the service. Debian's
+  # packaging goes further and enables *and starts* the packaged pooler on
+  # install (bound to localhost, md5, empty userlist), so service state alone
+  # cannot tell a deployed pooler from an untouched node. Test the contract
+  # instead: a pooled cluster's nodes run a pooler this collection configured; an
+  # unpooled cluster's are left with whatever the package installed.
+
+  - name: Read the pgBouncer configuration file
+    slurp:
+      src: /etc/pgbouncer/pgbouncer.ini
+    register: pgbouncer_ini
+
+  - name: Assert every node's pooler configuration matches the cluster setting
+    assert:
+      that: >-
+        ('Managed by Ansible' in (pgbouncer_ini.content | b64decode))
+        == (cluster_is_pooled | bool)
+      fail_msg: >-
+        /etc/pgbouncer/pgbouncer.ini on {{ inventory_hostname }} is
+        {{ 'not ' if cluster_is_pooled | bool else '' }}Ansible-managed, but
+        pgbouncer_enabled is {{ cluster_is_pooled }} for this cluster.
+
+  - name: Check the pgBouncer service is running on pooled nodes
+    command: systemctl is-active pgbouncer
+    changed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Query Postgres through the node's own pooler
+    become_user: postgres
+    command: >
+      psql "host=127.0.0.1 port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    environment:
+      PGPASSWORD: "{{ db_password }}"
+    register: pooled_select
+    changed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert the pooled query returned
+    assert:
+      that: pooled_select.stdout == '1'
+      fail_msg: >-
+        SELECT 1 through the pooler on {{ inventory_hostname }} returned
+        "{{ pooled_select.stdout | default('') }}"
+    when: cluster_is_pooled | bool
+
+  # Client credentials come from auth_query, not from a list on the pooler, so a
+  # role this collection never created has to work through the pooled endpoint.
+  # It is created here, after the pooler has been running since deployment —
+  # exactly the case that would fail if the verifier came from a file. Roles are
+  # not Spock-replicated, so each zone's primary creates its own; the replicas in
+  # that zone get it the way they get every other role, from streaming
+  # replication. The userlist is checked first, because a pooled connection below
+  # proves nothing unless this role is genuinely absent from it.
+
+  - name: Create a Postgres role that no userlist names
+    community.postgresql.postgresql_user:
+      name: "{{ pool_test_user }}"
+      password: "{{ pool_test_password }}"
+      role_attr_flags: LOGIN
+      login_port: "{{ pg_port | default(5432) }}"
+      login_unix_socket: /var/run/postgresql
+    become_user: postgres
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Read the pooler's userlist
+    slurp:
+      src: /etc/pgbouncer/userlist.txt
+    register: pgbouncer_userlist
+    no_log: true
+    when: cluster_is_pooled | bool
+
+  - name: Assert the userlist holds nothing but the pooler's own login
+    vars:
+      entries: >-
+        {{ (pgbouncer_userlist.content | b64decode).splitlines() |
+           select | list }}
+    assert:
+      that:
+      - entries | length == 1
+      - entries[0] is match('"' ~ pgbouncer_auth_user ~ '"')
+      fail_msg: >-
+        /etc/pgbouncer/userlist.txt on {{ inventory_hostname }} holds
+        {{ entries | length }} entries and does not begin with
+        "{{ pgbouncer_auth_user }}", so the pooled connections below would not
+        be testing auth_query.
+    when: cluster_is_pooled | bool
+
+  # The grant on the other end of auth_query. pgbouncer.get_auth is
+  # SECURITY DEFINER over pg_shadow, owned by a superuser, so anything that can
+  # call it can read every verifier in the cluster — which is why EXECUTE is held
+  # by the auth user alone and USAGE on the schema with it. That the auth user
+  # *can* call it is proven by the pooled login below, which resolves a verifier
+  # the pooler was never given; this is the negative half, from a role that has
+  # LOGIN and nothing more.
+  #
+  # Either revoke is enough to refuse the call and they fail with different
+  # messages — schema first, since the name is resolved before the function's own
+  # privileges are considered — so the assertion matches the part they share.
+
+  - name: Call the credential lookup as a role that was granted nothing
+    command: >
+      psql "host=127.0.0.1 port={{ pg_port | default(5432) }} dbname=postgres
+      user={{ pool_test_user }}" -t -A
+      -c "SELECT * FROM pgbouncer.get_auth('{{ db_user }}')"
+    environment:
+      PGPASSWORD: "{{ pool_test_password }}"
+    register: get_auth_unprivileged
+    changed_when: false
+    failed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert only the auth user can read verifiers through the lookup
+    assert:
+      that:
+      - get_auth_unprivileged.rc != 0
+      - "'permission denied' in get_auth_unprivileged.stderr"
+      - db_user not in get_auth_unprivileged.stdout
+      fail_msg: >-
+        {{ pool_test_user }} called pgbouncer.get_auth on
+        {{ inventory_hostname }} without being refused, so a SECURITY DEFINER
+        function over pg_shadow is reachable by a role that holds no grant on
+        it. rc={{ get_auth_unprivileged.rc }},
+        stderr="{{ get_auth_unprivileged.stderr | default('') }}"
+    when: cluster_is_pooled | bool
+
+  # VALID UNTIL is the one role attribute the lookup has to reproduce itself.
+  # Postgres enforces it on its own port, but auth_query runs before the backend
+  # login exists: hand the pooler a verifier for an expired role and it accepts
+  # the client, then drops the connection when the backend refuses it. The
+  # function filters on the expiry instead, so the pooler refuses an expired
+  # role the way it refuses an unknown one.
+  #
+  # Created on each zone's primary, like the role above, and read back on every
+  # pooled node — a replica's copy arrives over streaming replication, and the
+  # lookup is the same function there. Both calls run as postgres, which owns the
+  # function, so what is under test is the filter and not a grant. The valid role
+  # is the control: it proves an empty result for the expired one means the
+  # expiry and not a broken lookup.
+
+  - name: Create a Postgres role whose password has already expired
+    community.postgresql.postgresql_user:
+      name: "{{ pool_expired_user }}"
+      password: "{{ pool_expired_password }}"
+      role_attr_flags: LOGIN
+      expires: '2000-01-01 00:00:00+00'
+      login_port: "{{ pg_port | default(5432) }}"
+      login_unix_socket: /var/run/postgresql
+    become_user: postgres
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Look up the expired role through the credential lookup
+    command: >
+      psql -p {{ pg_port | default(5432) }} -d postgres -t -A
+      -c "SELECT username FROM pgbouncer.get_auth('{{ pool_expired_user }}')"
+    become_user: postgres
+    register: get_auth_expired
+    changed_when: false
+    when:
+    - inventory_hostname == first_node_in_zone
+    - cluster_is_pooled | bool
+
+  - name: Look up the unexpired role through the credential lookup
+    command: >
+      psql -p {{ pg_port | default(5432) }} -d postgres -t -A
+      -c "SELECT username FROM pgbouncer.get_auth('{{ pool_test_user }}')"
+    become_user: postgres
+    register: get_auth_valid
+    changed_when: false
+    when:
+    - inventory_hostname == first_node_in_zone
+    - cluster_is_pooled | bool
+
+  - name: Assert the lookup withholds an expired role's verifier
+    assert:
+      that:
+      - get_auth_expired.stdout | trim == ''
+      - get_auth_valid.stdout | trim == pool_test_user
+      fail_msg: >-
+        pgbouncer.get_auth on {{ inventory_hostname }} does not filter on
+        VALID UNTIL. {{ pool_expired_user }} expired in 2000 and the lookup
+        returned "{{ get_auth_expired.stdout | default('') }}";
+        {{ pool_test_user }} does not expire and returned
+        "{{ get_auth_valid.stdout | default('') }}".
+    when:
+    - inventory_hostname == first_node_in_zone
+    - cluster_is_pooled | bool
+
+  # Client TLS is served from a copy of the certificate Postgres presents on its
+  # own port, staged where the pooler's service user can read it. On RHEL that
+  # user is pgbouncer while PGDATA is 0700 postgres, so the ownership and mode
+  # are the whole reason the copy exists.
+
+  - name: Stat the pooler's staged TLS key
+    stat:
+      path: /etc/pgbouncer/server.key
+    register: pgbouncer_tls_key
+    when: cluster_is_pooled | bool
+
+  - name: Assert the pooler holds a private key its own user can read
+    vars:
+      service_user: >-
+        {{ 'pgbouncer' if ansible_facts['os_family'] == 'RedHat'
+           else 'postgres' }}
+    assert:
+      that:
+      - pgbouncer_tls_key.stat.exists
+      - pgbouncer_tls_key.stat.pw_name == service_user
+      - pgbouncer_tls_key.stat.mode == '0600'
+      fail_msg: >-
+        /etc/pgbouncer/server.key on {{ inventory_hostname }} is
+        {{ 'missing' if not pgbouncer_tls_key.stat.exists else
+           'owned by ' ~ pgbouncer_tls_key.stat.pw_name ~ ' mode ' ~
+           pgbouncer_tls_key.stat.mode }}, so the pooler running as
+        {{ service_user }} cannot serve client TLS from it.
+    when: cluster_is_pooled | bool
+
+  # auth_type = hba puts this file, not a password on its own, in charge of who
+  # may connect: pgBouncer matches the client's address, database and user
+  # against these rules first and refuses anything it cannot match. Three things
+  # therefore have to hold. The file has to be readable by the service user — on
+  # RHEL that is pgbouncer, which is the whole reason the pooler cannot share
+  # Postgres's own pg_hba.conf inside a 0700 PGDATA. It has to carry the
+  # pooler-only rules from pgbouncer_hba_rules, which is what admits the client
+  # node below. And every line has to have parsed: pgBouncer skips one it cannot
+  # read with only a warning, so a dropped rule fails open and leaves no trace
+  # anywhere but the log.
+
+  - name: Stat the pooler's HBA file
+    stat:
+      path: /etc/pgbouncer/pg_hba.conf
+    register: pgbouncer_hba
+    when: cluster_is_pooled | bool
+
+  - name: Read the pooler's HBA file
+    slurp:
+      src: /etc/pgbouncer/pg_hba.conf
+    register: pgbouncer_hba_file
+    when: cluster_is_pooled | bool
+
+  - name: Assert the pooler has rules its own user can read
+    vars:
+      service_user: >-
+        {{ 'pgbouncer' if ansible_facts['os_family'] == 'RedHat'
+           else 'postgres' }}
+      rules: >-
+        {{ (pgbouncer_hba_file.content | b64decode).splitlines() |
+           reject('match', ' *(#|$)') | list }}
+    assert:
+      that:
+      - pgbouncer_hba.stat.exists
+      - pgbouncer_hba.stat.pw_name == service_user
+      - "'local all postgres peer' in rules"
+      - "'local all ' ~ pgbouncer_auth_user ~ ' scram-sha-256' in rules"
+      - rules | select('search', '127.0.0.1/32') | list | length > 0
+      - rules | select('search', client_host) | list | length > 0
+      fail_msg: >-
+        /etc/pgbouncer/pg_hba.conf on {{ inventory_hostname }} is
+        {{ 'missing' if not pgbouncer_hba.stat.exists else
+           'owned by ' ~ pgbouncer_hba.stat.pw_name ~ ' and holds ' ~
+           (rules | length) ~ ' rules' }}, so the pooler running as
+        {{ service_user }} cannot gate clients the way this inventory asked.
+    when: cluster_is_pooled | bool
+
+  - name: Look for HBA rules the pooler could not parse
+    command: >
+      grep -c "could not parse hba" {{ pgbouncer_log_path }}
+    register: pgbouncer_hba_warnings
+    changed_when: false
+    failed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert the pooler parsed every rule it was given
+    assert:
+      that: pgbouncer_hba_warnings.stdout | trim | int == 0
+      fail_msg: >-
+        pgBouncer on {{ inventory_hostname }} logged
+        {{ pgbouncer_hba_warnings.stdout | trim }} unparsable HBA lines. It
+        skips those with a warning rather than refusing to start, so the pooled
+        endpoint is running with fewer rules than this inventory asked for.
+    when: cluster_is_pooled | bool
+
+  # The pooler's socket is set explicitly rather than left at pgBouncer's
+  # compiled default of /tmp, so it lands somewhere a package already owns:
+  # /run/pgbouncer on RHEL, /var/run/postgresql on Debian. Reaching the admin
+  # console over it is what proves the whole local path at once — the socket is
+  # where the configuration says, the HBA file's local rule for the auth user
+  # matched, and pgBouncer derived a SCRAM verifier from auth_file to check it.
+  # The console is the one path auth_query cannot serve, and admin_users names
+  # only the auth user, so no other role can stand in for this.
+
+  - name: Stat the pooler's unix socket
+    stat:
+      path: "{{ pgbouncer_socket_path }}"
+    register: pgbouncer_socket
+    when: cluster_is_pooled | bool
+
+  - name: Reach the pooler's admin console over its unix socket
+    command: >
+      psql "host={{ pgbouncer_socket_dir_path }}
+      port={{ pgbouncer_port | default(6432) }} dbname=pgbouncer
+      user={{ pgbouncer_auth_user }}" -t -A -c "SHOW VERSION"
+    environment:
+      PGPASSWORD: "{{ pgbouncer_auth_password }}"
+    register: pgbouncer_console
+    changed_when: false
+    failed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert local administration works over the socket
+    assert:
+      that:
+      - pgbouncer_socket.stat.exists
+      - pgbouncer_console.stdout is search('PgBouncer')
+      fail_msg: >-
+        {{ pgbouncer_socket_path }} on {{ inventory_hostname }} is
+        {{ 'missing' if not pgbouncer_socket.stat.exists else 'present' }} and
+        the admin console answered
+        "{{ pgbouncer_console.stdout | default('') }}{{ pgbouncer_console.stderr | default('') }}".
+        Local administration is the only path that does not depend on the
+        network, so it has to work as {{ pgbouncer_auth_user }}.
+    when: cluster_is_pooled | bool
+
+  # The other half of that rule pair: the socket above, and nothing else. This
+  # account's one privilege is the credential lookup, which returns any role's
+  # stored SCRAM verifier, so a network login for it would put every verifier in
+  # the cluster behind a single password — and the loopback rule and the proxy
+  # rules both name every role, so only an explicit reject keeps it off them.
+  #
+  # This is also what proves that reject line parsed. pgBouncer skips a rule it
+  # cannot read with only a warning, so if it dropped this one the connection
+  # below would be admitted by the loopback rule instead of refused, and the
+  # only other trace would be a line in the log. The pooler is known to be
+  # listening on this address, because the pooled query further up used it.
+  #
+  # pgBouncer words a rejecting rule and no matching rule differently, and both
+  # are refusals, so the match below accepts either.
+
+  - name: Connect to the pooler as the auth user over TCP
+    command: >
+      psql "host=127.0.0.1 port={{ pgbouncer_port | default(6432) }}
+      dbname=postgres user={{ pgbouncer_auth_user }}" -t -A -c "SELECT 1"
+    environment:
+      PGPASSWORD: "{{ pgbouncer_auth_password }}"
+    register: auth_user_over_tcp
+    changed_when: false
+    failed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert the pooler refused the auth user over TCP
+    assert:
+      that:
+      - auth_user_over_tcp.rc != 0
+      - "auth_user_over_tcp.stdout | trim != '1'"
+      - "auth_user_over_tcp.stderr is search('no authentication method is found|[Rr]eject|pg_hba')"
+      fail_msg: >-
+        {{ pgbouncer_auth_user }} reached the pooled endpoint on
+        {{ inventory_hostname }} over TCP, so the reject rule for it is missing
+        or was skipped as unparsable. rc={{ auth_user_over_tcp.rc }},
+        stdout="{{ auth_user_over_tcp.stdout | default('') }}",
+        stderr="{{ auth_user_over_tcp.stderr | default('') }}"
+    when: cluster_is_pooled | bool
+
+  # The drop-in has to raise the descriptor ceiling off systemd's default of
+  # 1024, which is below max_client_conn on its own. The exact figure is derived
+  # from max_client_conn in the role's defaults and is not visible here, so
+  # assert only that the default was left behind.
+
+  - name: Read the pooler's descriptor limit
+    command: systemctl show -p LimitNOFILE --value pgbouncer
+    register: pgbouncer_nofile
+    changed_when: false
+    when: cluster_is_pooled | bool
+
+  - name: Assert the pooler's descriptor limit was raised
+    assert:
+      that: pgbouncer_nofile.stdout | int > 1024
+      fail_msg: >-
+        pgBouncer on {{ inventory_hostname }} has LimitNOFILE
+        {{ pgbouncer_nofile.stdout }}, so the systemd drop-in did not take
+        effect.
+    when: cluster_is_pooled | bool
+
+  # Each platform's own log path, which is also the one its logrotate
+  # configuration already covers: RHEL ships /etc/logrotate.d/pgbouncer with
+  # the pooler's package, and on Debian pgedge-postgresql-common rotates
+  # /var/log/postgresql/*.log. Both are asserted, not assumed — that coverage
+  # is the entire reason this collection keeps the pooler on the native paths
+  # and ships no logrotate file of its own, so a packaging change that dropped
+  # it has to fail here rather than be discovered by a full disk.
+
+  - name: Stat the pooler log file
+    stat:
+      path: "{{ pgbouncer_log_path }}"
+    register: pgbouncer_log
+    when: cluster_is_pooled | bool
+
+  - name: Assert the pooler logs where the platform expects
+    assert:
+      that: pgbouncer_log.stat.exists
+      fail_msg: >-
+        No pgBouncer log at the platform's path on {{ inventory_hostname }}
+    when: cluster_is_pooled | bool
+
+  - name: Find the logrotate configuration that covers the pooler log
+    find:
+      paths: /etc/logrotate.d
+      contains: "{{ pgbouncer_logrotate_pattern }}"
+    register: pgbouncer_logrotate
+    when: cluster_is_pooled | bool
+
+  - name: Assert the platform rotates the pooler log
+    assert:
+      that: pgbouncer_logrotate.files | length > 0
+      fail_msg: >-
+        Nothing in /etc/logrotate.d on {{ inventory_hostname }} names
+        {{ pgbouncer_logrotate_pattern }}, so the pooler's log grows until the
+        filesystem fills. Either the packaging stopped shipping the rule this
+        platform used to carry, or the pooler was moved off the path that rule
+        covers.
+    when: cluster_is_pooled | bool
+
 # Verify HAProxy nodes
 - hosts: haproxy
   become: true
+
+  vars:
+    nodes_in_zone: >-
+      {{ groups['pgedge'] |
+      map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    # Pooling is cluster-wide, so any one node's flag speaks for the whole
+    # cluster -- init_server refuses an inventory whose nodes disagree. Read out
+    # of the nodes' own hostvars because a proxy or client host does not carry
+    # the setting itself.
+    cluster_is_pooled: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='pgbouncer_enabled', default=false) |
+      map('bool') | select | list | length > 0 }}
 
   tasks:
   - name: Check HAProxy is running
@@ -169,6 +728,55 @@
       port: 5432
       host: 127.0.0.1
       timeout: 5
+
+  # An unpooled cluster must get no pooled listener at all rather than an empty
+  # one, and a pooled one must get every node of the zone in it. That second
+  # half is the invariant that makes pooling cluster-wide worth it: the pooled
+  # listener health-checks Patroni's leader endpoint, so a listener missing any
+  # node of the zone is a listener that breaks when the leader moves there.
+
+  - name: Read the rendered HAProxy configuration
+    slurp:
+      src: /etc/haproxy/haproxy.cfg
+    register: haproxy_cfg
+
+  - name: Assert the pooled listener exists exactly when the cluster pools
+    assert:
+      that: >-
+        ('listen pg-pooler' in (haproxy_cfg.content | b64decode))
+        == (cluster_is_pooled | bool)
+      fail_msg: >-
+        haproxy.cfg on {{ inventory_hostname }}
+        {{ 'has no' if 'listen pg-pooler' not in (haproxy_cfg.content | b64decode)
+           else 'has a' }} pooled listener, but pgbouncer_enabled is
+        {{ cluster_is_pooled }} for this cluster.
+
+  - name: Assert the pooled listener carries every node of the zone
+    vars:
+      # The pooled listener is the file's last stanza, and its server lines are
+      # the only ones in it. Character classes rather than backslash classes:
+      # a pattern in a folded scalar goes through YAML and Jinja both, and a
+      # backslash that survives one and not the other matches nothing at all
+      # without erroring.
+      pooled_stanza: >-
+        {{ (haproxy_cfg.content | b64decode).split('listen pg-pooler') | last }}
+      pooled_servers: >-
+        {{ pooled_stanza | regex_findall(' +server [^ ]+ ([^ :]+):') }}
+    assert:
+      that: pooled_servers | sort == nodes_in_zone | sort
+      fail_msg: >-
+        The pooled listener in haproxy.cfg on {{ inventory_hostname }} routes to
+        {{ pooled_servers | sort }}, but zone {{ zone }} holds
+        {{ nodes_in_zone | sort }}. A node the listener does not know cannot
+        serve the pooled endpoint when it takes the Patroni leader.
+    when: cluster_is_pooled | bool
+
+  - name: Check HAProxy is listening on the pooled port
+    wait_for:
+      port: "{{ pooler_port | default(6432) }}"
+      host: 127.0.0.1
+      timeout: 5
+    when: cluster_is_pooled | bool
 
   - name: Show HAProxy status
     debug:
@@ -188,3 +796,451 @@
   - name: Show backup status
     debug:
       msg: "pgbackrest info output: {{ backrest_info.stdout_lines | default(['not available']) }}"
+
+# Verify the access gates from a host that no pg_hba rule names and no role was
+# applied to. From a pgEdge node these checks are meaningless — every rule the
+# collection writes already names those addresses.
+#
+# Interpretation matters here: through either HAProxy listener, Postgres sees
+# the *proxy's* address, so those paths do not exercise client-IP gating at all.
+# Only the direct-to-node paths do.
+- hosts: clients
+  become: true
+
+  vars:
+    db_names:
+    - demo
+    db_user: admin
+    db_password: TestPass123
+    # A real login with a real password that the pooler's rules do not name for
+    # this host, which is what the refusal below turns on.
+    pgedge_user: pgedge
+    pgedge_password: TestPass456
+    pool_test_user: pooltest
+    pool_test_password: PoolTest987
+    pooled_nodes: >-
+      {{ groups['pgedge'] if cluster_is_pooled | bool else [] }}
+    # Pooling is cluster-wide, so any one node's flag speaks for the whole
+    # cluster -- init_server refuses an inventory whose nodes disagree. Read out
+    # of the nodes' own hostvars because a proxy or client host does not carry
+    # the setting itself.
+    cluster_is_pooled: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='pgbouncer_enabled', default=false) |
+      map('bool') | select | list | length > 0 }}
+    proxies: "{{ groups['haproxy'] | default([]) }}"
+    client_protocol_version: "3.0"
+
+  environment:
+  # Pin the wire protocol these tests use. pgEdge's bookworm repo currently
+  # publishes the PG19 beta in 'release', and Debian builds one shared libpq5
+  # from the newest tree in the component, so every pgEdge bookworm host gets
+  # libpq5 19~beta3. During the PG19 beta libpq deliberately "greases" the
+  # handshake (version 3.9999) to flush out software that mis-negotiates, and
+  # pgBouncer <= 1.25.2 is such software: it answers NegotiateProtocolVersion
+  # twice whenever it cannot assign a server immediately, which auth_query
+  # always triggers because the login pauses for the lookup. Upstream
+  # https://github.com/pgbouncer/pgbouncer/issues/1459, fixed by PR #1460
+  # (merged 2026-05-30), unreleased as of 1.25.2.
+  #
+  # That is a transient packaging problem, not something this collection causes
+  # or can fix, so the suite does not encode it -- the pooler documentation
+  # carries the operator-facing note instead. 3.0 is the default for every
+  # stable libpq and the workaround the PostgreSQL docs name, so pinning it
+  # keeps these tests measuring our own configuration rather than the client
+  # library's beta behaviour.
+    PGMAXPROTOCOLVERSION: "{{ client_protocol_version }}"
+    PGPASSWORD: "{{ db_password }}"
+    PGCONNECT_TIMEOUT: "5"
+
+  tasks:
+  - name: Install a Postgres client
+    package:
+      name: >-
+        {{ 'postgresql' if ansible_facts['os_family'] == 'RedHat'
+           else 'postgresql-client' }}
+      state: present
+      update_cache: true
+    retries: 5
+    delay: 20
+    register: result
+    until: result is success
+
+  # Positive: the pooler answers a client no Postgres rule names, because the
+  # pooled hop terminates at pgBouncer and reaches Postgres over loopback.
+
+  - name: Query a pooled node's pooler directly
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_pooler
+    changed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooler served the client
+    assert:
+      that: via_pooler.stdout == '1'
+      fail_msg: >-
+        SELECT 1 against {{ pooled_nodes | first }}:{{ pgbouncer_port | default(6432) }}
+        returned "{{ via_pooler.stdout | default('') }}"
+    when: pooled_nodes | length > 0
+
+  # The gate for auth_query, from the only host that can observe it. This role
+  # was created after the pooler started and appears in no userlist, so the
+  # verifier it authenticates against can only have come from the lookup
+  # function in Postgres. Both pooled paths are exercised: straight at a node's
+  # pooler, and through the proxy's pooled listener, which is what a real
+  # application would use.
+
+  - name: Query a pooled node's pooler as the post-deployment role
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ pool_test_user }}" -t -A -c "SELECT 1"
+    environment:
+      PGPASSWORD: "{{ pool_test_password }}"
+    register: via_pooler_new_role
+    changed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooler resolved a credential it was never given
+    assert:
+      that: via_pooler_new_role.stdout == '1'
+      fail_msg: >-
+        {{ pool_test_user }} could not authenticate through
+        {{ pooled_nodes | first }}:{{ pgbouncer_port | default(6432) }}, so
+        auth_query did not resolve it. stderr="{{ via_pooler_new_role.stderr | default('') }}"
+    when: pooled_nodes | length > 0
+
+  - name: Query the pooled HAProxy listener as the post-deployment role
+    command: >
+      psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ pool_test_user }}" -t -A -c "SELECT 1"
+    environment:
+      PGPASSWORD: "{{ pool_test_password }}"
+    register: via_pooled_proxy_new_role
+    changed_when: false
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  - name: Assert the pooled endpoint resolved the post-deployment role
+    assert:
+      that: via_pooled_proxy_new_role.stdout == '1'
+      fail_msg: >-
+        {{ pool_test_user }} could not authenticate through
+        {{ proxies | first }}:{{ pooler_port | default(6432) }}. stderr="{{
+        via_pooled_proxy_new_role.stderr | default('') }}"
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  # Client TLS, from the one host that reaches the pooler over a real network.
+  # sslmode=require is the assertion in itself: libpq abandons the connection
+  # when the server declines TLS, so a row coming back cannot have crossed the
+  # wire in cleartext. \conninfo then says which protocol was negotiated.
+
+  - name: Query a pooled node's pooler over TLS
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }} sslmode=require"
+      -t -A -c "SELECT 1"
+    register: via_pooler_tls
+    changed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooler served the client over TLS
+    assert:
+      that: via_pooler_tls.stdout == '1'
+      fail_msg: >-
+        sslmode=require against {{ pooled_nodes | first }}:{{
+        pgbouncer_port | default(6432) }} returned
+        "{{ via_pooler_tls.stdout | default('') }}".
+        stderr="{{ via_pooler_tls.stderr | default('') }}"
+    when: pooled_nodes | length > 0
+
+  - name: Ask the pooled connection what it negotiated
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }} sslmode=require"
+      -c "\conninfo"
+    register: pooler_conninfo
+    changed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooled connection reports itself encrypted
+    assert:
+      that: "'SSL connection' in pooler_conninfo.stdout"
+      fail_msg: >-
+        The pooled connection to {{ pooled_nodes | first }} does not report an
+        SSL connection: {{ pooler_conninfo.stdout | default('') }}
+    when: pooled_nodes | length > 0
+
+  # The pooled listener is TCP passthrough, so the client negotiates TLS with
+  # whichever node's pooler HAProxy picked, not with HAProxy.
+
+  - name: Query the pooled HAProxy listener over TLS
+    command: >
+      psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }} sslmode=require"
+      -t -A -c "SELECT 1"
+    register: via_pooled_proxy_tls
+    changed_when: false
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  - name: Assert the pooled listener served the client over TLS
+    assert:
+      that: via_pooled_proxy_tls.stdout == '1'
+      fail_msg: >-
+        sslmode=require through {{ proxies | first }}:{{
+        pooler_port | default(6432) }} returned
+        "{{ via_pooled_proxy_tls.stdout | default('') }}".
+        stderr="{{ via_pooled_proxy_tls.stderr | default('') }}"
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  - name: Query the direct HAProxy listener
+    command: >
+      psql "host={{ proxies | first }} port={{ proxy_port | default(5432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_proxy
+    changed_when: false
+    when: proxies | length > 0
+
+  - name: Assert the direct listener served the client
+    assert:
+      that: via_proxy.stdout == '1'
+      fail_msg: >-
+        SELECT 1 through {{ proxies | first }}:{{ proxy_port | default(5432) }}
+        returned "{{ via_proxy.stdout | default('') }}"
+    when: proxies | length > 0
+
+  - name: Query the pooled HAProxy listener
+    command: >
+      psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_pooled_proxy
+    changed_when: false
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  - name: Assert the pooled listener served the client
+    assert:
+      that: via_pooled_proxy.stdout == '1'
+      fail_msg: >-
+        SELECT 1 through {{ proxies | first }}:{{ pooler_port | default(6432) }}
+        returned "{{ via_pooled_proxy.stdout | default('') }}"
+    when:
+    - proxies | length > 0
+    - pooled_nodes | length > 0
+
+  # Negative: the same credentials straight at Postgres, which does gate on the
+  # client's address and has no rule for this one.
+
+  - name: Connect straight to a node's Postgres port
+    command: >
+      psql "host={{ groups['pgedge'] | first }} port={{ pg_port | default(5432) }}
+      dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+    register: via_postgres
+    changed_when: false
+    failed_when: false
+
+  - name: Assert Postgres refused the unnamed client
+    assert:
+      that:
+      - via_postgres.rc != 0
+      - "'no pg_hba.conf entry' in via_postgres.stderr"
+      fail_msg: >-
+        Postgres on {{ groups['pgedge'] | first }} did not refuse this host on
+        its own address. rc={{ via_postgres.rc }},
+        stderr="{{ via_postgres.stderr }}"
+
+  # Negative: the pooler's own rules, which auth_type = hba makes authoritative.
+  # This host is named in pgbouncer_hba_rules for the application roles only, so
+  # pgedge — a real login with a real password, named for every node's address
+  # but not for this one — matches no rule and is refused before its password is
+  # considered at all. The wording is pgBouncer's, not Postgres's: the direct
+  # endpoint's "no pg_hba.conf entry" never reaches a pooled client.
+
+  - name: Connect to a pooler as a role its rules do not name
+    command: >
+      psql "host={{ pooled_nodes | first }}
+      port={{ pgbouncer_port | default(6432) }}
+      dbname={{ db_names | first }} user={{ pgedge_user }}" -t -A -c "SELECT 1"
+    environment:
+      PGPASSWORD: "{{ pgedge_password }}"
+    register: via_pooler_unnamed
+    changed_when: false
+    failed_when: false
+    when: pooled_nodes | length > 0
+
+  - name: Assert the pooler refused a role its rules do not name
+    assert:
+      that:
+      - via_pooler_unnamed.rc != 0
+      - "'no authentication method is found' in via_pooler_unnamed.stderr"
+      fail_msg: >-
+        {{ pgedge_user }} was not refused at
+        {{ pooled_nodes | first }}:{{ pgbouncer_port | default(6432) }} the way
+        the pooler's HBA rules require. rc={{ via_pooler_unnamed.rc }},
+        stderr="{{ via_pooler_unnamed.stderr }}"
+    when: pooled_nodes | length > 0
+
+# The pooled endpoint's failure mode, which the design chooses deliberately:
+# pooled and direct connections resolve against different pg_hba rules, so
+# nothing fails a pooled client over to Postgres. Stopping the pooler on the
+# node the pooled listener is routing to therefore has to take that endpoint
+# down while the direct one keeps serving.
+#
+# Both listeners check Patroni on 8008 rather than the port they forward to, so
+# the leader stays "up" for the pooled listener even with its pooler dead: the
+# connection is accepted and then fails, rather than being routed to a replica.
+# A TCP check on pgbouncer_port would mark every pooled node up and send writes
+# to replicas, which is why it is not used.
+#
+# Runs last, and inside a block/always, because it stops a service the rest of
+# the suite depends on. Only ultra-ha can test this at all — a simple cluster
+# has no proxy in front of the poolers and no leader to pick.
+- hosts: clients
+  become: true
+
+  vars:
+    db_names:
+    - demo
+    db_user: admin
+    db_password: TestPass123
+    proxies: "{{ groups['haproxy'] | default([]) }}"
+    # The pooled nodes of the zone the proxy under test serves: with pooling
+    # cluster-wide that is every node of the zone, and only the one holding the
+    # leader is carrying traffic — the others fail their 8008 check. The zone is
+    # read out of hostvars inside the expression rather than through a variable
+    # of its own, so it stays the integer the inventory wrote instead of
+    # becoming a string on the way through.
+    pooled_in_zone: >-
+      {{ groups['pgedge'] |
+      map('extract', hostvars) |
+      selectattr('zone', 'defined') |
+      selectattr('zone', 'eq', hostvars[groups['haproxy'] | first].zone) |
+      map(attribute='inventory_hostname') | list
+      if cluster_is_pooled | bool else [] }}
+    # Pooling is cluster-wide, so any one node's flag speaks for the whole
+    # cluster -- init_server refuses an inventory whose nodes disagree. Read out
+    # of the nodes' own hostvars because a proxy or client host does not carry
+    # the setting itself.
+    cluster_is_pooled: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='pgbouncer_enabled', default=false) |
+      map('bool') | select | list | length > 0 }}
+    client_protocol_version: "3.0"
+
+  environment:
+    PGMAXPROTOCOLVERSION: "{{ client_protocol_version }}"
+    PGPASSWORD: "{{ db_password }}"
+    PGCONNECT_TIMEOUT: "5"
+
+  tasks:
+  - name: Ask each pooled node in the zone whether it holds the leader
+    uri:
+      url: "http://{{ item }}:8008/leader"
+      status_code:
+      - 200
+      - 503
+    loop: "{{ pooled_in_zone }}"
+    register: leader_probe
+    when:
+    - proxies | length > 0
+    - pooled_in_zone | length > 0
+
+  - name: Identify the pooler the pooled listener is routing to
+    set_fact:
+      pooled_leader: >-
+        {{ leader_probe.results | selectattr('status', 'eq', 200) |
+        map(attribute='item') | first }}
+    when:
+    - proxies | length > 0
+    - pooled_in_zone | length > 0
+
+  - block:
+    - name: Query the pooled listener before stopping the pooler
+      command: >
+        psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+        dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+      register: pooled_before
+      changed_when: false
+
+    - name: Stop the pooler on the node holding the leader
+      systemd:
+        name: pgbouncer
+        state: stopped
+      delegate_to: "{{ pooled_leader }}"
+
+    - name: Query the pooled listener with that pooler stopped
+      command: >
+        psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+        dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+      register: pooled_during
+      changed_when: false
+      failed_when: false
+
+    - name: Query the direct listener with that pooler stopped
+      command: >
+        psql "host={{ proxies | first }} port={{ proxy_port | default(5432) }}
+        dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+      register: direct_during
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the pooled endpoint failed and the direct one kept serving
+      assert:
+        that:
+        - pooled_before.stdout == '1'
+        - pooled_during.rc != 0
+        - direct_during.stdout == '1'
+        fail_msg: >-
+          With pgBouncer stopped on {{ pooled_leader }}, the pooled listener on
+          {{ proxies | first }}:{{ pooler_port | default(6432) }} returned
+          rc={{ pooled_during.rc }} "{{ pooled_during.stdout | default('') }}"
+          and the direct listener returned
+          "{{ direct_during.stdout | default('') }}". A pooled endpoint that
+          still answers is routing somewhere it should not: pooled and direct
+          connections are not interchangeable, and the direct endpoint must be
+          the one still serving.
+
+    always:
+    - name: Start the pooler again
+      systemd:
+        name: pgbouncer
+        state: started
+      delegate_to: "{{ pooled_leader }}"
+
+    - name: Query the pooled listener once the pooler is back
+      command: >
+        psql "host={{ proxies | first }} port={{ pooler_port | default(6432) }}
+        dbname={{ db_names | first }} user={{ db_user }}" -t -A -c "SELECT 1"
+      register: pooled_after
+      changed_when: false
+      failed_when: false
+      retries: 10
+      delay: 3
+      until: pooled_after.rc == 0
+
+    - name: Assert the pooled endpoint came back
+      assert:
+        that: pooled_after.stdout == '1'
+        fail_msg: >-
+          The pooled listener on
+          {{ proxies | first }}:{{ pooler_port | default(6432) }} did not
+          recover after pgBouncer was restarted on {{ pooled_leader }}:
+          rc={{ pooled_after.rc }},
+          stderr="{{ pooled_after.stderr | default('') }}"
+
+    when:
+    - proxies | length > 0
+    - pooled_in_zone | length > 0

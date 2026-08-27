@@ -2,6 +2,9 @@
 #
 # Make sure all nodes are in the pgedge node group.
 #
+# Set pgbouncer_enabled on that group to give every node a connection pooler in
+# front of its own Postgres.
+#
 # CHECK the README for how these roles work
 ---
 
@@ -14,5 +17,9 @@
   - init_server
   - install_repos
   - install_pgedge
+  - role: install_pgbouncer
+    when: pgbouncer_enabled | bool
   - setup_postgres
+  - role: setup_pgbouncer
+    when: pgbouncer_enabled | bool
   - setup_pgedge

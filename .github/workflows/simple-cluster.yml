@@ -46,10 +46,19 @@ jobs:
       - name: Install Ansible
         run: pip install ansible
 
+      # Offline, and the only tests that can observe a topology this matrix
+      # does not deploy -- in particular a cluster with pgbouncer_enabled
+      # unset, whose haproxy.cfg must stay what it was before pooling
+      # existed.
+      - name: Check rendered templates
+        run: python3 tests/render/check-haproxy.py
+
       - name: Generate SSH keypair
         run: |
           mkdir -p tests/.ssh
-          ssh-keygen -t ed25519 -f tests/.ssh/id_ed25519 -N "" -q
+          if [ ! -f tests/.ssh/id_ed25519 ]; then
+            ssh-keygen -t ed25519 -f tests/.ssh/id_ed25519 -N "" -q
+          fi
           cp tests/.ssh/id_ed25519.pub tests/docker/authorized_keys
 
       - name: Build and install collection
@@ -63,16 +72,21 @@ jobs:
 
       - name: Wait for SSH
         run: |
-          for host in 192.168.6.10 192.168.6.11 192.168.6.12; do
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.30; do
+            ready=0
             for i in $(seq 1 30); do
               ssh -i tests/.ssh/id_ed25519 \
                 -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null \
                 -o ConnectTimeout=2 \
                 -o BatchMode=yes \
-                ansible@$host true 2>/dev/null && break
+                ansible@$host true 2>/dev/null && { ready=1; break; }
               sleep 2
             done
+            if [ "$ready" -ne 1 ]; then
+              echo "ERROR: SSH not ready for $host after 30 attempts" >&2
+              exit 1
+            fi
           done
 
       - name: Run playbook
@@ -80,6 +94,14 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/simple-cluster.yml \
             -i tests/inventories/simple-cluster.yml \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }}
+
+      - name: Check the pooler roles are idempotent
+        run: |
+          tests/check-idempotence.sh \
+            tests/inventories/simple-cluster.yml \
+            tests/playbooks/simple-cluster.yml \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }}
 

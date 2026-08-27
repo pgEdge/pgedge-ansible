@@ -175,3 +175,89 @@ backup_repo_params:
   secret_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 ```
 
+
+## Adding Connection Pooling
+
+pgEdge nodes can also run a pgBouncer connection pooler, and HAProxy fronts the
+poolers on `pooler_port` the way it fronts PostgreSQL on `proxy_port`. Pooling
+is opt-in and cluster-wide, like `is_ha_cluster`: set `pgbouncer_enabled` on the
+`pgedge` group and every node runs a pooler in front of its own PostgreSQL.
+
+It is cluster-wide by design. The pooled HAProxy listener health-checks
+Patroni's leader endpoint, exactly as the direct listener does, so it routes
+only to the pooler on the current leader — and any node of the zone can become
+that leader. A zone that pooled only some of its nodes would lose the pooled
+endpoint on the first failover to one of the others, which is why `init_server`
+rejects an inventory whose nodes disagree.
+
+Add the setting to the inventory:
+
+```yaml
+pgedge:
+  vars:
+    pgbouncer_enabled: true
+    pgbouncer_auth_password: "{{ vault_pgbouncer_auth_password }}"
+  # ... hosts as above ...
+```
+
+`pgbouncer_auth_password` is the pooler's own PostgreSQL login, the one
+password the collection writes to disk. The playbook refuses to run while it is
+still the default.
+
+Then add the two pooling roles to the `pgedge` play, gated on
+`pgbouncer_enabled`. `install_pgbouncer` goes with the other install roles, and
+`setup_pgbouncer` after `setup_patroni`, because the pooler forwards to the
+PostgreSQL instance Patroni manages on its own node:
+
+```yaml
+- hosts: pgedge
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - install_repos
+    - install_pgedge
+    - setup_postgres
+    - install_etcd
+    - install_patroni
+    - install_backrest
+    - role: install_pgbouncer
+      when: pgbouncer_enabled | bool
+    - setup_etcd
+    - setup_patroni
+    - role: setup_pgbouncer
+      when: pgbouncer_enabled | bool
+    - setup_backrest
+```
+
+The `haproxy` play needs no change. `setup_haproxy` emits the pooled listener
+by itself wherever the cluster pools, with every node of the zone behind it, and
+emits nothing extra where it does not.
+
+After deployment, each zone's HAProxy node offers both endpoints. Clients
+choose which one they want:
+
+```bash
+# Direct connection to the zone's current primary
+psql -h 192.168.6.16 -p 5432 -U admin demo
+
+# Pooled connection through the primary's pgBouncer
+psql -h 192.168.6.16 -p 6432 -U admin demo
+```
+
+Two properties of that split are worth knowing before clients are pointed at
+it. The endpoints enforce separate client authentication rules, so a client
+that reaches one is not automatically admitted to the other, and nothing fails
+a pooled connection over to PostgreSQL: a dead pooler on the leader is an
+outage of the pooled endpoint alone. And Spock replication always uses the
+direct listener, so cross-zone replication is unaffected by pooling or by a
+pooler failure.
+
+Because the pooled listener is TCP passthrough, the pooler sees the proxy's
+address rather than the client's, and its own rules admit every role from that
+address. Restrict access to `pooler_port` at the proxy or in the network. See
+[Pooling Configuration](configuration/pooling.md) for the pool mode, TLS,
+authentication and sizing parameters, and
+[Proxy Configuration](configuration/proxy.md) for the port model and the
+connection budget.

@@ -19,7 +19,15 @@
       name: install_pgedge
 
   - include_role:
+      name: install_pgbouncer
+    when: pgbouncer_enabled | default(false) | bool
+
+  - include_role:
       name: setup_postgres
+
+  - include_role:
+      name: setup_pgbouncer
+    when: pgbouncer_enabled | default(false) | bool
 
   - include_role:
       name: setup_pgedge

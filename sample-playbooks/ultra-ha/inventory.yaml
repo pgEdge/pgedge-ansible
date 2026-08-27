@@ -4,6 +4,19 @@
 # * 3 pgEdge nodes in each zone
 # * 1 HAProxy node in each zone
 # * 1 Backup node in each zone
+#
+# To add a pooled endpoint, set pgbouncer_enabled on the pgedge group below,
+# along with pgbouncer_auth_password, which the playbook refuses to leave at
+# its default. Every pgEdge node then runs a pooler in front of its own
+# Postgres, and HAProxy serves pooler_port (6432) beside proxy_port (5432).
+#
+# Pooling is a property of the cluster, like is_ha_cluster, and not of a node.
+# The pooled listener health-checks Patroni's leader endpoint, so a zone that
+# pooled only some of its nodes would lose that endpoint the moment the leader
+# moved to one of the others.
+#
+#   pgbouncer_enabled: true
+#   pgbouncer_auth_password: <a real password>
 
 pgedge:
   vars:

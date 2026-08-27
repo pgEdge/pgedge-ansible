@@ -16,6 +16,8 @@ below to find solutions for a specific component.
   coordination layer.
 - [Patroni](troubleshooting/patroni.md) - HA controller issues.
 - [HAProxy](troubleshooting/haproxy.md) - Proxy routing issues.
+- [pgBouncer](troubleshooting/pgbouncer.md) - Pooled connection
+  endpoint issues.
 - [Spock Replication](troubleshooting/spock.md) - Multi-zone replication
   issues.
 - [PgBackRest](troubleshooting/backup.md) - Backup and recovery issues.

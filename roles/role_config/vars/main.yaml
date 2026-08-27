@@ -18,6 +18,25 @@ backups_in_zone: >-
   selectattr('zone', 'eq', zone) |
   map(attribute='inventory_hostname') | list }}
 
+# Whether this cluster pools, answerable from any host. pgbouncer_enabled is a
+# cluster-wide setting normally given to the 'pgedge' group, so a proxy or
+# backup host does not carry it itself — and role defaults never appear in
+# hostvars, hence the default on the extraction. init_server asserts the pgEdge
+# nodes agree, so any one of them speaks for the cluster; every node is read
+# anyway so that a disagreeing inventory renders a pooled endpoint and then
+# fails validation, rather than the reverse.
+cluster_is_pooled: >-
+  {{ groups['pgedge'] | map('extract', hostvars) |
+  map(attribute='pgbouncer_enabled', default=false) |
+  map('bool') | select | list | length > 0 }}
+
+# The servers a zone's pooled endpoint is built from, which is the whole zone or
+# nothing at all — that is the point of making pooling cluster-wide. Both
+# listeners in haproxy.cfg then carry the same nodes, differing only in the port
+# they reach, so a Patroni failover can never land on a node the pooled endpoint
+# does not know about.
+pooled_nodes_in_zone: "{{ nodes_in_zone if cluster_is_pooled | bool else [] }}"
+
 first_node_in_zone: "{{ nodes_in_zone | first }}"
 
 spock_exception_behaviour: >-
@@ -38,6 +57,71 @@ pg_config_dir: >-
     '/etc/postgresql/' + pg_version|string + '/' + cluster_name if ansible_facts['os_family'] == 'Debian'
     else pg_data
   }}
+
+# pgBouncer's packaging differs by platform and neither layout needs new
+# directories or a logrotate file, provided the native paths are used. The RHEL
+# package creates a dedicated pgbouncer user and owns /var/log/pgbouncer and
+# /run/pgbouncer (the latter via tmpfiles.d); the Debian package ships no such
+# user — its unit runs as postgres — and logs beside Postgres, where
+# pgedge-postgresql-common's logrotate glob already covers the file.
+
+pgbouncer_user: >-
+  {{
+    'pgbouncer' if ansible_facts['os_family'] == 'RedHat' else
+    'postgres' if ansible_facts['os_family'] == 'Debian'
+  }}
+
+pgbouncer_group: "{{ pgbouncer_user }}"
+
+pgbouncer_log_file: >-
+  {{
+    '/var/log/pgbouncer/pgbouncer.log' if ansible_facts['os_family'] == 'RedHat' else
+    '/var/log/postgresql/pgbouncer.log' if ansible_facts['os_family'] == 'Debian'
+  }}
+
+pgbouncer_pid_file: >-
+  {{
+    '/run/pgbouncer/pgbouncer.pid' if ansible_facts['os_family'] == 'RedHat' else
+    '/var/run/postgresql/pgbouncer.pid' if ansible_facts['os_family'] == 'Debian'
+  }}
+
+# Where the pooler puts its unix socket. pgBouncer's compiled default is /tmp,
+# which is world-writable and shared with everything else on the host, so the
+# console and every local client resolve through a path no package owns. Each
+# platform already has a directory for this: RHEL's package owns /run/pgbouncer
+# (created 0700 pgbouncer by its tmpfiles.d, which also holds the pidfile), and
+# Debian's shipped configuration uses /var/run/postgresql, beside Postgres's own
+# socket, where its pooler already runs as postgres.
+#
+# The 0700 on RHEL is the difference worth knowing: only root and the pgbouncer
+# user can reach a socket there, so local administration is root's. On Debian
+# the directory is 2775 postgres, so root and postgres both reach it. Neither
+# platform needs a directory this role creates.
+
+pgbouncer_socket_dir: >-
+  {{
+    '/run/pgbouncer' if ansible_facts['os_family'] == 'RedHat' else
+    '/var/run/postgresql' if ansible_facts['os_family'] == 'Debian'
+  }}
+
+# Where setup_pgbouncer stages the certificate it serves clients from. The
+# pooler needs its own copy because on RHEL it runs as pgbouncer while PGDATA is
+# 0700 postgres, so Postgres's copy is unreadable to it. Debian's pooler runs as
+# postgres and could read PGDATA directly, but it stages too: one code path and
+# one pair of paths in pgbouncer.ini is worth more than saving a file copy.
+# These are the destinations, not a knob — point pgbouncer_tls_cert_source at a
+# different certificate to change what is served.
+
+pgbouncer_tls_cert_file: /etc/pgbouncer/server.crt
+pgbouncer_tls_key_file: /etc/pgbouncer/server.key
+
+# The pooler's own client-authentication rules, beside its configuration for the
+# same reason the certificate is: on RHEL the pooler runs as pgbouncer and
+# cannot read Postgres's pg_hba.conf inside a 0700 PGDATA. A destination rather
+# than a knob — the rules themselves come from custom_hba_rules and
+# pgbouncer_hba_rules.
+
+pgbouncer_hba_file: /etc/pgbouncer/pg_hba.conf
 
 patroni_config_dir: "/etc/patroni"
 
