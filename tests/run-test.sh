@@ -86,6 +86,12 @@ cleanup() {
 
 trap cleanup EXIT
 
+# Step 0: Offline template checks. No containers involved, so run them first:
+# they are the only tests that can observe a topology this harness does not
+# deploy, in particular a cluster with pgbouncer_enabled unset.
+echo "==> Step 0: Checking rendered templates..."
+python3 "$SCRIPT_DIR/render/check-haproxy.py"
+
 # Step 1: Generate SSH keypair and copy to Docker build context
 echo "==> Step 1: Ensuring SSH keypair exists..."
 mkdir -p "$SCRIPT_DIR/.ssh"
@@ -163,6 +169,14 @@ ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
   --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
   "${EXTRA_VARS[@]}" \
   -v
+
+# Step 7b: A second consecutive run of the pooler roles must change nothing.
+echo "==> Step 7b: Checking the pooler roles are idempotent..."
+"$SCRIPT_DIR/check-idempotence.sh" \
+  "$INVENTORY" \
+  "$PLAYBOOK" \
+  --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+  "${EXTRA_VARS[@]}"
 
 # Step 8: Run verification
 if [ -f "$VERIFY_PLAYBOOK" ]; then

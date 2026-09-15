@@ -4,6 +4,9 @@
 # * haproxy - will receive haproxy
 # * backup - will act as a dedicated backup server per zone
 #
+# Setting pgbouncer_enabled on the pgedge group also gives every node in it a
+# connection pooler in front of its own Postgres.
+#
 # CHECK the README for how these roles work
 ---
 
@@ -43,9 +46,13 @@
     when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
   - install_patroni
   - install_backrest
+  - role: install_pgbouncer
+    when: pgbouncer_enabled | bool
   - role: setup_etcd
     when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
   - setup_patroni
+  - role: setup_pgbouncer
+    when: pgbouncer_enabled | bool
   - setup_backrest
 
 # Install HAProxy on dedicated proxy nodes.

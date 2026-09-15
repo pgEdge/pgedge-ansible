@@ -22,15 +22,24 @@ following list shows the correct execution sequence:
    nodes (HA only).
 7. [`install_backrest`](roles/install_backrest.md) - Installs PgBackRest on
    backup-capable nodes.
-8. [`setup_etcd`](roles/setup_etcd.md) - Configures and starts etcd (HA only).
-9. [`setup_patroni`](roles/setup_patroni.md) - Configures Patroni and starts
-   the HA cluster (HA only).
-10. [`setup_haproxy`](roles/setup_haproxy.md) - Configures HAProxy on haproxy
+8. [`install_pgbouncer`](roles/install_pgbouncer.md) - Installs pgBouncer on
+   pgEdge nodes (pooled clusters only).
+9. [`setup_etcd`](roles/setup_etcd.md) - Configures and starts etcd (HA only).
+10. [`setup_patroni`](roles/setup_patroni.md) - Configures Patroni and starts
+    the HA cluster (HA only).
+11. [`setup_pgbouncer`](roles/setup_pgbouncer.md) - Configures and starts
+    pgBouncer on pooled nodes.
+12. [`setup_haproxy`](roles/setup_haproxy.md) - Configures HAProxy on haproxy
     nodes (HA only).
-11. [`setup_pgedge`](roles/setup_pgedge.md) - Creates Spock nodes and
+13. [`setup_pgedge`](roles/setup_pgedge.md) - Creates Spock nodes and
     establishes subscriptions.
-12. [`setup_backrest`](roles/setup_backrest.md) - Configures PgBackRest and
+14. [`setup_backrest`](roles/setup_backrest.md) - Configures PgBackRest and
     runs the first backup.
+
+The two pgBouncer roles are the only optional pair in the sequence. Pooling is
+opt-in per cluster, so both are gated on `pgbouncer_enabled`; a cluster that
+does not pool omits them and is otherwise unchanged. See
+[Pooling Configuration](configuration/pooling.md).
 
 ## Role Categories
 
@@ -57,6 +66,7 @@ The roles in this collection fall into four categories.
 | [`install_etcd`](roles/install_etcd.md) | Installs etcd for HA cluster coordination. |
 | [`install_patroni`](roles/install_patroni.md) | Installs Patroni for HA management. |
 | [`install_backrest`](roles/install_backrest.md) | Installs PgBackRest for backup and restore operations. |
+| [`install_pgbouncer`](roles/install_pgbouncer.md) | Installs pgBouncer for connection pooling on pooled nodes. |
 
 ### Service Configuration
 
@@ -65,6 +75,7 @@ The roles in this collection fall into four categories.
 | [`setup_postgres`](roles/setup_postgres.md) | Initializes and configures Postgres instances. |
 | [`setup_etcd`](roles/setup_etcd.md) | Configures and starts etcd clusters. |
 | [`setup_patroni`](roles/setup_patroni.md) | Configures and starts Patroni. |
+| [`setup_pgbouncer`](roles/setup_pgbouncer.md) | Configures and starts pgBouncer on pooled nodes. |
 | [`setup_haproxy`](roles/setup_haproxy.md) | Installs and configures HAProxy. |
 | [`setup_pgedge`](roles/setup_pgedge.md) | Establishes Spock replication between nodes. |
 | [`setup_backrest`](roles/setup_backrest.md) | Configures PgBackRest and schedules backups. |

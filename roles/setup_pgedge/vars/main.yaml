@@ -1,8 +1,15 @@
 ---
 
+# Every zone the cluster has, which is by definition the zones its pgEdge nodes
+# are in. Derived from the pgedge group rather than from every host in the
+# inventory: a host that belongs to no deployment group — a client, a bastion,
+# a monitoring box — carries no zone, and counting it invents an empty zone
+# that no node can satisfy. The subscription loop below then looks for the
+# first pgEdge node in that zone and fails on an empty sequence.
+
 zone_list: >
-    {{ hostvars.values() | map(attribute='zone', default='') |
-       unique }}
+    {{ groups['pgedge'] | map('extract', hostvars) |
+       map(attribute='zone', default='') | unique }}
 
 # This variable serves several purposes:
 # - Sets the proxy to any user-specified target.

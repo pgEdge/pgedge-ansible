@@ -21,11 +21,56 @@ replication_password: secret
 
 custom_hba_rules: []
 
+# pgBouncer connection pooler. Pooling is a property of the cluster, the way
+# is_ha_cluster is: set pgbouncer_enabled on the 'pgedge' group and every pgEdge
+# node gets a pooler in front of its own Postgres. It is deliberately not a
+# per-node choice. A pooled zone's HAProxy listener follows the Patroni leader,
+# so a zone that pools only some of its nodes has an endpoint that breaks the
+# moment the leader moves to one of the others, and init_server rejects a
+# cluster whose nodes disagree.
+
+pgbouncer_enabled: false
+
+# Only the settings more than one role reads live here. The pooler's own
+# tunables — listen address, pool mode, sizes, TLS, startup parameters — are
+# defaults of the roles that write them: install_pgbouncer for the package,
+# setup_pgbouncer for pgbouncer.ini. Override any of them from the inventory
+# exactly the same way.
+
+pgbouncer_port: 6432
+# Read by setup_haproxy as well as setup_pgbouncer: the pooled listener's
+# maxconn is derived from it, so it cannot be a setup_pgbouncer default.
+pgbouncer_max_client_conn: 1000
+# pgBouncer keeps no list of Postgres passwords. It logs in as this role and
+# calls a SECURITY DEFINER lookup to fetch the requested user's stored SCRAM
+# verifier, so any Postgres role can use the pooled endpoint — including roles
+# created long after deployment. setup_postgres creates the role and the lookup
+# wherever pooling is on; this password is the only one written to disk, in
+# pgBouncer's auth_file, because the admin console cannot use the lookup.
+pgbouncer_auth_user: pgbouncer_auth
+pgbouncer_auth_password: secret
+# Extra client-authentication rules for the pooled endpoint, in the same shape
+# as custom_hba_rules, and beside it because it is the same kind of decision.
+# The pooler enforces its own HBA file: it admits the cluster's own nodes, this
+# zone's proxies, the node's loopback and local administration, and nothing
+# else, so an application reaching the pooler across the network has to be named
+# somewhere. Naming it in custom_hba_rules admits it to both endpoints; naming
+# it here admits it to the pooled endpoint alone, which is the narrower grant
+# and usually the one that was meant.
+pgbouncer_hba_rules: []
+
 is_ha_cluster: false
 exception_behaviour: "transdiscard"
 
 proxy_port: 5432
 proxy_node: ''
+
+# The proxy-layer port for the pooled listener, mirroring how proxy_port fronts
+# pg_port: pooler_port fronts each pooled node's pgbouncer_port. It is a
+# separate setting because HAProxy may share a host with Postgres and pgBouncer
+# (see docs/configuration/proxy.md), and identical values collide there.
+# Nothing is emitted on this port unless pgbouncer_enabled is set.
+pooler_port: 6432
 
 pg_port: 5432
 

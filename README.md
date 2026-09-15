@@ -117,6 +117,7 @@ variables. The following table lists the most commonly used parameters:
 | db_user | admin | Database superuser username. |
 | db_password | secret | Password for db_user. |
 | is_ha_cluster | false | When true, installs etcd, Patroni, and HAProxy. |
+| pgbouncer_enabled | false | When true, every pgEdge node also runs a pgBouncer connection pooler. |
 
 For the complete parameter list, see the
 [Configuration Reference](docs/configuration.md).

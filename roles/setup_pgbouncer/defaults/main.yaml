@@ -1,0 +1,93 @@
+---
+
+pgbouncer_listen_addr: "*"
+
+# How much of a session the pooler is allowed to reuse, and the one setting here
+# with consequences beyond performance.
+#
+# "session" hands a client one backend for the whole connection and returns it
+# only at disconnect. Nothing about the session is shared, so every client sees
+# exactly the Postgres it would see unpooled — but the pool is then a hard
+# concurrency limit, not a multiplier: with default_pool_size below the number
+# of concurrent clients, the ones without a backend simply wait.
+#
+# "transaction" returns the backend at the end of every transaction, which is
+# what actually multiplexes many clients onto few backends. The cost is that
+# anything living outside a transaction is no longer reliably the client's own.
+# pgBouncer only runs server_reset_query in session mode, so in transaction mode
+# a SET stays on the backend and the next client to use it inherits the value —
+# measured on 1.25.1, not theoretical. The same applies to advisory locks,
+# LISTEN/NOTIFY, temporary tables, WITH HOLD cursors and session-level prepared
+# statements. Applications that touch none of those pool safely; applications
+# that do need session mode, or must set state per transaction.
+#
+# Prepared statements are the exception with a fix: set
+# pgbouncer_max_prepared_statements above 0 and pgBouncer tracks them itself,
+# replaying each one onto whichever backend a transaction lands on. Without it,
+# a driver that keeps server-side prepared statements across transactions will
+# eventually name one the new backend has never seen — pgJDBC and psycopg3 both
+# start doing this once a statement passes their prepare threshold, so the
+# failure arrives after some traffic rather than on the first query, which is
+# what makes it easy to miss in testing. Turning the driver's threshold off, or
+# putting it in simple-query mode, is the client-side alternative.
+#
+# Spock never routes through the pooler, so replication is unaffected by this
+# either way.
+
+pgbouncer_pool_mode: session
+pgbouncer_default_pool_size: 25
+pgbouncer_max_prepared_statements: 0
+
+# Startup parameters the pooler accepts but does not carry to the backend.
+#
+# pgBouncer rejects a connection outright — FATAL, unsupported startup parameter
+# — when a client asks for a parameter it does not track, and it inspects the
+# contents of "options" the same way. Naming one here stops the refusal, and
+# that is all it does: the value is then discarded, silently. Measured on
+# 1.25.1, both as a top-level startup key and inside "options";
+# track_extra_parameters does not change it, since pgBouncer only carries the
+# parameters in its own built-in tracked set.
+#
+# extra_float_digits is here because pgJDBC sends it on every connection and
+# discarding it costs nothing — it affects the text precision of floats, not
+# results. Think twice before adding search_path: the client would connect and
+# then resolve every unqualified name against the wrong schema, with no error on
+# either side. A hard failure at connect time is the better outcome, so schema
+# selection belongs in the role's search_path or in an explicit SET.
+
+pgbouncer_ignore_startup_parameters: extra_float_digits
+
+# Client TLS on the pooled endpoint. Postgres already presents a certificate on
+# every node — setup_postgres issues one and turns ssl on — so a pooled client
+# should not have to drop to cleartext to use the pooler. "allow" accepts
+# exactly what the direct endpoint accepts today: TLS when the client asks for
+# it, plaintext when it does not, so no existing client changes behaviour. Set
+# "require" to make TLS mandatory on the pooled endpoint, or "disable" to turn
+# it off and omit the certificate entirely. verify-ca and verify-full are not
+# supported: they demand a client certificate, which needs the pg_hba option
+# syntax pgBouncer cannot parse.
+#
+# init_server validates this value, and does so only when it is set — the
+# default lives here, in the role that writes it, so it is not in scope there.
+
+pgbouncer_client_tls_sslmode: allow
+
+# Where the pooler's certificate comes from: the controller-side staging
+# directory setup_postgres generates into, which is also where PGDATA's copy
+# came from — so the pooled and direct endpoints present the same certificate,
+# and replacing this replaces both. Deliberately not read from PGDATA on the
+# node: on an HA replica that copy arrives with Patroni's clone, which has not
+# necessarily finished when this role runs.
+
+pgbouncer_tls_cert_source: tls/postgres/server.crt
+pgbouncer_tls_key_source: tls/postgres/server.key
+
+# Both packaged units ship LimitNOFILE commented out, leaving the pooler with
+# systemd's default of 1024 — fewer descriptors than max_client_conn alone, so
+# it would run out long before reaching its own connection limit. Budget two
+# per client connection (its socket, and the backend it gets paired with) plus
+# a fixed allowance for the idle server pools, the listening sockets, the log
+# and the admin console.
+
+pgbouncer_limit_nofile: >-
+  {{ (pgbouncer_max_client_conn | int * 2) + 1024 }}

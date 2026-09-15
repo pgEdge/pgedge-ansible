@@ -1,0 +1,78 @@
+# Managed by Ansible (pgbouncer role) - do not edit manually.
+
+[databases]
+# Route every database to the node's local Postgres. The client's requested
+# database name and user are forwarded as-is.
+* = host=127.0.0.1 port={{ pg_port }}
+
+[pgbouncer]
+listen_addr = {{ pgbouncer_listen_addr }}
+listen_port = {{ pgbouncer_port }}
+
+# Set explicitly rather than left at pgBouncer's compiled default of /tmp, so
+# the local socket is somewhere a package owns and the pooler's permissions
+# apply to it. Each platform has its own directory for this, and the pooler's
+# HBA file admits the auth user over it — see pgbouncer_socket_dir.
+unix_socket_dir = {{ pgbouncer_socket_dir }}
+
+# Which clients may connect and what credential they are checked against are
+# two separate decisions here. auth_type = hba makes the rules in auth_hba_file
+# select the method per client and address, so an address those rules do not
+# name is refused before any password is considered. auth_user and auth_query
+# then resolve the requested role's stored SCRAM verifier by calling the lookup
+# setup_postgres created, so any Postgres role works through the pooler —
+# including one created after the pooler started — and a rotated password takes
+# effect immediately. auth_dbname pins the lookup to the maintenance database,
+# so it runs there rather than in whichever database the client asked for, and
+# auth_file holds only auth_user's own password, which pgBouncer needs before it
+# can run the lookup at all.
+auth_type = hba
+auth_hba_file = {{ pgbouncer_hba_file }}
+auth_file = /etc/pgbouncer/userlist.txt
+auth_user = {{ pgbouncer_auth_user }}
+auth_query = SELECT username, password FROM pgbouncer.get_auth($1)
+auth_dbname = postgres
+
+pool_mode = {{ pgbouncer_pool_mode }}
+max_client_conn = {{ pgbouncer_max_client_conn }}
+default_pool_size = {{ pgbouncer_default_pool_size }}
+{# Render unconditionally: pgBouncer >= 1.24 defaults to 200 when omitted, so #}
+{# a value of 0 must be written explicitly to disable prepared statements.   #}
+max_prepared_statements = {{ pgbouncer_max_prepared_statements }}
+
+# Parameters a client may ask for that the pooler accepts and then drops. Only
+# stops pgBouncer refusing the connection; it does not carry the value to the
+# backend. See pgbouncer_ignore_startup_parameters before adding to this.
+ignore_startup_parameters = {{ pgbouncer_ignore_startup_parameters }}
+
+# Client TLS, served from the certificate setup_pgbouncer staged from the
+# controller — the same bytes Postgres presents on its own port. Staged from
+# there rather than read out of PGDATA on the node, because on an HA replica
+# that copy arrives with Patroni's clone and may not exist yet when this role
+# runs. The default sslmode accepts TLS or cleartext, matching what the direct
+# endpoint accepts, so turning this on changes no existing client; set
+# pgbouncer_client_tls_sslmode to require to make TLS mandatory here. hostssl
+# and hostnossl rules in the pooler's own HBA file mean nothing unless this
+# is on.
+client_tls_sslmode = {{ pgbouncer_client_tls_sslmode }}
+{% if pgbouncer_client_tls_sslmode != 'disable' %}
+client_tls_cert_file = {{ pgbouncer_tls_cert_file }}
+client_tls_key_file = {{ pgbouncer_tls_key_file }}
+{% endif %}
+
+# pgBouncer -> local Postgres is a loopback connection; no TLS required.
+server_tls_sslmode = disable
+
+# The admin console is the one path that cannot use auth_query, so its users
+# must appear in auth_file — and auth_user is the only account that does. Naming
+# db_user here instead would advertise an account the pooler cannot authenticate,
+# and would put RELOAD / KILL / SHUTDOWN wherever the pooled endpoint reaches.
+admin_users = {{ pgbouncer_auth_user }}
+stats_users = {{ pgbouncer_auth_user }}
+
+# Both paths are the platform's own: RHEL's package owns /var/log/pgbouncer
+# and /run/pgbouncer, Debian's logs beside Postgres and keeps its pidfile in
+# /var/run/postgresql. Using anything else would need a directory and a
+# logrotate rule this role does not ship.
+logfile = {{ pgbouncer_log_file }}
+pidfile = {{ pgbouncer_pid_file }}

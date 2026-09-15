@@ -1,0 +1,11 @@
+---
+
+# pgEdge's pgBouncer build, from the pgEdge repo install_repos configures. Both
+# platforms currently ship 1.25.1. The collection needs at least 1.21, which is
+# where max_prepared_statements arrived — without it, transaction pooling breaks
+# every client that uses protocol-level prepared statements (see
+# pgbouncer_pool_mode in setup_pgbouncer). Note pgedge-enterprise-all pulls this
+# package in already, so pgbouncer_enabled gates configuration and the service,
+# not the install.
+
+pgbouncer_package: pgedge-pgbouncer

@@ -86,3 +86,79 @@ pgedge:
 A complete list of parameters is available in the
 [Configuration Reference](configuration.md).
 
+## Adding Connection Pooling
+
+Every node in the cluster can also run a pgBouncer connection pooler, giving it
+a second endpoint on port 6432 beside PostgreSQL's own on 5432. Pooling is
+opt-in and cluster-wide, like `is_ha_cluster`: set `pgbouncer_enabled` on the
+`pgedge` group and every node gets a pooler in front of its own PostgreSQL.
+
+The following inventory pools all three nodes:
+
+```yaml
+all:
+  vars:
+    ansible_user: pgedge
+
+pgedge:
+  vars:
+    db_password: secret
+    pgbouncer_enabled: true
+    pgbouncer_auth_password: poolsecret
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 2
+    192.168.6.12:
+      zone: 3
+```
+
+`pgbouncer_auth_password` is the pooler's own PostgreSQL login. It is the one
+password the collection writes to disk, and the playbook refuses to run while
+it is still the default `secret`, so set it here or take it from a vault.
+
+Add the two pooling roles to the playbook, gated on `pgbouncer_enabled` so a
+cluster that does not pool is untouched:
+
+```yaml
+- hosts: pgedge
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - init_server
+    - install_repos
+    - install_pgedge
+    - role: install_pgbouncer
+      when: pgbouncer_enabled | bool
+    - setup_postgres
+    - role: setup_pgbouncer
+      when: pgbouncer_enabled | bool
+    - setup_pgedge
+```
+
+After the playbook completes, every node answers on two ports. Clients choose
+which one they want:
+
+```bash
+# Direct connection to PostgreSQL
+psql -h 192.168.6.10 -p 5432 -U admin demo
+
+# Pooled connection through pgBouncer
+psql -h 192.168.6.10 -p 6432 -U admin demo
+```
+
+The two endpoints are not interchangeable. They enforce separate client
+authentication rules, so a client that reaches one is not automatically
+admitted to the other, and nothing fails a pooled connection over to
+PostgreSQL. Out of the box the pooled endpoint admits the cluster's own nodes
+and local administration; name any other client in `pgbouncer_hba_rules` to
+admit it to the pooled endpoint, or in `custom_hba_rules` to admit it to both.
+
+Every PostgreSQL role works through the pooler, including roles created after
+deployment, because the pooler looks each client's stored credential up rather
+than keeping a password list of its own. See
+[Pooling Configuration](configuration/pooling.md) for the pool mode, TLS, and
+sizing parameters.

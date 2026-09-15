@@ -37,3 +37,13 @@ services:
     networks:
       pgedge-test:
         ipv4_address: 192.168.6.12
+
+  # A host in no deployment group, named by no pg_hba rule: the only vantage
+  # point from which the access gates are observable. Its address is well clear
+  # of the node range, and of 192.168.6.20 where the Consul overlay sits.
+  client:
+    <<: *common
+    hostname: client
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.30
