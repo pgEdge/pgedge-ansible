@@ -1,0 +1,16 @@
+---
+
+# The Patroni configuration file on its own, with nothing started or restarted.
+# Its own task file because a cluster recovery re-renders it before bringing
+# Patroni back up: the node being restored needs a bootstrap method the template
+# only emits for the node recovery_node names, and every other node needs the
+# same file without it.
+
+- name: Create configuration file for Patroni node
+  template:
+    src: templates/patroni.yml.j2
+    dest: "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    mode: 0600
+    owner: postgres
+    group: postgres
+  become: true

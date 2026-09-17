@@ -1,0 +1,37 @@
+---
+
+# Stop the whole cluster before anything is erased. This runs on every pgEdge
+# node in every zone, not only the zone being restored: the rebuilt zones are
+# refilled from the restored one across Spock, and a zone still accepting writes
+# while that happens has changes of its own that nothing will carry anywhere.
+#
+# Both services are disabled as well as stopped. The plays that follow bring
+# each node back deliberately and in order, and a node that restarted itself
+# partway through -- a reboot, a watchdog -- would rejoin a cluster that is not
+# finished being assembled.
+#
+# Each is acted on only if systemd has a unit for it. A recovery is also how a
+# cluster is rebuilt onto replacement hardware, where the deployment stopped
+# before it created everything: on RHEL the Postgres unit file is written by
+# setup_postgres, so a node that never got that far has no unit to stop, and
+# asking systemd to stop one that does not exist is an error rather than a
+# no-op.
+
+- name: Populate service facts to see which units exist on this node
+  service_facts:
+
+- name: Stop and disable Patroni on every pgEdge node
+  systemd_service:
+    name: "{{ patroni_service_name }}"
+    state: stopped
+    enabled: false
+  become: true
+  when: patroni_service_name + '.service' in ansible_facts.services
+
+- name: Ensure Postgres is not running outside Patroni either
+  systemd_service:
+    name: "{{ pg_service_name }}"
+    state: stopped
+    enabled: false
+  become: true
+  when: pg_service_name + '.service' in ansible_facts.services

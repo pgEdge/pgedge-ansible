@@ -91,6 +91,7 @@ trap cleanup EXIT
 # deploy, in particular a cluster with pgbouncer_enabled unset.
 echo "==> Step 0: Checking rendered templates..."
 python3 "$SCRIPT_DIR/render/check-haproxy.py"
+python3 "$SCRIPT_DIR/render/check-patroni.py"
 
 # Step 1: Generate SSH keypair and copy to Docker build context
 echo "==> Step 1: Ensuring SSH keypair exists..."

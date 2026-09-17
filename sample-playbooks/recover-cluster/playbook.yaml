@@ -1,0 +1,181 @@
+# Rebuild a pgEdge cluster from a pgBackRest repository.
+#
+# This is an intervention, not a deployment. It assumes the cluster already
+# exists, has been running long enough to have backups worth restoring, and has
+# lost its data -- or has data in it that should never have been there. It stops
+# Patroni on every pgEdge node, erases every data directory in the cluster, and
+# rebuilds the whole cluster from the backup repository of a single zone.
+#
+# Nothing it erases can be recovered from the cluster afterwards. Read
+# docs/recovery.md before running it, and run it with:
+#
+#   ansible-playbook playbook.yaml -i inventory.yaml \
+#     -e recovery_node=192.168.6.10 \
+#     -e recovery_confirm=true
+#
+# Add a point-in-time target to restore to a moment rather than to the end of
+# the archive:
+#
+#     -e recovery_target_type=time \
+#     -e 'recovery_target=2026-09-15 14:30:00+00'
+#
+# Only one zone is restored from its repository. Every other zone is rebuilt
+# empty and refilled across Spock from the restored one, because each zone's
+# repository describes an independent physical cluster restored to an
+# independent moment, and zones restored separately have no common position to
+# replicate forward from. Restoring one zone and copying it is what makes every
+# zone start from the same state.
+#
+# CHECK the README for how these roles work
+---
+
+# Gather facts for every host in the inventory before anything else runs.
+#
+# The Patroni configuration template builds its HBA rules from the addresses of
+# this zone's proxies and the cluster's backup servers, read out of hostvars.
+# Those are facts, and a fact exists only for a host some play has gathered it
+# on. Every other play here is 'pgedge', so without this one the template
+# renders against a proxy that no play has touched and fails with "object of
+# type 'HostVarsVars' has no attribute 'ansible_default_ipv4'" -- on the
+# restored node, after the cluster has already been erased. The deployment
+# playbook gets this for free by opening with init_server on 'all'.
+#
+# It doubles as a reachability check across the whole inventory, which is worth
+# having before a destructive operation: a backup server that cannot be reached
+# is one the rebuilt zones cannot archive to, and this is the last moment that
+# is cheap to discover.
+#
+# Deliberately no 'become' here. These facts include the account Ansible logs in
+# as, which role_config derives the backup repository's owner and path from, and
+# gathering them under become records root instead.
+
+- hosts: all
+  any_errors_fatal: true
+  gather_facts: true
+
+  tasks:
+  - name: Confirm every host in the inventory is reachable
+    ping:
+
+# Everything is checked before anything is touched, and then the whole cluster
+# is stopped, removed from the Patroni configuration store, and erased. The
+# store matters as much as the data directory: a node whose data directory is
+# empty but whose cluster is still registered never reaches a bootstrap method
+# at all, it waits for a leader that is not coming.
+#
+# Every step below is applied to every pgEdge node, and each decides for itself
+# which hosts it concerns. None of these conditions can be written here: they
+# read role variables, and an include_role does not export those to the play.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: recover_cluster
+      tasks_from: validate
+
+  - include_role:
+      name: recover_cluster
+      tasks_from: quiesce
+
+  # Only when the store itself is the problem. Skipped by default, and when it
+  # does run, clear_dcs has nothing left to remove and skips itself.
+  - include_role:
+      name: recover_cluster
+      tasks_from: reset_dcs
+    when: recovery_reset_dcs | default(false) | bool
+
+  - include_role:
+      name: recover_cluster
+      tasks_from: clear_dcs
+
+  - include_role:
+      name: recover_cluster
+      tasks_from: wipe_data
+
+# Restore the one node the rest of the cluster is rebuilt from, then strip the
+# replication metadata it came back with. That metadata describes zones that are
+# about to be rebuilt from nothing, and a subscription that resumes against it
+# acknowledges changes it never applied.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: recover_cluster
+      tasks_from: restore_leader
+
+  - include_role:
+      name: recover_cluster
+      tasks_from: clean_spock
+
+# Rebuild the remaining zones' leaders as ordinary empty clusters, then refill
+# each of them from the restored zone. The refill is the only subscription in
+# the collection that copies anything, and it has to finish before the rest of
+# the mesh is built: every other subscription is created on the understanding
+# that both ends already hold the same data.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: recover_cluster
+      tasks_from: rebuild_zone
+
+  - include_role:
+      name: recover_cluster
+      tasks_from: rehydrate
+
+# With every zone holding the same data, the rest of the mesh is what an
+# ordinary deployment builds: setup_pgedge fills in every subscription that does
+# not exist yet, and finds the ones the step above already created. Then the
+# replicas, each rebuilding from its own zone's leader.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: setup_pgedge
+
+  - include_role:
+      name: recover_cluster
+      tasks_from: rebuild_replicas
+
+# The repository is untouched by everything above: this playbook restores from
+# it and never writes to it. Running finalize_backrest afterwards re-establishes the
+# backup schedule on the rebuilt nodes and takes a backup only if the repository
+# has none, so the recovery point the cluster was just restored from is left
+# where it is.
+
+- hosts: pgedge:backup
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  # Each rebuilt zone carries a system identifier its stanza has never seen, so
+  # PgBackRest would refuse to archive there until the stanza is told about it.
+  # The restored zone needs nothing: it is the same cluster the backups came
+  # from.
+  - include_role:
+      name: recover_cluster
+      tasks_from: upgrade_stanza
+
+  - include_role:
+      name: finalize_backrest

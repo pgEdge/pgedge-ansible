@@ -1,0 +1,127 @@
+---
+
+# Wiping the data directory is not enough on its own. Patroni records in the
+# configuration store that this cluster has been initialized, and a node whose
+# data directory is empty but whose cluster is still initialized does not
+# bootstrap: it looks for a leader to clone from, finds none, and retries
+# forever. The bootstrap method in the template is never reached. So the
+# cluster has to be removed from the store first.
+#
+# Once per zone, from the zone's first node, since a zone's Patroni cluster is
+# one object in one store however many members it has.
+#
+# Gated here rather than in the playbook. first_node_in_zone is a role
+# variable, and an include_role does not export its variables to the play
+# that included it, so a condition written there would reference something
+# that does not exist. Skipped entirely when the store is being rebuilt from
+# nothing, which removes these keys by removing everything.
+
+- block:
+  - name: Check whether this zone's cluster is still in the configuration store
+    command:
+      cmd: "{{ patronictl_cmd }} list -f json {{ patroni_scope }}"
+    register: dcs_before
+    changed_when: false
+    check_mode: false
+    failed_when: false
+    become: true
+    become_user: postgres
+
+  # A store that cannot be read is not a store with no cluster in it, and the
+  # difference decides whether the next play may erase every data directory in
+  # the cluster. Treating an unreachable store as an empty one would wipe the
+  # cluster and then leave Patroni waiting forever for a leader whose key is
+  # still sitting there.
+  #
+  # Judged on whether the output parses, not on the exit code. A cluster that is
+  # not in the store is the ordinary state on a second attempt -- the previous
+  # one removed it -- and an exit code that treated that as unreadable would
+  # block every retry after the first. patronictl prints a JSON list when it
+  # reached the store, including the empty list for a cluster that is not there,
+  # and prints nothing parseable when it could not.
+
+  - name: Record what the store reported before any removal
+    set_fact:
+      dcs_before_readable: >-
+        {{ (dcs_before.stdout | trim) | length > 0 and
+           (dcs_before.stdout | trim)[0] == '[' }}
+
+  - name: Ensure the configuration store could actually be read
+    assert:
+      that: dcs_before_readable | bool
+      fail_msg: >-
+        Could not read the Patroni configuration store for zone {{ zone }}.
+        patronictl exited {{ dcs_before.rc }} and produced nothing that parses:
+        {{ dcs_before.stderr | default('') | trim }}. Nothing has been erased.
+        A store that cannot be read is not a store with no cluster in it, so
+        this stops rather than wiping the cluster and leaving Patroni to wait
+        for a leader whose key is still there. Fix the store and run again, or
+        -- if the store itself is what is broken -- re-run with
+        -e recovery_reset_dcs=true to rebuild it from nothing.
+
+  # patronictl has no unattended mode for this. It asks for the cluster name, then
+  # for an exact phrase, and then -- if the store still shows a leader -- for the
+  # leader's name; the answers are fed in the order it asks for them, and the
+  # third goes unread when there is no leader. The verification below is what
+  # makes that safe to rely on: if a future release asks something else, the
+  # removal does not happen and the play stops here rather than carrying on to
+  # erase data directories the cluster would refuse to rebuild.
+
+  - name: Remove this zone's cluster from the configuration store
+    shell:
+      cmd: >-
+        printf '%s\n%s\n%s\n'
+        '{{ patroni_scope }}' 'Yes I am aware' '{{ ansible_hostname }}' |
+        {{ patronictl_cmd }} remove {{ patroni_scope }}
+    register: dcs_removal
+    failed_when: false
+    changed_when: dcs_removal.rc == 0
+    become: true
+    become_user: postgres
+    when: dcs_before_readable | bool and
+          (dcs_before.stdout | from_json) | length > 0
+
+  - name: Confirm the configuration store no longer holds this zone's cluster
+    command:
+      cmd: "{{ patronictl_cmd }} list -f json {{ patroni_scope }}"
+    register: dcs_after
+    changed_when: false
+    check_mode: false
+    failed_when: false
+    become: true
+    become_user: postgres
+
+  - name: Record what the store reports now
+    set_fact:
+      dcs_after_readable: >-
+        {{ (dcs_after.stdout | trim) | length > 0 and
+           (dcs_after.stdout | trim)[0] == '[' }}
+
+  - name: Ensure the cluster was actually removed before anything is erased
+    assert:
+      that:
+      - dcs_after_readable | bool
+      - dcs_remaining | length == 0
+      fail_msg: >-
+        Zone {{ zone }} still has {{ dcs_remaining | length }} member(s)
+        registered in the Patroni configuration store under scope
+        {{ patroni_scope }}, or the store stopped answering
+        (patronictl exited {{ dcs_after.rc }} with no parseable output). Either
+        way the cluster was not
+        provably removed and a restored node would never reach its bootstrap
+        method. patronictl reported:
+        {{ dcs_removal.stdout | default('') }}
+        {{ dcs_removal.stderr | default('') }}
+        Remove the cluster by hand -- patronictl -c
+        {{ patroni_config_dir }}/{{ patroni_config_file }} remove
+        {{ patroni_scope }} -- and run this playbook again, or re-run with
+        -e recovery_reset_dcs=true to rebuild the store from nothing. Nothing
+        has been erased yet.
+    vars:
+      dcs_remaining: >-
+        {{ (dcs_after.stdout | from_json) if dcs_after_readable | bool
+           else [] }}
+
+  when:
+  - inventory_hostname == first_node_in_zone
+  - not recovery_reset_dcs | bool

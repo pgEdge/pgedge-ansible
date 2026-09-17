@@ -1,0 +1,20 @@
+---
+
+# This role has no single entry point on purpose. A recovery is a sequence of
+# steps that have to happen on different hosts in a fixed order, with plays
+# between them -- every node stopped before any node is erased, one node
+# restored and cleaned before any other zone is rebuilt, every zone rebuilt
+# before the mesh is rewired. A role applied the ordinary way runs all of its
+# tasks on all of the play's hosts, which is the one thing that cannot happen
+# here.
+#
+# See sample-playbooks/recover-cluster/playbook.yaml for the order, and
+# docs/recovery.md for what each step is for.
+
+- name: Explain that this role is driven a step at a time
+  fail:
+    msg: >-
+      recover_cluster is applied one task file at a time rather than as a whole
+      role, because its steps run on different hosts in a fixed order. Use the
+      recovery playbook in sample-playbooks/recover-cluster/ rather than adding
+      this role to a playbook's role list. See docs/recovery.md.

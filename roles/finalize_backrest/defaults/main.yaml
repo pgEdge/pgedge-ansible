@@ -1,0 +1,15 @@
+---
+
+# The backup schedule, which this role is the only reader of: it installs the
+# cron entries and nothing else consults them. It lives here rather than in
+# role_config for the reason role_config's own defaults give -- only settings
+# more than one role reads belong there -- and rather than in setup_backrest,
+# where it used to live, because a role's defaults are invisible to every other
+# role. set_cron.yaml moved here and its defaults did not, so the schedule was
+# undefined the first time a backup server reached this role.
+#
+# The retention counts stay with setup_backrest, which renders them into
+# pgbackrest.conf and is their only reader in the same way.
+
+full_backup_schedule: "10 0 * * 0"
+diff_backup_schedule: "10 0 * * 1-6"

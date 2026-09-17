@@ -1,0 +1,57 @@
+---
+
+- name: Ensure the backup user exists and can reach this cluster
+  include_tasks: add_backup_user.yaml
+
+# In SSH mode the repository lives on the backup server, which drives the stanza
+# and the first backup itself. A client only does this work when there is no
+# server to do it, which is every S3 repository.
+
+- name: Read the repository's current state
+  include_tasks: repo_state.yaml
+  vars:
+    os_user: postgres
+  when:
+  - backup_type != 'ssh'
+  - inventory_hostname == first_node_in_zone
+
+- name: Ensure the stanza exists
+  include_tasks: stanza_create.yaml
+  vars:
+    os_user: postgres
+  when:
+  - backup_type != 'ssh'
+  - inventory_hostname == first_node_in_zone
+
+# Bind Postgres to PgBackRest through the archive and restore commands. Only a
+# non-HA cluster needs this: an HA cluster gets both from the Patroni
+# configuration template, which is the only place they can live and survive a
+# recovery. They are set after the stanza exists so that the first archive
+# attempt has somewhere to go, and before the first backup, which cannot
+# complete until WAL archiving actually works.
+
+- name: Point Postgres at the repository
+  include_tasks: config_postgres.yaml
+  when: not is_ha_cluster
+
+- name: Take the bootstrap backup if the repository has none
+  include_tasks: first_backup.yaml
+  vars:
+    os_user: postgres
+  when:
+  - backup_type != 'ssh'
+  - inventory_hostname == first_node_in_zone
+
+# If the bootstrap backup succeeds, it's safe to set up automated backups.
+# Standby servers will simply fail to execute the cron jobs.
+#
+# Note: This doesn't account for clusters which want to backup from standby
+# nodes, but we'll consider that when / if requested since it greatly
+# complicates scheduling. A potential solution would be to _force_ a backup
+# server and use a secondary synchronization (cloud) repository.
+
+- name: Schedule the recurring backups
+  include_tasks: set_cron.yaml
+  vars:
+    os_user: postgres
+  when: backup_type != 'ssh'

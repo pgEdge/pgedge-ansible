@@ -1,0 +1,93 @@
+---
+
+# Put an inventory-supplied certificate authority where the certificate tasks
+# expect to find one, before any of them look.
+#
+# The authority that signs etcd's server and peer certificates and every node's
+# Patroni client certificate is generated once, on the controller, into a
+# directory Ansible resolves against the playbook's own location -- and it is
+# gitignored, because it holds a private key. Nothing regenerates it: setup_etcd
+# creates it, and setup_etcd skips itself entirely once the etcd data directory
+# exists. So on a live cluster the authority cannot be recreated, and a
+# controller that has lost that directory can no longer add a replica, rebuild a
+# node, or re-run the deployment. setup_patroni fails outright, with "The CA
+# certificate file tls/etcd/ca.crt does not exist".
+#
+# Supplying it from the inventory puts it where every other secret this
+# collection needs already lives -- an Ansible Vault variable beside db_password
+# and the rest -- and leaves the staging directory as a cache rather than the
+# only copy.
+#
+# Backwards compatible by construction: with neither variable set this does
+# nothing at all, and the generation that follows behaves exactly as it always
+# has, creating an authority when there is none and reusing one when there is.
+
+- name: Ensure the certificate authority is supplied as a pair or not at all
+  assert:
+    that: (etcd_ca_cert | default('') | length > 0) ==
+          (etcd_ca_key | default('') | length > 0)
+    fail_msg: >-
+      etcd_ca_cert and etcd_ca_key must be set together. One without the other
+      cannot sign anything: the certificate is what the nodes trust and the key
+      is what signs for it.
+  run_once: true
+
+- name: Create the local TLS staging directory
+  file:
+    path: "tls/etcd"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  when: etcd_ca_cert | default('') | length > 0
+
+- name: Check whether an authority is already staged here
+  stat:
+    path: "tls/etcd/ca.crt"
+  register: staged_ca
+  delegate_to: localhost
+  run_once: true
+  when: etcd_ca_cert | default('') | length > 0
+
+# Replacing a staged authority with a different one is how a working cluster
+# gets broken: setup_patroni would sign each node's client certificate against
+# the new authority and push it, while the running etcd still trusts only the
+# old one, and no node could reach the store afterwards. An authority that
+# matches what is already there is no change at all, so only a genuine mismatch
+# stops here.
+
+- name: Ensure the supplied authority is the one already in use
+  assert:
+    that: (lookup('file', 'tls/etcd/ca.crt') | trim) == (etcd_ca_cert | trim)
+    fail_msg: >-
+      etcd_ca_cert does not match the certificate authority already staged in
+      tls/etcd/ca.crt. Signing this cluster's certificates against a different
+      authority than its etcd trusts would leave no node able to reach the
+      configuration store. If the supplied authority is the correct one, remove
+      the staged copy and run again; if the cluster genuinely needs a new
+      authority, that is a rebuild of the store -- see recovery_reset_dcs in the
+      recovery documentation.
+  delegate_to: localhost
+  run_once: true
+  when:
+  - etcd_ca_cert | default('') | length > 0
+  - staged_ca.stat.exists | default(false)
+
+# Written with a trailing newline whatever the variable carries, so a supplied
+# authority and a generated one are byte-identical on disk and the generation
+# tasks that follow see no reason to touch either.
+
+- name: Stage the supplied certificate authority
+  copy:
+    content: "{{ item.pem | trim }}\n"
+    dest: "tls/etcd/{{ item.name }}"
+    mode: "{{ item.mode }}"
+  loop:
+  - { name: ca.crt, pem: "{{ etcd_ca_cert | default('') }}", mode: "0644" }
+  - { name: ca.key, pem: "{{ etcd_ca_key | default('') }}", mode: "0600" }
+  loop_control:
+    label: "tls/etcd/{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  when: etcd_ca_cert | default('') | length > 0

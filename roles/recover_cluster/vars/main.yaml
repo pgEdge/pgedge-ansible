@@ -1,0 +1,51 @@
+---
+
+# The zone whose repository the cluster is rebuilt from. Everything else is
+# derived from it: its nodes are restored, and every other zone is rebuilt empty
+# and refilled across Spock rather than restored from a repository of its own.
+#
+# Guarded against an unset recovery_node so that the validation task can report
+# the omission itself. An unguarded hostvars lookup fails while Ansible is
+# gathering variables, well before any task runs, and says only that a key is
+# missing.
+
+recovery_zone: >-
+  {{ hostvars[recovery_node].zone
+     if recovery_node in (groups['pgedge'] | default([])) else '' }}
+
+# Where a rebuilt zone connects to reach the restored one, in the same order of
+# preference setup_pgedge uses for every other subscription: the node's own
+# proxy_node, then the zone's first HAProxy, then the node itself. A recovery
+# has no reason to differ, and a subscription created against a different
+# endpoint than the one the cluster normally uses would be quietly wrong.
+
+# The first pgEdge node of the restored zone, computed from the inventory rather
+# than read out of that node's own variables. role_config's nodes_in_zone is a
+# role variable, and a role variable belongs to the host the role ran on -- it
+# never appears in another host's hostvars, so asking the restored node for its
+# own answer returns nothing at all. Only inventory variables cross hosts, and
+# zone is one.
+
+recovery_zone_first_node: >-
+  {{ groups['pgedge'] | map('extract', hostvars) |
+     selectattr('zone', 'eq', recovery_zone) |
+     map(attribute='inventory_hostname') | list | first | default('') }}
+
+recovery_proxy_node: >-
+  {{ hostvars[recovery_node].proxy_node | default('')
+     if recovery_node in (groups['pgedge'] | default([])) else '' }}
+
+recovery_proxies: >-
+  {{ groups['haproxy'] | default([]) | map('extract', hostvars) |
+     selectattr('zone', 'eq', recovery_zone) |
+     map(attribute='inventory_hostname') | list }}
+
+recovery_conn_target: >-
+  {{ recovery_proxy_node if recovery_proxy_node > ''
+     else recovery_proxies | first if recovery_proxies
+     else recovery_node }}
+
+# patronictl invocation, spelled once. Every task here that touches the
+# configuration store needs it and all of them run as the postgres user.
+
+patronictl_cmd: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"

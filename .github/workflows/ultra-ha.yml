@@ -29,6 +29,14 @@ on:
           - all
           - etcd3
           - consul
+      recover:
+        description: >-
+          Also rebuild the cluster from its backup repository and verify the
+          data came back. Roughly doubles the run: it erases every data
+          directory and restores one zone, refilling the rest across Spock.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   test:
@@ -66,7 +74,9 @@ jobs:
       # unset, whose haproxy.cfg must stay what it was before pooling
       # existed.
       - name: Check rendered templates
-        run: python3 tests/render/check-haproxy.py
+        run: |
+          python3 tests/render/check-haproxy.py
+          python3 tests/render/check-patroni.py
 
       - name: Generate SSH keypair
         run: |
@@ -144,6 +154,24 @@ jobs:
             -i tests/inventories/ultra-ha.yml \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
+
+      # Last, because it destroys the cluster the steps above just verified.
+      # The deployment is what produces the backups this restores from, so the
+      # two belong in one job against one set of containers rather than a job
+      # that would have to build a cluster of its own to have anything to
+      # recover.
+      #
+      # DEPLOY_PLAYBOOK_DIR points at the directory this workflow deployed
+      # from: setup_postgres stages its certificates from a path resolved
+      # against the playbook's own location, and the recovery reuses them when
+      # it rebuilds the zones it did not restore.
+      - name: Recover the cluster from its backup repository
+        if: ${{ inputs.recover }}
+        env:
+          DEPLOY_PLAYBOOK_DIR: tests/playbooks
+        run: |
+          tests/run-recovery-test.sh \
+            ultra-ha ${{ matrix.os }} ${{ matrix.dcs }}
 
       - name: Show container logs on failure
         if: failure()

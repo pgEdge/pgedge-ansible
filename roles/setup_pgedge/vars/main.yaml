@@ -10,13 +10,3 @@
 zone_list: >
     {{ groups['pgedge'] | map('extract', hostvars) |
        map(attribute='zone', default='') | unique }}
-
-# This variable serves several purposes:
-# - Sets the proxy to any user-specified target.
-# - Otherwise uses the first known haproxy member in this zone.
-# - Otherwise ensures a subscription target even when there are no proxies.
-
-subscribe_target: >-
-  {{ proxy_node if proxy_node > '' 
-     else proxies_in_zone | first if proxies_in_zone
-     else first_node_in_zone }}

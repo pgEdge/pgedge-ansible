@@ -1,11 +1,11 @@
 ---
 
-backup_repo_cipher: "{{ lookup('password', '/dev/null', length=20, seed=('pgedge' + cluster_name + '-' + zone | string)) }}"
-backup_repo_cipher_type: aes-256-cbc
-
 backup_repo_params: {}
+
+# Retention, which this role renders into pgbackrest.conf. The backup schedule
+# that used to sit beside these now belongs to finalize_backrest, which installs
+# the cron entries: a role's defaults are visible only to that role, so the
+# schedule has to live with the tasks that read it.
 
 full_backup_count: 1
 diff_backup_count: 6
-full_backup_schedule: "10 0 * * 0"
-diff_backup_schedule: "10 0 * * 1-6"

@@ -1,0 +1,27 @@
+---
+
+# Ask the repository what this stanza already holds. Every decision below reads
+# this, so the command is deliberately allowed to fail the play: the expensive
+# mistake is concluding "no backups here" from a repository that could not be
+# read, because a moment of SSH trouble or a mistyped S3 credential would then
+# expire a good backup. A repository that has never been written reports an
+# empty list rather than an error, so a genuine first run still passes.
+
+- name: Ask the repository what this stanza already holds
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - "--output=json"
+    - info
+  register: backrest_info
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ os_user }}"
+
+- name: Record what the repository reports for this stanza
+  set_fact:
+    backrest_stanza: >-
+      {{ backrest_info.stdout | from_json |
+         selectattr('name', 'eq', backup_stanza) | first | default({}) }}

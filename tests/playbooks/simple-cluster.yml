@@ -1,5 +1,26 @@
 ---
 
+# Gather facts for every host in the inventory before any role runs.
+#
+# Roles read other hosts' addresses out of hostvars to build access rules --
+# setup_pgbouncer's HBA file names this zone's proxies, setup_postgres names the
+# cluster's nodes -- and those addresses are facts, which exist only for a host
+# some play has gathered them on. This play is what guarantees they are all
+# there, whatever the inventory happens to contain: a cluster with no proxy
+# hosts renders the same either way, and one that gains them later does not
+# start failing on a loop over a host no play has touched.
+#
+# Deliberately no 'become'. These facts include the account Ansible logs in as,
+# which role_config derives the backup repository's owner and path from, and
+# gathering them under become records root instead.
+
+- hosts: all
+  any_errors_fatal: true
+
+  tasks:
+  - name: Confirm every host in the inventory is reachable
+    ping:
+
 - hosts: pgedge
   any_errors_fatal: true
 

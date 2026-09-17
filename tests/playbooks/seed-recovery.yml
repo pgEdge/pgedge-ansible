@@ -1,0 +1,188 @@
+---
+# Put data into the cluster that only a restore can bring back.
+#
+# The deployment's full backup is taken before this runs, so these rows exist
+# solely in WAL that PgBackRest archived afterwards. A recovery that replays the
+# archive returns them; a recovery that quietly rebuilt an empty cluster does
+# not, and the two are otherwise indistinguishable -- an empty cluster passes
+# every structural check in the verify suite.
+#
+# Written on one zone and left to replicate. That is deliberate: it also proves
+# the mesh was working before the recovery, so a missing row afterwards is the
+# recovery's doing and not a cluster that never replicated in the first place.
+
+- hosts: pgedge
+  become: true
+  any_errors_fatal: true
+
+  vars:
+    pg_port: 5432
+    marker_rows: 25
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+    seed_zone: "{{ groups['pgedge'] | map('extract', hostvars) | map(attribute='zone') | min }}"
+
+  tasks:
+  # A recovery that failed partway leaves exactly the state this refuses to run
+  # against: the zones it had not reached yet have empty data directories and
+  # Patroni disabled, while the restored one is up. Seeding that proves nothing
+  # -- the marker cannot replicate to a zone that is not there -- and the
+  # failure surfaces much later, as a wait that never finishes, looking like a
+  # problem with archiving rather than with the cluster.
+
+  - name: Check whether this zone's leader is accepting connections
+    become_user: postgres
+    command: psql -d postgres -t -A -c "SELECT 1"
+    register: zone_alive
+    changed_when: false
+    failed_when: false
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Ensure the cluster is whole before seeding anything
+    assert:
+      that: zone_alive.rc == 0
+      fail_msg: >-
+        Zone {{ zone }}'s leader {{ inventory_hostname }} is not accepting
+        connections, so there is no cluster here to seed. psql exited
+        {{ zone_alive.rc }}: {{ zone_alive.stderr | default('') | trim }}.
+        A recovery that failed partway leaves this: the zones it had not reached
+        yet are erased and their Patroni is disabled. That is not a state to
+        repair before retrying -- it is what the next attempt expects, and the
+        marker rows are already in archived WAL from when this cluster was
+        seeded. Run the recovery again rather than seeding; seeding is a
+        one-time step. tests/run-recovery-test.sh skips it by itself when there
+        is no cluster to seed.
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Create the marker table on the seed zone and fill it
+    become_user: postgres
+    command: >
+      psql -d demo -v ON_ERROR_STOP=1 -c
+      "CREATE TABLE IF NOT EXISTS recovery_marker (
+         id int PRIMARY KEY,
+         written_at timestamptz NOT NULL DEFAULT now(),
+         note text NOT NULL);
+       INSERT INTO recovery_marker (id, note)
+         SELECT g, 'written after the deployment backup'
+           FROM generate_series(1, {{ marker_rows }}) g
+         ON CONFLICT (id) DO NOTHING;"
+    when:
+    - inventory_hostname == first_node_in_zone
+    - zone == seed_zone
+
+  # Spock carries the table and its rows to the other zones. Waiting here means
+  # a later absence is the recovery's doing rather than a race with replication.
+
+  - name: Wait for the marker to reach every zone
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT count(*) FROM recovery_marker"
+    register: marker_count
+    changed_when: false
+    retries: 30
+    delay: 2
+    until: marker_count.stdout | trim | int == marker_rows | int
+    when: inventory_hostname == first_node_in_zone
+
+  # The rows are in WAL that has not necessarily been archived yet. Force the
+  # segment out and wait for PgBackRest to take it, because a restore can only
+  # replay what reached the repository.
+  #
+  # Which segment is recorded before the switch, because that is the one holding
+  # the rows. Waiting on last_archived_wal merely being non-null would be
+  # satisfied by anything the archiver shipped at any point in the cluster's
+  # life, including segments written before this table existed.
+
+  - name: Note which WAL segment carries the marker rows
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT pg_walfile_name(pg_current_wal_lsn())"
+    register: marker_wal
+    changed_when: false
+    when:
+    - inventory_hostname == first_node_in_zone
+    - zone == seed_zone
+
+  - name: Force the current WAL segment into the archive
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c "SELECT pg_switch_wal()"
+    changed_when: false
+    when:
+    - inventory_hostname == first_node_in_zone
+    - zone == seed_zone
+
+  - block:
+    - name: Wait for the archiver to ship that segment
+      become_user: postgres
+      command: >
+        psql -d postgres -t -A -F'|' -c
+        "SELECT COALESCE(last_archived_wal >=
+                         '{{ marker_wal.stdout | trim }}', false),
+                COALESCE(last_failed_time IS NULL
+                         OR last_archived_time > last_failed_time, false)
+           FROM pg_stat_archiver"
+      register: archived
+      changed_when: false
+      retries: 60
+      delay: 5
+      until: archived.stdout | trim == 't|t'
+
+    - name: Report what a recovery now has to bring back
+      debug:
+        msg: >-
+          Seeded {{ marker_rows }} marker rows on zone {{ zone }} and archived the
+          WAL that carries them. These rows are not in any backup: only WAL replay
+          can return them, so a recovery that produces an empty cluster fails
+          verify-recovery.yml rather than passing it.
+
+    rescue:
+    # Archiving that never completes is the failure this whole exercise is
+    # about, so it is worth reporting rather than leaving as a wait that ran
+    # out. What matters is whether Postgres is even trying -- archive_mode is
+    # a restart-level setting, so a cluster that came back with it off will
+    # never archive no matter how long anyone waits -- and what PgBackRest
+    # said when it last tried.
+    - name: Read why the archiver is not shipping
+      become_user: postgres
+      command: >
+        psql -d postgres -t -A -F'|' -c
+        "SELECT current_setting('archive_mode'),
+                current_setting('archive_command'),
+                archived_count, failed_count,
+                COALESCE(last_failed_wal, 'none'),
+                COALESCE(last_failed_time::text, 'never')
+           FROM pg_stat_archiver"
+      register: archiver_state
+      changed_when: false
+      failed_when: false
+
+    - name: Read the tail of PgBackRest's archive log
+      command: tail -n 15 /var/log/pgbackrest/{{ backup_stanza }}-archive-push.log
+      register: archive_log
+      changed_when: false
+      failed_when: false
+
+    - name: Report why the segment never reached the repository
+      fail:
+        msg: >-
+          WAL archiving on {{ inventory_hostname }} did not complete.
+          pg_stat_archiver reports
+          archive_mode|archive_command|archived|failed|last_failed_wal|last_failed_time
+          = {{ archiver_state.stdout | default('unavailable') | trim }}.
+          archive_mode off means Postgres is not trying at all, which no amount
+          of waiting fixes -- it is a restart-level setting, so a cluster that
+          came back without it needs restarting rather than waiting on.
+          A climbing failed count with archive_mode on means PgBackRest is
+          refusing: check the stanza matches this cluster and, in SSH mode, that
+          the backup server still authorises this node's key.
+          Last lines of {{ backup_stanza }}-archive-push.log:
+          {{ archive_log.stdout | default('log unavailable') }}
+
+    when:
+    - inventory_hostname == first_node_in_zone
+    - zone == seed_zone

@@ -39,12 +39,119 @@ pooled_nodes_in_zone: "{{ nodes_in_zone if cluster_is_pooled | bool else [] }}"
 
 first_node_in_zone: "{{ nodes_in_zone | first }}"
 
+# Where other zones reach this one to subscribe to it:
+# - Any proxy the node names for itself.
+# - Otherwise the first HAProxy member in this zone.
+# - Otherwise the zone's first node, so a cluster with no proxies still has a
+#   subscription target.
+#
+# Shared rather than owned by setup_pgedge, because a recovery subscribes to the
+# restored zone the same way and the two must agree on the endpoint.
+
+subscribe_target: >-
+  {{ proxy_node if proxy_node > ''
+     else proxies_in_zone | first if proxies_in_zone
+     else first_node_in_zone }}
+
 spock_exception_behaviour: >-
   {{ exception_behaviour if exception_behaviour in (
        'discard', 'transdiscard', 'sub_disable'
      ) else 'transdiscard' }}
 
 backup_type: "{{ backup_repo_type if backup_repo_type in ('ssh', 's3') else 'ssh' }}"
+
+# The account Ansible logs in to these hosts as, which is what the backup
+# repository belongs to by default.
+#
+# ansible_user first, because it is a connection variable and says who Ansible
+# connects as. ansible_user_id is a *fact*, and a fact records who the setup
+# module ran as -- so a play that gathers facts under become records root, and
+# every host in that run then believes the repository belongs to root. Fact
+# caching spreads it: gathering is smart by default, so one play with
+# play-level become poisons the value for every later play in the same run.
+# PgBackRest refuses to run as root, which is the only reason this ever
+# surfaces rather than silently building a repository in /home/root.
+#
+# ansible_user is undefined when neither the inventory nor remote_user names a
+# user, so the fact remains the fallback -- no worse than before, and correct
+# wherever the login user is actually configured, which every inventory in this
+# collection does.
+
+connection_user: "{{ ansible_user | default(ansible_user_id) }}"
+
+# The pgBackRest stanza this zone reads and writes. Every zone keeps its own,
+# because a stanza describes one physical cluster and the zones are independent
+# ones. Derived here rather than repeated at each use: it names the directory a
+# recovery restores from, so a value that differs between the archive command
+# and the restore command is a cluster that cannot be recovered, and nothing
+# would say so until the day it mattered.
+
+backup_stanza: "pgedge-{{ cluster_name }}-{{ zone }}"
+
+# Whether PgBackRest encrypts the repository itself, as opposed to leaving it to
+# the storage underneath. "none" is PgBackRest's own spelling for the latter.
+# Read by the configuration template and by init_server's validation, which have
+# to agree: a repository configured to encrypt with no password is one
+# PgBackRest refuses to write, and a password supplied where nothing encrypts is
+# a false sense of one.
+
+backup_repo_encrypted: "{{ backup_repo_cipher_type != 'none' }}"
+
+# Whether this cluster has a backup repository to speak of, which decides
+# whether Postgres archives WAL to pgBackRest and whether a recovery is possible
+# at all. An S3 repository needs nothing but the setting, since the repository is
+# the object store; an SSH repository is only reachable if some host offers it,
+# which is backup_host or a member of the 'backup' group in this zone.
+#
+# setup_backrest gates its client configuration on this rather than on a backup
+# server being named, which is what it used to do -- and what made an S3
+# repository silently do nothing, since S3 mode has no server to name.
+
+backup_repo_configured: >-
+  {{ backup_type == 's3' or backup_host > '' or backups_in_zone | length > 0 }}
+
+# Whether this node's Patroni configuration carries a PgBackRest bootstrap
+# method. Exactly one node in a recovery does, and every other node keeps the
+# bootstrap it always had, because the other zones are meant to come back empty
+# and be refilled through Spock rather than restored from repositories of their
+# own. Each zone's repository is an independent physical cluster restored to an
+# independent moment, and a cluster whose zones were each restored separately
+# has no common point to replicate forward from.
+#
+# recovery_node is empty in every ordinary deployment, so this is false
+# everywhere and the section renders as it always did.
+
+restore_on_bootstrap: >-
+  {{ backup_repo_configured | bool and recovery_node == inventory_hostname }}
+
+replica_from_backup: >-
+  {{ patroni_replica_from_backup | bool and backup_repo_configured | bool }}
+
+# The restore PgBackRest performs when Patroni bootstraps from the repository.
+# Built as a list and joined so that an unset option contributes nothing rather
+# than an empty argument: Patroni splits this command with shlex, which is also
+# why a target value is quoted -- a timestamp contains a space, and an unquoted
+# one would reach pgbackrest as two arguments.
+#
+# --delta lets the restore write into a data directory that already has content.
+# The recovery wipes it first, so this costs nothing on the path it is written
+# for, and saves a manual restore from failing on a directory Patroni created.
+#
+# --target-action=promote leaves Postgres promoted at the target rather than
+# paused waiting for someone to notice, which is what lets Patroni take the
+# recovered cluster over as its leader. It does not apply to an immediate
+# target, which stops at the end of the backup with nothing to decide.
+
+recovery_restore_args: >-
+  {{ ['--stanza=' + backup_stanza, '--delta'] +
+     (['--set=' + recovery_backup_set] if recovery_backup_set > '' else []) +
+     (['--type=' + recovery_target_type] if recovery_target_type > '' else []) +
+     (['--target="' + recovery_target + '"'] if recovery_target > '' else []) +
+     (['--target-action=promote']
+      if recovery_target_type not in ('', 'immediate') else []) +
+     ['restore'] }}
+
+recovery_restore_command: "pgbackrest {{ recovery_restore_args | join(' ') }}"
 
 pg_service_name: >-
   {{ 

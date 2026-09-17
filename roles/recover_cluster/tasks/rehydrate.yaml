@@ -1,0 +1,100 @@
+
+# Refill a zone that was rebuilt empty, from the zone that was restored. This is
+# the step that makes the whole approach work: the rebuilt zones are not
+# restored from repositories of their own, because each zone's repository is an
+# independent physical cluster restored to an independent moment, and zones
+# restored separately have no common position to replicate forward from. One
+# zone is restored and the rest are copied from it, so every zone starts from
+# exactly the same state.
+#
+# Runs on the first node of each rebuilt zone, which is where setup_pgedge puts
+# a zone's Spock node.
+
+# Each rebuilt zone's first node, and never the restored zone's. Gated here
+# because first_node_in_zone and recovery_zone are role variables the
+# playbook cannot see.
+- block:
+  # The subscription below logs in to the restored zone as pgedge_user through
+  # the proxy, so that user's password file has to be in place first. This is
+  # setup_pgedge's own task file rather than a copy of it: the two write the same
+  # line, and a recovery that wrote a different one would work until the password
+  # changed.
+  - name: Ensure the pgEdge communication user can log in to the restored zone
+    include_role:
+      name: setup_pgedge
+      tasks_from: user_access
+
+  - name: Create this zone's Spock node
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: |-
+        DO $$
+        BEGIN
+          PERFORM FROM spock.node WHERE node_name = %(node_name)s;
+          IF NOT FOUND THEN
+            PERFORM spock.node_create (
+              node_name := %(node_name)s, dsn := %(dsn)s
+            );
+          END IF;
+        END; $$ LANGUAGE plpgsql;
+      named_args:
+        node_name: "edge{{ zone }}"
+        dsn: "host={{ subscribe_target }} user={{ pgedge_user }} dbname={{ item }} port={{ proxy_port }}"
+    loop: "{{ db_names }}"
+    become: true
+    become_user: postgres
+
+  # The one subscription in this collection that copies anything. Everywhere else
+  # a subscription is created between nodes that are both empty and only has to
+  # stream forward from the moment it exists, which is why setup_pgedge takes
+  # Spock's defaults and synchronizes nothing. Here the provider holds an entire
+  # restored database and the subscriber holds an empty one, so both the schema
+  # and the rows have to come across before streaming means anything.
+
+  - name: Subscribe to the restored zone and copy its schema and data
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: |
+        DO $$
+        BEGIN
+          PERFORM FROM spock.subscription WHERE sub_name = %(sub_name)s;
+          IF NOT FOUND THEN
+            PERFORM spock.sub_create(
+              subscription_name := %(sub_name)s,
+              provider_dsn := %(dsn)s,
+              synchronize_structure := true,
+              synchronize_data := true
+            );
+          END IF;
+        END; $$ LANGUAGE plpgsql;
+      named_args:
+        sub_name: "sub_n{{ zone }}_n{{ recovery_zone }}"
+        dsn: "host={{ recovery_conn_target }} user={{ pgedge_user }} dbname={{ item }} port={{ proxy_port }}"
+    loop: "{{ db_names }}"
+    become: true
+    become_user: postgres
+
+  # Wait here rather than at the end. Every remaining subscription in the cluster
+  # is created without copying anything, on the understanding that the zones
+  # already hold the same data -- which is only true once this copy has finished.
+
+  - name: Wait for this zone to finish copying the restored zone
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT spock.sub_wait_for_sync(subscription_name := %(sub_name)s)
+      named_args:
+        sub_name: "sub_n{{ zone }}_n{{ recovery_zone }}"
+    loop: "{{ db_names }}"
+    become: true
+    become_user: postgres
+
+  when:
+  - inventory_hostname == first_node_in_zone
+  - zone != recovery_zone

@@ -1,0 +1,200 @@
+---
+# Verify a cluster that was rebuilt from its backup repository.
+#
+# The question this answers is the one no structural check can: did the data
+# come back? An empty cluster satisfies every other assertion in the suite --
+# Patroni has a leader, Spock has a mesh, the repository has a stanza -- so the
+# marker rows seeded before the recovery are what separates a restore from a
+# rebuild. They exist only in archived WAL, never in a backup.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    pg_port: 5432
+    marker_rows: 25
+    zone_count: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='zone') | unique | list | length }}
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+    patroni_svc: >-
+      {{ 'patroni@17-demo' if ansible_os_family == 'Debian' else 'patroni' }}
+
+  tasks:
+  - name: Check Patroni is running on every node
+    command: systemctl is-active {{ patroni_svc }}
+    changed_when: false
+
+  - name: Determine whether this node is its zone's primary
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c "SELECT NOT pg_is_in_recovery()"
+    register: node_is_primary
+    changed_when: false
+
+  # The assertion the whole exercise exists for. On the restored zone these rows
+  # came back through WAL replay; on every other zone they arrived across Spock,
+  # because those zones were rebuilt empty on purpose. Both paths have to work
+  # or the recovery only looked successful.
+
+  - name: Count the marker rows this zone came back with
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -c "SELECT count(*) FROM recovery_marker"
+    register: marker
+    changed_when: false
+    retries: 60
+    delay: 5
+    until: marker.stdout | trim | int == marker_rows | int
+    when: node_is_primary.stdout | trim == 't'
+
+  - name: Assert the recovery returned the data rather than an empty cluster
+    assert:
+      that: marker.stdout | trim | int == marker_rows | int
+      fail_msg: >-
+        Zone {{ zone }} has {{ marker.stdout | trim }} marker rows, expected
+        {{ marker_rows }}. These rows were written after the last backup and
+        exist only in archived WAL, so a restored zone gets them by replaying
+        the archive and a rebuilt zone gets them across Spock. Zero rows with
+        the table present means the zone was rebuilt but never refilled; no
+        table at all means the restore produced an empty cluster.
+      success_msg: >-
+        Zone {{ zone }} came back with all {{ marker_rows }} marker rows.
+    when: node_is_primary.stdout | trim == 't'
+
+  # The restored zone kept its own Spock node and had every other zone's entry
+  # stripped before the mesh was rebuilt; the rebuilt zones created theirs from
+  # nothing. Either way each zone should end with one node entry per zone and a
+  # subscription to every zone but itself. A count that is short means a
+  # subscription was never recreated; one that is over means stale metadata from
+  # before the recovery survived, which is the failure that silently diverges.
+
+  - name: Read this zone's Spock catalog
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -F'|' -c
+      "SELECT (SELECT count(*) FROM spock.node),
+              (SELECT count(*) FROM spock.subscription),
+              (SELECT count(*) FROM pg_replication_origin
+                WHERE left(roname, 3) <> 'pg_')"
+    register: spock_state
+    changed_when: false
+    when: node_is_primary.stdout | trim == 't'
+
+  - name: Assert the replication mesh was rebuilt exactly
+    vars:
+      counts: "{{ spock_state.stdout | trim | split('|') }}"
+    assert:
+      that:
+      - counts[0] | int == zone_count | int
+      - counts[1] | int == (zone_count | int) - 1
+      - counts[2] | int == (zone_count | int) - 1
+      fail_msg: >-
+        Zone {{ zone }} has {{ counts[0] }} Spock node entries,
+        {{ counts[1] }} subscriptions and {{ counts[2] }} replication origins.
+        Expected {{ zone_count }}, {{ (zone_count | int) - 1 }} and
+        {{ (zone_count | int) - 1 }}. Too many means metadata from before the
+        recovery survived, and a subscription that resumes against a stale
+        origin acknowledges changes it never applied.
+    when: node_is_primary.stdout | trim == 't'
+
+  # A rebuilt zone carries a system identifier its stanza never saw, so the
+  # recovery ran stanza-upgrade on it. If that did not take, archiving is
+  # refused and the zone finishes the recovery unable to back itself up.
+
+  - name: Read the archiver's history
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -F'|' -c
+      "SELECT archived_count,
+              CASE
+                WHEN last_archived_time IS NULL THEN 'never archived'
+                WHEN last_failed_time IS NULL THEN 'healthy'
+                WHEN last_archived_time > last_failed_time THEN 'healthy'
+                ELSE 'failing'
+              END
+         FROM pg_stat_archiver"
+    register: archiver
+    changed_when: false
+    retries: 12
+    delay: 5
+    until: (archiver.stdout | trim | split('|'))[1] == 'healthy'
+    when: node_is_primary.stdout | trim == 't'
+
+  - name: Assert the zone can archive again after the recovery
+    vars:
+      fields: "{{ archiver.stdout | trim | split('|') }}"
+    assert:
+      that: fields[1] == 'healthy'
+      fail_msg: >-
+        WAL archiving on zone {{ zone }} is {{ fields[1] }} after the recovery.
+        A zone rebuilt from an empty data directory carries a system identifier
+        its stanza has never seen, and PgBackRest refuses to archive until
+        stanza-upgrade records it. Check that the recovery's upgrade_stanza step
+        ran for this zone.
+    when: node_is_primary.stdout | trim == 't'
+
+# Every replica should have rebuilt from its own zone's leader.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+    patroni_cfg: >-
+      {{ '/etc/patroni/17-demo.yml' if ansible_os_family == 'Debian'
+         else '/etc/patroni/patroni.yml' }}
+
+  tasks:
+  # Waited for, not sampled. A replica rebuilds by cloning its zone's leader,
+  # and in a recovery that leader holds the whole rehydrated dataset rather than
+  # the nearly-empty one a fresh deployment starts from, so the clone takes real
+  # time. A single reading taken the moment the playbook finishes catches the
+  # zone mid-build and calls it broken.
+
+  - name: Wait for every node in the zone to come back
+    become_user: postgres
+    command: >
+      patronictl -c {{ patroni_cfg }} list 17-demo -f json
+    register: patroni_list
+    changed_when: false
+    failed_when: false
+    retries: 120
+    delay: 10
+    until: >-
+      patroni_list.rc == 0 and
+      (patroni_list.stdout | default('[]', true) | from_json |
+       selectattr('State', 'in', ['running', 'streaming']) | list | length)
+      == (nodes_in_zone | length)
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert every node in the zone came back
+    vars:
+      members: "{{ patroni_list.stdout | from_json }}"
+      running: >-
+        {{ members | selectattr('State', 'in', ['running', 'streaming']) | list }}
+    assert:
+      that:
+      - members | length == nodes_in_zone | length
+      - running | length == nodes_in_zone | length
+      - members | selectattr('Role', 'eq', 'Leader') | list | length == 1
+      fail_msg: >-
+        Zone {{ zone }} has {{ members | length }} Patroni members of
+        {{ nodes_in_zone | length }} expected, {{ running | length }} of them
+        running or streaming, after waiting twenty minutes. Members report:
+        {{ members | map(attribute='Host') | zip(members | map(attribute='State'))
+           | map('join', '=') | join(', ') }}.
+        A member stuck in "creating replica" is still cloning and needs longer;
+        one that is "stopped" or missing altogether means Patroni could not
+        rebuild it from the recovered leader -- check its journal.
+      success_msg: >-
+        Zone {{ zone }}: {{ running | length }} members running, one leader.
+    when: inventory_hostname == first_node_in_zone

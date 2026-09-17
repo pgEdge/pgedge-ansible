@@ -18,7 +18,25 @@ restapi:
 {{ dcs_params | to_nice_yaml(indent=2) | indent(2, first=true) }}
 
 bootstrap:
-{% if ansible_os_family == 'Debian' %}
+{% if restore_on_bootstrap | bool %}
+  # This node is the one a cluster recovery restores from the backup
+  # repository, so its bootstrap is a PgBackRest restore rather than an initdb.
+  # Patroni consults this section only when it is genuinely bootstrapping a
+  # cluster -- an empty data directory and no cluster in the configuration
+  # store -- which is why it can sit in the template of a running cluster
+  # without doing anything to it.
+  #
+  # no_params keeps Patroni from appending --scope and --datadir, which
+  # pgbackrest would reject; it reads the data directory from pg1-path in
+  # pgbackrest.conf instead. keep_existing_recovery_conf leaves the recovery
+  # settings pgbackrest writes into postgresql.auto.conf alone, which is what
+  # carries any point-in-time target through to Postgres.
+  method: pgbackrest
+  pgbackrest:
+    command: {{ recovery_restore_command | to_json }}
+    no_params: true
+    keep_existing_recovery_conf: true
+{% elif ansible_os_family == 'Debian' %}
   method: pg_createcluster
   pg_createcluster:
     command: /usr/share/patroni/pg_createcluster_patroni
@@ -44,7 +62,17 @@ bootstrap:
         ssl_key_file: "{{ pg_data }}/server.key"
         listen_addresses: "0.0.0.0"
         archive_mode: "on"
+{% if backup_repo_configured | bool %}
+        # Rendered here rather than patched into the configuration store after
+        # the fact. A patch lives only in the store, and a recovery removes the
+        # cluster from the store and bootstraps it again -- which silently put
+        # the placeholder below back and stopped a freshly recovered cluster
+        # from archiving anything at all.
+        archive_command: "pgbackrest --stanza={{ backup_stanza }} archive-push %p"
+        restore_command: "pgbackrest --stanza={{ backup_stanza }} archive-get %f %p"
+{% else %}
         archive_command: "/bin/true"
+{% endif %}
         TimeZone: "UTC"
         wal_level: "logical"
         max_worker_processes: 12
@@ -71,9 +99,26 @@ bootstrap:
       plugin: spock_output
 
 postgresql:
+  # Patroni walks this list in order and keeps the first method that succeeds,
+  # so the entries after the first are fallbacks. basebackup is Patroni's
+  # built-in and needs no configuration; it is named explicitly only where
+  # something precedes it.
+{% if replica_from_backup | bool %}
+  create_replica_methods:
+    - pgbackrest
 {% if ansible_os_family == 'Debian' %}
-  create_replica_method:
     - pg_clonecluster
+{% endif %}
+    - basebackup
+  pgbackrest:
+    command: pgbackrest --stanza={{ backup_stanza }} --delta restore
+    no_params: true
+    keep_data: true
+{% elif ansible_os_family == 'Debian' %}
+  create_replica_methods:
+    - pg_clonecluster
+{% endif %}
+{% if ansible_os_family == 'Debian' %}
   pg_clonecluster:
     command: /usr/share/patroni/pg_clonecluster_patroni
 {% endif %}

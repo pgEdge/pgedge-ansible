@@ -1,0 +1,296 @@
+
+# The restored node came back with the Spock catalog it had when the backup was
+# taken: a node entry for every zone, a subscription to each of them, and -- the
+# part that does the damage -- a replication origin per subscription recording
+# how far this node had applied from each of those zones.
+#
+# Every one of those zones is about to be rebuilt from an empty data directory,
+# so their LSNs start again from the beginning. An origin left in place claims
+# this node has already applied everything up to a position the rebuilt zone
+# will not reach for a long time, and the subscription that reuses it resumes
+# from there: the rebuilt zone's first weeks of changes are acknowledged without
+# ever being applied. Nothing reports it. The two zones simply disagree, and go
+# on disagreeing.
+#
+# So the restored node keeps its own Spock node and nothing else. The mesh is
+# built again from scratch once the other zones exist.
+
+# Only the node being restored, and gated here because the playbook cannot
+# see this role's variables.
+- block:
+  # What Spock calls these functions, and what arguments they take, is read from
+  # the catalog rather than assumed. Only sub_create and sub_wait_for_sync are
+  # proven by an ordinary deployment; everything below runs solely in a recovery,
+  # so a signature that differs in some Spock release would be discovered here, on
+  # a cluster that has just been erased. Printed either way, so a failure carries
+  # the signatures with it rather than needing a second run to find them.
+
+  - name: Read the Spock management functions this release provides
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ db_names | first }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT p.proname || '(' ||
+               pg_get_function_identity_arguments(p.oid) || ')' AS signature
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'spock'
+           AND p.proname IN ('sub_drop', 'sub_disable', 'node_drop')
+         ORDER BY p.proname, p.oid
+    register: spock_functions
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  - name: Show the signatures this node's Spock actually has
+    debug:
+      msg: "{{ spock_functions.query_result | map(attribute='signature') | list }}"
+
+  # Read the subscriptions, then drop them one at a time.
+  #
+  # Not a PL/pgSQL block, which is how this was first written and why it failed: a
+  # DO block is one transaction, and Spock's subscription management commits
+  # internally and talks to the provider, so it will not run inside one. Each call
+  # is its own statement with autocommit on, which also means a failure names the
+  # subscription it happened on rather than the whole loop.
+  #
+  # One positional argument, which is the only thing about these signatures worth
+  # relying on. The rest carry defaults, and naming them would be guessing at
+  # spellings that differ between releases.
+
+  - name: Read the subscriptions the restored node came back with
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: "SELECT sub_name FROM spock.subscription ORDER BY sub_name"
+    register: stale_subs
+    changed_when: false
+    loop: "{{ db_names }}"
+    become: true
+    become_user: postgres
+
+  # Disabling first stops the apply worker trying to reach a provider that is
+  # stopped, which every other zone is by now. Best-effort: if this release spells
+  # it differently, the drop below is what actually matters and reports for itself.
+
+  - name: Disable each subscription before dropping it
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item.0.item }}"
+      login_unix_socket: /var/run/postgresql
+      query: "SELECT spock.sub_disable(%(sub)s, true)"
+      named_args:
+        sub: "{{ item.1.sub_name }}"
+      autocommit: true
+    register: sub_disabled
+    failed_when: false
+    # Two shapes have to be filtered out before subelements sees them, and
+    # neither is an error.
+    #
+    # A loop expression is built before the block's `when` is applied, so this
+    # is evaluated on every host in the play, and on the ones that are not the
+    # restored node the query above was skipped and registered no query_result
+    # at all.
+    #
+    # And postgresql_query reports an empty result set as {} rather than [],
+    # so a database with nothing left to drop arrives as a mapping where
+    # subelements demands a list. That is the ordinary end state, not a
+    # failure: dropping a subscription can take its provider's node entry with
+    # it, leaving nothing for the node pass to do. A mapping is what tells the
+    # two apart, since a row list never is one.
+    loop: >-
+      {{ stale_subs.results | default([]) |
+         selectattr('query_result', 'defined') |
+         rejectattr('query_result', 'mapping') |
+         subelements('query_result') }}
+    loop_control:
+      label: "{{ item.0.item }}: {{ item.1.sub_name }}"
+    become: true
+    become_user: postgres
+
+  - name: Drop each subscription the restored node came back with
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item.0.item }}"
+      login_unix_socket: /var/run/postgresql
+      query: "SELECT spock.sub_drop(%(sub)s)"
+      named_args:
+        sub: "{{ item.1.sub_name }}"
+      autocommit: true
+    # Two shapes have to be filtered out before subelements sees them, and
+    # neither is an error.
+    #
+    # A loop expression is built before the block's `when` is applied, so this
+    # is evaluated on every host in the play, and on the ones that are not the
+    # restored node the query above was skipped and registered no query_result
+    # at all.
+    #
+    # And postgresql_query reports an empty result set as {} rather than [],
+    # so a database with nothing left to drop arrives as a mapping where
+    # subelements demands a list. That is the ordinary end state, not a
+    # failure: dropping a subscription can take its provider's node entry with
+    # it, leaving nothing for the node pass to do. A mapping is what tells the
+    # two apart, since a row list never is one.
+    loop: >-
+      {{ stale_subs.results | default([]) |
+         selectattr('query_result', 'defined') |
+         rejectattr('query_result', 'mapping') |
+         subelements('query_result') }}
+    loop_control:
+      label: "{{ item.0.item }}: {{ item.1.sub_name }}"
+    become: true
+    become_user: postgres
+
+  - name: Read the node entries belonging to the zones being rebuilt
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT node_name FROM spock.node
+         WHERE node_name <> %(keep)s ORDER BY node_name
+      named_args:
+        keep: "edge{{ recovery_zone }}"
+    register: stale_nodes
+    changed_when: false
+    loop: "{{ db_names }}"
+    become: true
+    become_user: postgres
+
+  - name: Drop each node entry belonging to a zone being rebuilt
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item.0.item }}"
+      login_unix_socket: /var/run/postgresql
+      query: "SELECT spock.node_drop(%(node)s)"
+      named_args:
+        node: "{{ item.1.node_name }}"
+      autocommit: true
+    # Two shapes have to be filtered out before subelements sees them, and
+    # neither is an error.
+    #
+    # A loop expression is built before the block's `when` is applied, so this
+    # is evaluated on every host in the play, and on the ones that are not the
+    # restored node the query above was skipped and registered no query_result
+    # at all.
+    #
+    # And postgresql_query reports an empty result set as {} rather than [],
+    # so a database with nothing left to drop arrives as a mapping where
+    # subelements demands a list. That is the ordinary end state, not a
+    # failure: dropping a subscription can take its provider's node entry with
+    # it, leaving nothing for the node pass to do. A mapping is what tells the
+    # two apart, since a row list never is one.
+    loop: >-
+      {{ stale_nodes.results | default([]) |
+         selectattr('query_result', 'defined') |
+         rejectattr('query_result', 'mapping') |
+         subelements('query_result') }}
+    loop_control:
+      label: "{{ item.0.item }}: {{ item.1.node_name }}"
+    become: true
+    become_user: postgres
+
+  # Dropping a subscription normally takes its origin with it. "Normally" is not
+  # good enough here, because the subscriptions are recreated under the same names
+  # and would adopt whatever origin is still sitting there. Anything left once
+  # every Spock subscription is gone is an orphan by definition.
+  #
+  # Origins whose names begin with pg_ belong to PostgreSQL's own logical
+  # replication, which this collection does not configure and has no business
+  # removing. Everything else in this database is Spock's.
+  #
+  # Matched with left() rather than a LIKE pattern. PostgreSQL's LIKE knows only
+  # % and _ and an escape character -- it has no bracket classes -- so the
+  # 'pg[_]%' this used to carry matched a literal "pg[", any character, "]",
+  # which is nothing at all, and would have dropped exactly the origins it was
+  # written to protect. left() also keeps a literal percent out of a query that
+  # carries a named parameter, which psycopg2 refuses to mix, and keeps a
+  # backslash escape out of a folded YAML scalar, which would not survive one.
+
+  - name: Drop replication origins the dropped subscriptions left behind
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT pg_replication_origin_drop(roname)
+          FROM pg_replication_origin
+         WHERE left(roname, 3) <> 'pg_'
+    loop: "{{ db_names }}"
+    become: true
+    become_user: postgres
+
+  # Verify rather than assume. Each of the statements above is a loop over a
+  # catalog that reports nothing when it removes nothing, so a drop that failed
+  # quietly looks exactly like a catalog that was already clean -- and the next
+  # play would wire the cluster back together on top of it.
+
+  - name: Check that nothing but this node's own Spock entry survived
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT (SELECT count(*) FROM spock.subscription) AS subscriptions,
+               (SELECT count(*) FROM spock.node
+                 WHERE node_name <> %(keep)s) AS foreign_nodes,
+               (SELECT count(*) FROM pg_replication_origin
+                 WHERE left(roname, 3) <> 'pg_') AS origins
+      named_args:
+        keep: "edge{{ recovery_zone }}"
+    register: spock_state
+    changed_when: false
+    loop: "{{ db_names }}"
+    become: true
+    become_user: postgres
+
+  # Filtering the loop above is safe only because that query cannot come back
+  # empty -- it is scalar subqueries, so it always returns exactly one row. This
+  # asserts that rather than trusting it: a database silently filtered out of
+  # its own verification would let stale metadata through the one check that
+  # exists to catch it.
+
+  - name: Ensure every database was actually verified
+    assert:
+      that: verified | length == db_names | length
+      fail_msg: >-
+        Only {{ verified | length }} of {{ db_names | length }} database(s)
+        returned a replication-metadata count on {{ inventory_hostname }}, so
+        the check below would pass without having looked at
+        {{ db_names | difference(verified) | join(', ') }}. Nothing has been
+        rewired yet.
+    vars:
+      verified: >-
+        {{ spock_state.results | default([]) |
+           selectattr('query_result', 'defined') |
+           rejectattr('query_result', 'mapping') |
+           map(attribute='item') | list }}
+
+  - name: Ensure the restored node carries no stale replication metadata
+    assert:
+      that:
+      - leftovers.subscriptions | int == 0
+      - leftovers.foreign_nodes | int == 0
+      - leftovers.origins | int == 0
+      fail_msg: >-
+        Database {{ item.item }} on {{ inventory_hostname }} still has
+        {{ leftovers.subscriptions }} subscription(s),
+        {{ leftovers.foreign_nodes }} node entr(ies) for other zones and
+        {{ leftovers.origins }} replication origin(s) left from before the
+        restore. Rebuilding the cluster on top of those would let the recreated
+        subscriptions resume from positions the rebuilt zones never reach, and
+        the zones would silently diverge. Clear them by hand on this node before
+        continuing; nothing has been rewired yet.
+    vars:
+      leftovers: "{{ item.query_result | first }}"
+    loop: >-
+      {{ spock_state.results | default([]) |
+         selectattr('query_result', 'defined') |
+         rejectattr('query_result', 'mapping') | list }}
+    loop_control:
+      label: "{{ item.item }}"
+
+  when:
+  - inventory_hostname == recovery_node

@@ -1,0 +1,47 @@
+---
+
+# This role destroys every pgEdge data directory in the cluster before it
+# rebuilds anything, and the data it rebuilds from is whatever the repository
+# happens to hold. Nothing about an inventory says whether that is wanted, so
+# the playbook refuses to start until something says so explicitly. Pass it on
+# the command line -- -e recovery_confirm=true -- rather than writing it into an
+# inventory, where it would sit waiting for the next unrelated run.
+
+recovery_confirm: false
+
+# How long to wait for the restored node.
+#
+# Not a retry count. A restore reads a full backup out of the repository and
+# then replays every WAL segment between that backup and the recovery target,
+# so how long it takes is a property of the database, not of this playbook, and
+# any fixed number of attempts is wrong for some cluster. What can be judged
+# instead is whether it is still getting anywhere: the waiter watches PgBackRest's
+# restore log and the data directory's control file, and gives up only when
+# neither has moved for recovery_stall_minutes.
+#
+# So a restore that takes six hours succeeds untouched, and one that has wedged
+# is reported in fifteen minutes rather than after the whole budget drains.
+# recovery_max_hours is a backstop against a waiter that somehow never returns,
+# not an expected duration.
+
+recovery_stall_minutes: 15
+recovery_poll_seconds: 30
+recovery_max_hours: 24
+
+# Rebuild the distributed configuration store from nothing rather than removing
+# the cluster from it.
+#
+# Off by default, because removing one cluster from a working store is the
+# smaller operation and the one a recovery normally needs. Turn it on when the
+# store itself is the problem -- etcd that has lost quorum, a half-finished
+# recovery that left keys nobody can remove -- which is the case where the
+# ordinary path cannot get started at all. The collection only manages its own
+# per-zone etcd, so this applies to the etcd DCS types alone; an external store
+# has to be reset by whoever runs it.
+#
+# It regenerates etcd's TLS material and reissues every node's Patroni client
+# certificate to match, because a store rebuilt against a certificate authority
+# the nodes do not carry is one none of them can talk to. See docs/recovery.md
+# for why the recovery playbook needs the deployment's tls/ directory beside it.
+
+recovery_reset_dcs: false
