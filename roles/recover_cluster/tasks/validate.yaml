@@ -1,0 +1,83 @@
+---
+
+# A recovery is the one operation in this collection that destroys data it
+# cannot put back, so everything that can be checked is checked before the
+# first data directory is touched. All of these read the inventory as a whole
+# and resolve the same from any host, hence run_once -- with the exception of
+# the repository check, which asks each zone about its own.
+
+- name: Ensure the recovery was asked for explicitly
+  assert:
+    that:
+    - recovery_confirm | bool
+    fail_msg: >-
+      This playbook stops Patroni on every pgEdge node, erases every data
+      directory in the cluster, and rebuilds the cluster from the backup
+      repository of one zone. Nothing it removes can be recovered from the
+      cluster itself. Re-run with -e recovery_confirm=true once that is what
+      you mean to do.
+  run_once: true
+
+- name: Ensure a node to restore from the repository was named
+  assert:
+    that:
+    - recovery_node > ''
+    - recovery_node in (groups['pgedge'] | default([]))
+    fail_msg: >-
+      recovery_node must name the pgEdge node to restore from its backup
+      repository, as that node is spelled in the inventory. It is
+      "{{ recovery_node }}", which is not a member of the 'pgedge' group.
+  run_once: true
+
+# The zone's first node is the one Patroni bootstraps and the one setup_pgedge
+# creates the Spock node on, so a recovery that restored a different member of
+# the zone would restore a node nothing else in the collection addresses.
+
+- name: Ensure the node to restore is the first node in its zone
+  assert:
+    that:
+    - recovery_node == recovery_zone_first_node
+    fail_msg: >-
+      recovery_node is {{ recovery_node }}, but the first pgEdge node in zone
+      {{ recovery_zone }} is {{ recovery_zone_first_node }}. The collection
+      treats a zone's first node as the one Patroni bootstraps and the one
+      that carries the zone's Spock node, so it is the node a recovery has to
+      restore. The remaining nodes in the zone are rebuilt as replicas of it.
+  run_once: true
+
+- name: Ensure this is an HA cluster
+  assert:
+    that:
+    - is_ha_cluster | bool
+    fail_msg: >-
+      This playbook recovers a Patroni-managed cluster: it clears the Patroni
+      configuration store and lets Patroni bootstrap the restored node from the
+      repository. A cluster without Patroni has no such bootstrap and must be
+      restored with pgbackrest directly.
+  run_once: true
+
+# Asked of every zone rather than of the cluster, because the repository
+# settings can differ per zone and a zone with no repository is a zone this
+# playbook cannot rebuild replicas for or archive from afterwards.
+
+- name: Ensure every zone has a backup repository configured
+  assert:
+    that:
+    - backup_repo_configured | bool
+    fail_msg: >-
+      Zone {{ zone }} has no backup repository configured, so there is nothing
+      for {{ inventory_hostname }} to archive to once the cluster is back. Set
+      backup_repo_type to s3, or give the zone a host in the 'backup' group or
+      a backup_host, before recovering.
+
+- name: Ensure the point-in-time target is one PgBackRest accepts
+  assert:
+    that:
+    - recovery_target_type in ('', 'time', 'xid', 'lsn', 'name', 'immediate')
+    - recovery_target_type in ('', 'immediate') or recovery_target > ''
+    fail_msg: >-
+      recovery_target_type is "{{ recovery_target_type }}". It must be empty,
+      to restore everything the repository holds, or one of time, xid, lsn,
+      name or immediate. Every type but immediate also needs recovery_target
+      set to the value it stops at.
+  run_once: true

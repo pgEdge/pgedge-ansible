@@ -51,7 +51,9 @@ jobs:
       # unset, whose haproxy.cfg must stay what it was before pooling
       # existed.
       - name: Check rendered templates
-        run: python3 tests/render/check-haproxy.py
+        run: |
+          python3 tests/render/check-haproxy.py
+          python3 tests/render/check-patroni.py
 
       - name: Generate SSH keypair
         run: |

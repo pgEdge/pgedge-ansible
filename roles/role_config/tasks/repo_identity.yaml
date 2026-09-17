@@ -1,0 +1,136 @@
+---
+
+# Ask whether the backup repository already describes a different cluster than
+# the one on this node, and refuse if it does.
+#
+# A stanza describes one physical Postgres cluster, identified by the system
+# identifier initdb stamped into pg_control. Point a different cluster at it and
+# nothing good happens: archive-push is refused, the scheduled backups fail
+# nightly, and the repository's real recovery point sits there looking healthy
+# while nothing new is added to it. PgBackRest reports the mismatch itself, but
+# only at the moment of use, which is hours later and in a log nobody is
+# reading.
+#
+# There are two moments worth asking, and this file answers both:
+#
+# - Before setup_postgres initializes a data directory, where the answer is
+#   "this repository already holds a cluster and this node has none, so you
+#   meant to restore rather than to build". Refusing here costs nothing; the
+#   alternative is a full deployment that is thrown away.
+#
+# - Before finalize_backrest writes to the repository, where the answer is "this
+#   node is not the cluster these backups belong to". That one has to hold even
+#   when the first check could not run.
+#
+# repo_identity_required separates them. The early check only ever refuses, so
+# a repository it cannot read is a check it can skip -- which it must be, since
+# an SSH repository is not reachable from a pgEdge node until the backup server
+# has authorized its key, and that happens later in the deployment. The late
+# check gates a decision to write, so an unreadable repository there is fatal:
+# concluding "no backups here" from a repository that could not be read is how
+# a good backup gets expired.
+
+- name: Check whether this node has an initialized data directory
+  stat:
+    path: "{{ pg_data }}/global/pg_control"
+  register: repo_identity_pg_control
+  become: true
+
+- name: Ask the repository which cluster this stanza belongs to
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - "--output=json"
+    - info
+  register: repo_identity_info
+  changed_when: false
+  check_mode: false
+  failed_when:
+  - repo_identity_info.rc != 0
+  - repo_identity_required | default(true) | bool
+  become: true
+  become_user: postgres
+
+- name: Record what the repository reports for this stanza
+  set_fact:
+    repo_identity_stanza: >-
+      {{ (repo_identity_info.stdout | from_json |
+          selectattr('name', 'eq', backup_stanza) | first | default({}))
+         if repo_identity_info.rc == 0 else {} }}
+
+# PgBackRest keeps one db entry per history the stanza has held, and a
+# stanza-upgrade adds another rather than replacing it, so matching any of them
+# is the right test. A cluster rebuilt during a recovery is upgraded into its
+# stanza this way and matches on the entry that upgrade added.
+
+- name: Note which clusters the stanza has described and what it holds
+  set_fact:
+    repo_identity_ids: >-
+      {{ repo_identity_stanza.db | default([]) |
+         map(attribute='system-id') | map('string') | unique | list }}
+    repo_identity_backups: >-
+      {{ repo_identity_stanza.backup | default([]) | length }}
+
+# An empty data directory beside a repository holding backups is not a cluster
+# waiting to be built. Deploying over it produces an empty cluster that cannot
+# archive -- its new system identifier will not match the stanza -- and the
+# repository's recovery point stops advancing while the cluster looks fine.
+
+- name: Refuse to build a new cluster where the repository already holds one
+  fail:
+    msg: >-
+      Stanza {{ backup_stanza }} already holds {{ repo_identity_backups }}
+      backup(s), and {{ inventory_hostname }} has no data directory to go with
+      them. Deploying here would initialize an empty cluster whose system
+      identifier does not match the stanza, so it could never archive to this
+      repository and the backups would stop advancing while the cluster looked
+      healthy. Restore the cluster instead: see the recovery documentation for
+      the playbook that rebuilds a cluster from its repository. To deploy a
+      genuinely new cluster beside these backups, give it its own cluster_name
+      or zone so that it gets a stanza of its own.
+  when:
+  - not repo_identity_pg_control.stat.exists
+  - repo_identity_backups | int > 0
+
+- name: Read the system identifier this cluster was initialized with
+  command:
+    argv:
+    - "{{ pg_path }}/bin/pg_controldata"
+    - "-D"
+    - "{{ pg_data }}"
+  register: repo_identity_control_data
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: postgres
+  when: repo_identity_pg_control.stat.exists
+
+# An empty repository has no opinion about which cluster it belongs to, so a
+# genuine first deployment has nothing to compare and passes.
+
+- name: Ensure this cluster is the one the stanza already describes
+  assert:
+    that:
+    - repo_identity_ids | length == 0 or local_system_id in repo_identity_ids
+    fail_msg: >-
+      Stanza {{ backup_stanza }} describes a Postgres cluster with system
+      identifier {{ repo_identity_ids | join(' or ') }}, but
+      {{ inventory_hostname }} was initialized as {{ local_system_id }}. This
+      node is not the cluster the repository holds backups for, so archiving
+      would be refused and the repository's recovery point would silently stop
+      advancing. Either this inventory names a repository belonging to another
+      cluster -- give it its own cluster_name or zone -- or the data directory
+      was rebuilt and should have been restored instead. A cluster rebuilt
+      deliberately during a recovery is upgraded into its stanza by the
+      recovery playbook; see the recovery documentation.
+  vars:
+    # No backslash classes here on purpose. The pattern passes through YAML and
+    # then Jinja string parsing, and inside a folded scalar Jinja leaves a
+    # doubled backslash doubled, so a regex written that way matches nothing and
+    # says nothing about it. Splitting the line needs no pattern at all.
+    identifier_line: >-
+      {{ repo_identity_control_data.stdout_lines |
+         select('search', 'Database system identifier') | first | default('') }}
+    local_system_id: "{{ identifier_line.split(':') | last | trim }}"
+  when: repo_identity_pg_control.stat.exists

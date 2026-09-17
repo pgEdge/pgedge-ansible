@@ -1,0 +1,30 @@
+---
+
+# Bring back every node that is not its zone's leader. Each rebuilds from its
+# own zone's leader, which by this point is up and holding the recovered data,
+# so this is the ordinary Patroni replica path and nothing about it is specific
+# to a recovery.
+#
+# It is the last step only because it is the one with no deadline. A replica can
+# be brought back at any point after its zone has a leader, so this task file can
+# be applied on its own later -- a node that was down for the recovery, or one
+# whose hardware was replaced afterwards, rejoins the same way.
+
+- name: Rebuild this node as a replica of its zone's leader
+  include_role:
+    name: setup_patroni
+  when: inventory_hostname != first_node_in_zone
+
+# And then wait for it, which setup_patroni does not: its wait_for_primary asks
+# after the zone's first node and nothing else, so a replica waits for its
+# leader and returns while it is still cloning. Without this the recovery
+# reports a zone whole while two of its three nodes are still building, and
+# anything checking the cluster immediately afterwards sees a zone with one
+# member up.
+
+- name: Wait for this replica to finish building from its zone's leader
+  include_tasks: wait_for_node.yaml
+  vars:
+    wait_node_states: "running streaming"
+    wait_require_leader: false
+  when: inventory_hostname != first_node_in_zone

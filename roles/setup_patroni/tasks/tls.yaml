@@ -4,6 +4,16 @@
 # controller (where the etcd CA already lives), then distribute it to each
 # node under patroni_tls_dir, owned by the postgres user.
 
+# This role only ever signs against the authority, never creates one, so a
+# controller without it fails here rather than minting a certificate nothing
+# trusts. Staging an inventory-supplied authority first is what lets a cluster
+# be managed from a controller that has never held the generated copy.
+
+- name: Stage an inventory-supplied certificate authority
+  include_role:
+    name: role_config
+    tasks_from: stage_etcd_ca
+
 - name: Generate Patroni client private key for {{ inventory_hostname }}
   community.crypto.openssl_privatekey:
     path: "tls/etcd/{{ inventory_hostname }}-patroni.key"

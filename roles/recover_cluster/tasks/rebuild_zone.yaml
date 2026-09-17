@@ -1,0 +1,24 @@
+---
+
+# Rebuild the leader of every zone that is not the restored one, as an ordinary
+# empty cluster. This is the same pair of roles a first deployment applies, doing
+# the same thing: initialize a data directory, create the databases, users and
+# extensions, hand the node to Patroni. The zone is filled from the restored
+# zone afterwards, across Spock.
+#
+# Gated here rather than in the playbook because first_node_in_zone and
+# recovery_zone are role variables, and an include_role does not export its
+# variables to the play that included it.
+
+- block:
+  - name: Initialize this zone's leader as an empty Postgres cluster
+    include_role:
+      name: setup_postgres
+
+  - name: Hand this zone's leader to Patroni
+    include_role:
+      name: setup_patroni
+
+  when:
+  - inventory_hostname == first_node_in_zone
+  - zone != recovery_zone

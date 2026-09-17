@@ -1,0 +1,73 @@
+---
+
+# Rebuild the configuration store from nothing, for the case where removing one
+# cluster from it is not possible: etcd that has lost quorum, a half-finished
+# recovery that left keys nobody can remove, a store whose members disagree.
+# The ordinary path cannot even get started there, because it has to read the
+# store before it may erase anything.
+#
+# This is the "start again from the repository" option. Nothing of value lives
+# in the store: Patroni keeps the cluster's membership and leader lock there and
+# rebuilds both from the data directories and the bootstrap it is about to
+# perform. The backups are what the cluster is being rebuilt from, and they are
+# somewhere else entirely.
+#
+# Only the etcd the collection deploys itself. An external store -- Consul,
+# ZooKeeper -- belongs to whoever runs it, and this stops rather than guessing.
+
+- name: Ensure the store being reset is one this collection manages
+  assert:
+    that: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
+    fail_msg: >-
+      recovery_reset_dcs rebuilds the etcd cluster this collection deploys per
+      zone, and patroni_dcs.type is
+      '{{ patroni_dcs.type | default('etcd3') }}'. An externally managed store
+      has to be reset by whoever runs it; clear this cluster's keys under
+      {{ patroni_namespace }}{{ patroni_scope }} there, then run the recovery
+      again without this flag.
+  run_once: true
+
+- name: Stop etcd across the zone before any of it is erased
+  systemd_service:
+    name: etcd
+    state: stopped
+  become: true
+  when: "'etcd.service' in ansible_facts.services"
+
+# Every member of the zone's store has to go before any of them comes back. A
+# member restarted against peers that still hold the old cluster's data rejoins
+# the cluster this is meant to be replacing.
+
+- name: Erase this node's etcd data
+  file:
+    path: "{{ etcd_data_dir }}/postgresql"
+    state: absent
+  become: true
+
+# setup_etcd gates itself on that directory being absent, so with it gone the
+# role builds a new cluster: fresh certificates where none exist, a fresh
+# initial-cluster token, no keys at all.
+
+- name: Build the zone's etcd cluster again
+  include_role:
+    name: setup_etcd
+
+# Patroni authenticates to etcd with a client certificate. If setup_etcd minted
+# a new certificate authority just now -- which it does whenever the playbook is
+# run from a directory with no tls/etcd in it -- then every node's existing
+# Patroni certificate was signed by an authority the new store does not trust,
+# and no node could reach it. Reissuing them here keeps the two consistent
+# whichever authority ended up being used.
+
+- name: Reissue this node's Patroni client certificate against the store's CA
+  include_role:
+    name: setup_patroni
+    tasks_from: tls
+
+- name: Report that the store was rebuilt
+  debug:
+    msg: >-
+      The etcd cluster for zone {{ zone }} was rebuilt from nothing, so it holds
+      no Patroni keys and nothing needs removing from it. The cluster will be
+      restored into a store that has never seen it.
+  when: inventory_hostname == first_node_in_zone

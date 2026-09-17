@@ -3,11 +3,17 @@
 # Backup "clients" are any pgedge node. It may be that backups are not
 # configured on this cluster, in which case clients have nothing to do and
 # should be skipped.
+#
+# The gate is whether a repository exists at all, not whether a backup server
+# was named. An S3 repository names no server -- that is the point of it -- so
+# gating on one skipped the whole client configuration whenever S3 was the
+# repository type, leaving those nodes with no pgbackrest.conf and no archive
+# command, and nothing to say so until a restore was attempted.
 
 - include_tasks: setup_client.yaml
   when:
   - inventory_hostname in groups.pgedge
-  - backup_server > ''
+  - backup_repo_configured | bool
 
 # Backup servers have a much different setup process than client systems.
 # If the backup group is defined at all, we can assume a backup target exists.

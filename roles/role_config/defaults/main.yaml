@@ -100,10 +100,94 @@ backup_user: backrest
 backup_password: secret
 
 backup_repo_type: ssh
-backup_repo_user: "{{ ansible_user_id }}"
-backup_repo_path: "/home/{{ ansible_user_id }}"
+
+# How the backup repository is encrypted, and with what.
+#
+# The password has no default, and that is the point. It cannot be generated,
+# because a generated one has to satisfy two things at once that nothing can:
+# it must be the same on every run -- a repository whose cipher changed is a
+# repository that can no longer be read -- and it must not be guessable. This
+# parameter used to be derived from cluster_name and zone, which made it
+# perfectly reproducible and perfectly public: anyone who knew the cluster's
+# name could decrypt its backups, which is not encryption in any sense worth
+# having. Only a secret the operator keeps can be both.
+#
+# Set backup_repo_cipher_type to "none" where the storage layer encrypts
+# instead -- S3 bucket default encryption, SSE-KMS, an encrypted filesystem --
+# which is a legitimate arrangement and the one that permits key rotation,
+# since PgBackRest cannot rotate its own. No password is then needed or
+# emitted, and init_server stops asking for one.
+#
+# Upgrading a cluster deployed before this changed: its repository is encrypted
+# with the old derived value, and the old derivation is public, so the value can
+# be recovered and set explicitly. See docs/configuration/backup.md.
+
+backup_repo_cipher: ""
+backup_repo_cipher_type: aes-256-cbc
+# Both default to the account Ansible logs in as. See connection_user in this
+# role's vars for why that is not ansible_user_id: a fact gathered under become
+# reports root, and a repository path of /home/root is not something anyone
+# would notice until a restore.
+backup_repo_user: "{{ connection_user }}"
+backup_repo_path: "/home/{{ connection_user }}"
+
+# The pgEdge node a cluster recovery restores from the backup repository, named
+# by its inventory hostname. Empty in every ordinary deployment, and the
+# recovery playbook is the only thing that sets it: it is what tells the Patroni
+# template to render a pgBackRest bootstrap method on one node and leave every
+# other node bootstrapping the way it always has. See docs/recovery.md.
+#
+# It lives here rather than in recover_cluster's defaults because setup_patroni
+# reads it too, and a role default is invisible to any role but its own.
+
+recovery_node: ""
+
+# Which point in the repository's history a recovery restores to. Left unset,
+# PgBackRest restores the latest backup and replays every WAL segment the
+# repository holds, which is what a recovery from a lost cluster wants. Set them
+# to undo something instead: recovery_target_type takes one of PgBackRest's
+# --type values -- time, xid, lsn, name, or immediate -- and recovery_target
+# takes the value it applies to, except for immediate, which takes none.
+#
+# recovery_backup_set names a specific backup to restore, as PgBackRest's
+# --set does and as `pgbackrest info` labels them. Leave it empty to take the
+# latest backup that can reach the target.
+
+recovery_target_type: ""
+recovery_target: ""
+recovery_backup_set: ""
+
+# Whether Patroni rebuilds a replica from the backup repository instead of
+# streaming a fresh pg_basebackup from the zone's leader. Off by default, so an
+# existing cluster renders the replica configuration it already had. Turning it
+# on is worth it for a large database -- a delta restore moves only the blocks
+# that changed, and it reads from the repository rather than from the leader --
+# but it makes replica creation depend on the repository being healthy, so it is
+# a decision an inventory should make deliberately. pg_basebackup remains the
+# fallback either way: Patroni walks the method list in order.
+
+patroni_replica_from_backup: false
 
 patroni_tls_dir: "/etc/patroni/tls"
+
+# The certificate authority that signs etcd's server and peer certificates and
+# every node's Patroni client certificate. Both PEM blobs, and both empty by
+# default, which leaves the collection generating one on the controller exactly
+# as it always has.
+#
+# Supply them -- from Ansible Vault, beside the passwords -- when the authority
+# should be managed rather than left in a gitignored directory beside the
+# playbook. It is the one artifact there that nothing can recreate: setup_etcd
+# creates it and then skips itself forever after, so a controller that loses it
+# can no longer add a replica, rebuild a node, or re-run the deployment against
+# that cluster.
+#
+# Set them together or not at all, and do not change them on a live cluster: the
+# nodes trust the authority their etcd was built with, and signing against a
+# different one leaves none of them able to reach the store.
+
+etcd_ca_cert: ""
+etcd_ca_key: ""
 
 # Patroni cluster name within the DCS. This is the second half of every key
 # Patroni writes, and the collection derives it from values that are identical

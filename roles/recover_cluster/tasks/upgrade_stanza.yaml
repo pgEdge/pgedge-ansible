@@ -1,0 +1,41 @@
+---
+
+# Reconcile each rebuilt zone's stanza with the cluster that now lives in it.
+#
+# A zone that was not restored is rebuilt from an empty data directory, so it
+# carries a system identifier its stanza has never seen. PgBackRest would refuse
+# to archive there -- correctly, since as far as the repository knows this is
+# some other cluster -- and the zone would come back from the recovery unable to
+# back itself up, with nothing saying so until the nightly job failed.
+#
+# stanza-upgrade is the answer to that: it records the new cluster as another
+# entry in the stanza's history rather than replacing what is there, so the
+# zone archives again immediately and the backups taken before the recovery are
+# left in place. Those older backups are historical from this point on. They
+# describe a cluster that no longer exists, at a position the recovery
+# deliberately moved away from, so restoring one would resurrect the divergence
+# the recovery just undid -- and the existing retention will expire them once
+# enough new full backups have been taken.
+#
+# The restored zone is skipped: its identifier already matches, because it is
+# the same cluster these backups came from.
+
+- name: Upgrade this zone's stanza from one of its pgEdge nodes
+  include_tasks: run_stanza_upgrade.yaml
+  vars:
+    os_user: postgres
+  when:
+  - inventory_hostname in groups.pgedge
+  - backup_repo_configured | bool
+  - backup_type != 'ssh'
+  - inventory_hostname == first_node_in_zone
+  - zone != recovery_zone
+
+- name: Upgrade this zone's stanza from its backup server
+  include_tasks: run_stanza_upgrade.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"
+  when:
+  - groups.backup is defined
+  - inventory_hostname in groups.backup
+  - zone != recovery_zone

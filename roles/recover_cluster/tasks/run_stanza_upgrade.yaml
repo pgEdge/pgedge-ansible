@@ -1,0 +1,23 @@
+---
+
+# Run from whichever host drives the repository: the backup server in SSH mode,
+# the zone's first pgEdge node in S3 mode, which is the same rule finalize_backrest
+# follows for the stanza and the backups.
+
+- name: Record the new cluster in this zone's stanza history
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - stanza-upgrade
+  become: true
+  become_user: "{{ os_user }}"
+
+- name: Note that this zone's earlier backups are now historical
+  debug:
+    msg: >-
+      Stanza {{ backup_stanza }} now also describes the cluster rebuilt in zone
+      {{ zone }}. Backups taken before the recovery are still in the repository
+      but belong to the cluster that was replaced: they describe a position the
+      recovery moved away from, so restoring one would undo the recovery.
+      Retention will expire them as new full backups accumulate.

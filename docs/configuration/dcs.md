@@ -217,11 +217,11 @@ cluster:
   roles:
     - install_repos
     - install_pgedge
-    - setup_postgres
     - install_patroni
     - install_backrest
-    - setup_patroni
     - setup_backrest
+    - setup_postgres
+    - setup_patroni
 ```
 
 The remaining plays in the playbook are unchanged. For the full playbook

@@ -699,6 +699,105 @@
         covers.
     when: cluster_is_pooled | bool
 
+  # WAL archiving. The collection's whole backup story rests on it, and every
+  # way it fails is quiet: Postgres keeps running, the cluster keeps answering,
+  # and only the repository's recovery point stops moving.
+
+  # Asked on the zone's first node, as every other primary-only check in this
+  # file is, but confirmed rather than assumed: a failover during the run leaves
+  # that node a standby, where pg_stat_archiver is empty by design. The checks
+  # below then skip instead of reporting a failure that belongs to the test.
+
+  - name: Determine whether the zone's first node is still its primary
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c "SELECT NOT pg_is_in_recovery()"
+    register: node_is_primary
+    changed_when: false
+    when: inventory_hostname == first_node_in_zone
+
+  # archive_command reaches the running server from the Patroni configuration
+  # template, not from a patch applied to the configuration store afterwards. A
+  # patch lives only in the store, and a recovery removes the cluster from the
+  # store and bootstraps it again, which silently restored the placeholder this
+  # asserts against. /bin/true archives nothing and reports success, so a
+  # cluster that reverted to it looks healthy from every other angle.
+  #
+  # Read from the running server rather than from the rendered file: the file is
+  # what was intended, the server is what happened.
+
+  - name: Read the archive command the running server is using
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c "SELECT current_setting('archive_command')"
+    register: archive_command
+    changed_when: false
+    when:
+    - inventory_hostname == first_node_in_zone
+    - node_is_primary.stdout | default('') | trim == 't'
+
+  - name: Assert the running server archives to PgBackRest
+    assert:
+      that:
+      - "'pgbackrest' in archive_command.stdout"
+      - "'archive-push' in archive_command.stdout"
+      - "'/bin/true' not in archive_command.stdout"
+      fail_msg: >-
+        archive_command on {{ inventory_hostname }} is
+        "{{ archive_command.stdout }}". It should invoke pgbackrest
+        archive-push. /bin/true is the template's placeholder for a cluster with
+        no repository: a cluster carrying it archives nothing while reporting
+        success, and its repository stops advancing with nothing to say so.
+    when:
+    - inventory_hostname == first_node_in_zone
+    - node_is_primary.stdout | default('') | trim == 't'
+
+  # An archive command that is configured but failing is the same silence with
+  # a different cause, and pg_stat_archiver is the only place it shows.
+  #
+  # The test is not that nothing has ever failed. Failures are expected during a
+  # deployment: the stanza does not exist until finalize_backrest creates it,
+  # and in SSH mode the backup server has not authorised the node's key until
+  # its own play runs. What has to be true at the end is that archiving is
+  # working *now* -- something has been archived, and more recently than
+  # anything last failed.
+
+  - name: Read the archiver's history
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -F'|' -c
+      "SELECT archived_count, failed_count,
+              CASE
+                WHEN last_archived_time IS NULL THEN 'never archived'
+                WHEN last_failed_time IS NULL THEN 'healthy'
+                WHEN last_archived_time > last_failed_time THEN 'healthy'
+                ELSE 'failing'
+              END
+         FROM pg_stat_archiver"
+    register: archiver
+    changed_when: false
+    when:
+    - inventory_hostname == first_node_in_zone
+    - node_is_primary.stdout | default('') | trim == 't'
+
+  - name: Assert WAL archiving is currently succeeding
+    vars:
+      fields: "{{ archiver.stdout | trim | split('|') }}"
+    assert:
+      that:
+      - fields[2] == 'healthy'
+      - fields[0] | int > 0
+      fail_msg: >-
+        WAL archiving on {{ inventory_hostname }} is {{ fields[2] }}:
+        {{ fields[0] }} segment(s) archived, {{ fields[1] }} failed. Postgres
+        retries a failing archive command forever, so pg_wal grows without
+        bound and the repository's recovery point stops advancing while the
+        cluster keeps answering queries. Check that the stanza exists and, in
+        SSH mode, that the backup server has authorised this node's key.
+    when:
+    - inventory_hostname == first_node_in_zone
+    - node_is_primary.stdout | default('') | trim == 't'
+
 # Verify HAProxy nodes
 - hosts: haproxy
   become: true
@@ -786,16 +885,77 @@
 - hosts: backup
   become: true
 
+  vars:
+    # PgBackRest refuses to run as root, and this play becomes root for
+    # everything else it does. The repository is owned by backup_repo_user,
+    # whose default is the Ansible user -- but that default lives in
+    # role_config, which this playbook never applies, so it is spelled out
+    # here. An inventory that sets backup_repo_user is picked up; a separate
+    # name avoids overriding it, since play vars outrank inventory vars.
+    #
+    # ansible_user_id would be wrong here: this play gathers facts under
+    # become, so it reports root rather than the account the repository
+    # belongs to.
+    repo_owner: "{{ backup_repo_user | default(ansible_user) }}"
+
   tasks:
-  - name: Check pgbackrest info
-    command: pgbackrest info
+  - name: Read what the repository holds
+    command: pgbackrest --output=json info
     register: backrest_info
     changed_when: false
-    ignore_errors: true
+    become_user: "{{ repo_owner }}"
 
   - name: Show backup status
     debug:
-      msg: "pgbackrest info output: {{ backrest_info.stdout_lines | default(['not available']) }}"
+      msg: "pgbackrest info output: {{ backrest_info.stdout | from_json }}"
+
+  # One stanza per backup host, because a stanza describes one physical cluster
+  # and each of these servers holds the repository for one zone. A second stanza
+  # here means the cluster's identity moved -- a changed cluster_name or zone --
+  # and the backups being taken are no longer the ones anybody would restore.
+
+  - name: Assert the repository holds exactly one healthy stanza
+    vars:
+      stanzas: "{{ backrest_info.stdout | from_json }}"
+    assert:
+      that:
+      - stanzas | length == 1
+      - stanzas[0].status.code | int == 0
+      fail_msg: >-
+        Expected one stanza in status ok on {{ inventory_hostname }}, found
+        {{ stanzas | length }}:
+        {{ stanzas | map(attribute='name') | list }} with statuses
+        {{ stanzas | map(attribute='status') | list }}.
+
+  # A deployment takes exactly one full backup, and only when the repository has
+  # none. More than one means something took a backup it was not asked for --
+  # which is not merely untidy: repo1-retention-full defaults to 1, so the
+  # second full backup expires the first and the WAL belonging to it, discarding
+  # the recovery point the repository was holding.
+
+  - name: Assert the deployment took exactly one full backup and nothing else
+    vars:
+      stanza: "{{ backrest_info.stdout | from_json | first }}"
+      backups: "{{ stanza.backup | default([]) }}"
+    assert:
+      that:
+      - backups | length == 1
+      - backups[0].type == 'full'
+      fail_msg: >-
+        Stanza {{ stanza.name }} holds {{ backups | length }} backup(s)
+        ({{ backups | map(attribute='type') | list }}) after a single
+        deployment, and it should hold exactly one full. Under the default
+        repo1-retention-full of 1, a full backup taken where one already exists
+        expires its predecessor and that backup's WAL.
+
+  # Kept for the re-run check below, which is the one that can tell a repository
+  # left alone from one quietly rewritten.
+
+  - name: Record the backups the repository held before the re-run
+    set_fact:
+      backrest_labels_before: >-
+        {{ (backrest_info.stdout | from_json | first).backup | default([]) |
+           map(attribute='label') | list }}
 
 # Verify the access gates from a host that no pg_hba rule names and no role was
 # applied to. From a pgEdge node these checks are meaningless — every rule the
@@ -1244,3 +1404,73 @@
     when:
     - proxies | length > 0
     - pooled_in_zone | length > 0
+
+# The one check that can tell a repository left alone from one quietly
+# rewritten: re-apply finalize_backrest and confirm the repository is byte for
+# byte the same set of backups afterwards.
+#
+# This is the regression the role is built around. The role used to take a full
+# backup unconditionally, so a second deployment run against a cluster whose
+# repository had been collecting backups for months added one of its own -- and
+# under the default repo1-retention-full of 1, completing it expired the
+# previous full backup and the WAL belonging to it. The repository reported
+# itself healthy throughout. Nothing in this suite could see it, because a
+# first deployment and a destructive re-run leave a repository that looks
+# identical after one run.
+#
+# The role now asks the repository what it holds rather than inferring it from
+# where it sits in a playbook, so this second application must change nothing.
+
+- hosts: pgedge:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - name: Re-apply the backup finalization against a repository that has backups
+    include_role:
+      name: finalize_backrest
+
+- hosts: backup
+  become: true
+
+  vars:
+    # PgBackRest refuses to run as root, and this play becomes root for
+    # everything else it does. The repository is owned by backup_repo_user,
+    # whose default is the Ansible user -- but that default lives in
+    # role_config, which this playbook never applies, so it is spelled out
+    # here. An inventory that sets backup_repo_user is picked up; a separate
+    # name avoids overriding it, since play vars outrank inventory vars.
+    #
+    # ansible_user_id would be wrong here: this play gathers facts under
+    # become, so it reports root rather than the account the repository
+    # belongs to.
+    repo_owner: "{{ backup_repo_user | default(ansible_user) }}"
+
+  tasks:
+  - name: Read what the repository holds after the re-run
+    command: pgbackrest --output=json info
+    register: backrest_info_after
+    changed_when: false
+    become_user: "{{ repo_owner }}"
+
+  - name: Assert re-applying finalize_backrest added and expired nothing
+    vars:
+      labels_after: >-
+        {{ (backrest_info_after.stdout | from_json | first).backup | default([]) |
+           map(attribute='label') | list }}
+    assert:
+      that:
+      - labels_after == backrest_labels_before
+      fail_msg: >-
+        Re-applying finalize_backrest changed what the repository holds on
+        {{ inventory_hostname }}. Before: {{ backrest_labels_before }}.
+        After: {{ labels_after }}. A repository that already has a recovery
+        point must be left exactly as it was: taking another full backup here
+        expires the previous one and its WAL under the default retention,
+        which destroys the recovery point a redeployed cluster was about to be
+        restored from.
+      success_msg: >-
+        Repository unchanged by a second application:
+        {{ labels_after | length }} backup(s), the same ones.

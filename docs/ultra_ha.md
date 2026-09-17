@@ -109,13 +109,13 @@ example playbook deploys the full Ultra-HA topology:
   roles:
     - install_repos
     - install_pgedge
-    - setup_postgres
     - install_etcd
     - install_patroni
     - install_backrest
+    - setup_backrest
+    - setup_postgres
     - setup_etcd
     - setup_patroni
-    - setup_backrest
 
 - hosts: haproxy
 
@@ -142,11 +142,27 @@ example playbook deploys the full Ultra-HA topology:
     - install_repos
     - install_backrest
     - setup_backrest
+
+- hosts: pgedge:backup
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - finalize_backrest
 ```
 
 HAProxy must be configured before `setup_pgedge` runs so that Spock
 subscriptions target the proxy layer. This ensures subscriptions survive a
 Patroni failover without requiring manual resubscription.
+
+`setup_backrest` runs before `setup_postgres` because Patroni's configuration
+carries the pgBackRest archive command, so Postgres starts archiving as soon as
+Patroni starts it, and because `setup_postgres` asks the repository whether it
+already holds this cluster before initializing a data directory. `finalize_backrest` runs last because creating the repository
+stanza and taking the first backup need a cluster that is already up. It takes
+a backup only when the repository has none, so re-running this playbook against
+an existing cluster leaves the repository's recovery point where it is.
 
 ## Running the Playbook
 
@@ -218,17 +234,17 @@ PostgreSQL instance Patroni manages on its own node:
   roles:
     - install_repos
     - install_pgedge
-    - setup_postgres
     - install_etcd
     - install_patroni
     - install_backrest
     - role: install_pgbouncer
       when: pgbouncer_enabled | bool
+    - setup_backrest
+    - setup_postgres
     - setup_etcd
     - setup_patroni
     - role: setup_pgbouncer
       when: pgbouncer_enabled | bool
-    - setup_backrest
 ```
 
 The `haproxy` play needs no change. `setup_haproxy` emits the pooled listener

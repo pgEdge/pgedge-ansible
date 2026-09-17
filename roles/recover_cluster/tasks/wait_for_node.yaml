@@ -1,0 +1,91 @@
+---
+
+# Wait for one node to finish joining its zone, judged on whether it is still
+# making progress rather than on a number of attempts.
+#
+# How long a replica takes to build is a property of the database, the same way
+# a restore is: Patroni clones it from the zone's leader, and in a recovery that
+# leader holds the whole rehydrated dataset rather than the nearly-empty one a
+# fresh deployment starts from. So this watches the data directory grow and the
+# control file advance, and gives up only when neither has moved for
+# recovery_stall_minutes.
+#
+# setup_patroni cannot do this itself: its wait_for_primary asks after the
+# zone's first node and nothing else, so a replica waits for its leader and then
+# returns while it is still cloning. That is invisible in a deployment, where
+# there is nothing to clone, and is why a recovery used to report a zone whole
+# while two of its three nodes were still building.
+#
+# Callers set wait_node_states, and wait_require_leader where the node has to
+# hold the leader lock as well as be up.
+
+- name: Wait for {{ inventory_hostname }} to reach {{ wait_node_states }}
+  shell:
+    cmd: |
+      set -u
+      ctl="{{ patronictl_cmd }}"
+      data={{ pg_data }}
+      control=$data/global/pg_control
+      stall=$(( {{ recovery_stall_minutes }} * 60 ))
+      poll={{ recovery_poll_seconds }}
+      want="{{ wait_node_states }}"
+      require_leader="{{ wait_require_leader | default(false) | bool | lower }}"
+
+      # Sampled rather than walked every poll: a data directory mid-clone can be
+      # enormous, and pg_control's timestamp already moves on every checkpoint.
+      du_every=10
+      du_countdown=0
+      du_size=0
+
+      progress() {
+        if [ "$du_countdown" -le 0 ]; then
+          du_size=$(du -sk "$data" 2>/dev/null | cut -f1 || echo 0)
+          du_countdown=$du_every
+        fi
+        du_countdown=$(( du_countdown - 1 ))
+        printf '%s:%s' \
+          "$(stat -c %Y "$control" 2>/dev/null || echo 0)" "${du_size:-0}"
+      }
+
+      last=""
+      last_moved=$(date +%s)
+      while :; do
+        member=$($ctl list {{ patroni_scope }} -f json 2>/dev/null |
+                 jq -r '.[] | select(.Host == "{{ inventory_hostname }}") |
+                        .Role + "|" + .State' 2>/dev/null || true)
+        role=${member%%|*}
+        state=${member##*|}
+
+        for w in $want; do
+          if [ "$state" = "$w" ]; then
+            if [ "$require_leader" != "true" ] || [ "$role" = "Leader" ]; then
+              echo "reached state '$state' as '$role'"
+              exit 0
+            fi
+          fi
+        done
+
+        now=$(date +%s)
+        current=$(progress)
+        if [ "$current" != "$last" ]; then
+          last="$current"
+          last_moved=$now
+          echo "building: $current (control mtime:data KiB), patroni reports '${member:-not yet registered}'"
+        elif [ $(( now - last_moved )) -ge "$stall" ]; then
+          echo "no progress for {{ recovery_stall_minutes }} minutes:" \
+               "$current, patroni reports '${member:-not yet registered}'." \
+               "Check the Patroni journal on this node." >&2
+          exit 1
+        fi
+        sleep "$poll"
+      done
+  register: node_wait
+  async: "{{ recovery_max_hours | int * 3600 }}"
+  poll: "{{ recovery_poll_seconds }}"
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- name: Show how {{ inventory_hostname }} joined
+  debug:
+    msg: "{{ node_wait.stdout_lines | default([]) | last | default('') }}"

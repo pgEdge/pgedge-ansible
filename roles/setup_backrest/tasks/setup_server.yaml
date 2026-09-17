@@ -43,15 +43,3 @@
     mode: "0600"
   become: true
   become_user: "{{ backup_repo_user }}"
-
-# With configuration complete, attempt to take the initial bootstrap backup:
-
-- include_tasks: first_backup.yaml
-  vars:
-    os_user: "{{ backup_repo_user }}"
-
-# If the bootstrap backup succeeds, it's safe to set up automated backups.
-
-- include_tasks: set_cron.yaml
-  vars:
-    os_user: "{{ backup_repo_user }}"

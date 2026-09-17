@@ -1,0 +1,26 @@
+---
+
+# Only bootstrap a repository that has nothing in it.
+#
+# This role runs on every deployment, including one that rebuilds a cluster
+# whose repository has been collecting backups for months, and taking an
+# unconditional full backup there is not merely redundant -- it is destructive.
+# repo1-retention-full defaults to 1, so the moment a new full backup completes
+# PgBackRest expires the previous full and the WAL that belongs to it,
+# discarding the recovery point the cluster was about to be restored from.
+#
+# A stanza carrying backups already has a recovery point, and the scheduled jobs
+# installed alongside this task keep it current. There is nothing a full backup
+# taken here adds, and under the default retention there is a great deal it
+# takes away.
+
+- name: Create the initial backup for this instance
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - backup
+    - "--type=full"
+  become: true
+  become_user: "{{ os_user }}"
+  when: backrest_stanza.backup | default([]) | length == 0

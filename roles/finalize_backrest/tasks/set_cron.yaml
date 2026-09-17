@@ -8,9 +8,7 @@
     day: "{{ full_backup_schedule.split(' ')[2] }}"
     month: "{{ full_backup_schedule.split(' ')[3] }}"
     weekday: "{{ full_backup_schedule.split(' ')[4] }}"
-    job: 'pgbackrest {{ stanza }} backup --type=full'
-  vars:
-    stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
+    job: 'pgbackrest --stanza={{ backup_stanza }} backup --type=full'
   become: true
   become_user: "{{ os_user }}"
   when: full_backup_schedule.split(' ') | length == 5
@@ -23,9 +21,7 @@
     day: "{{ diff_backup_schedule.split(' ')[2] }}"
     month: "{{ diff_backup_schedule.split(' ')[3] }}"
     weekday: "{{ diff_backup_schedule.split(' ')[4] }}"
-    job: 'pgbackrest {{ stanza }} backup --type=diff'
-  vars:
-    stanza: "--stanza=pgedge-{{ cluster_name }}-{{ zone }}"
+    job: 'pgbackrest --stanza={{ backup_stanza }} backup --type=diff'
   become: true
   become_user: "{{ os_user }}"
   when: diff_backup_schedule.split(' ') | length == 5

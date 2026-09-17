@@ -52,6 +52,77 @@
       db_password, pgedge_password, replication_password, backup_password
   when: inventory_hostname in (groups.pgedge | default([]))
 
+# The backup repository's encryption, checked the same way the passwords are and
+# for the same reason: the value cannot be defaulted into existence.
+#
+# A generated cipher password would have to be identical on every run -- change
+# it and the repository can no longer be read -- and also unguessable, and
+# nothing can be both. The value this parameter used to default to was derived
+# from cluster_name and zone, which achieved the first by giving up the second:
+# anyone who knew the cluster's name could decrypt its backups.
+#
+# Asked of pgEdge nodes and backup servers alike, because both render the
+# repository configuration and both have to arrive at the same answer. An
+# inventory that sets this on the 'pgedge' group alone leaves the backup server
+# writing a different configuration than the nodes it serves, which is a
+# repository neither can read.
+
+- name: Ensure the backup repository cipher type is one PgBackRest accepts
+  assert:
+    that:
+    - backup_repo_cipher_type in ('none', 'aes-256-cbc')
+    fail_msg: >-
+      backup_repo_cipher_type is "{{ backup_repo_cipher_type }}". PgBackRest
+      accepts aes-256-cbc, or none where the storage layer encrypts instead.
+  when:
+  - backup_repo_configured | bool
+  - inventory_hostname in (groups.pgedge | default([])) or
+    inventory_hostname in (groups.backup | default([]))
+
+- name: Ensure an encrypted backup repository has been given a password
+  assert:
+    that:
+    - backup_repo_cipher | length > 0
+    fail_msg: >-
+      backup_repo_cipher is empty and backup_repo_cipher_type is
+      "{{ backup_repo_cipher_type }}", so PgBackRest is being asked to encrypt
+      this repository with nothing. It has no default on purpose: a generated
+      one would have to be identical on every run and also unguessable, and
+      nothing can be both. Set it to a secret you keep -- Ansible Vault, beside
+      the passwords -- or set backup_repo_cipher_type to none where the storage
+      encrypts instead, such as S3 bucket default encryption.
+      Store it somewhere you will still have it later: a lost cipher is an
+      unreadable repository, and this collection cannot rotate it.
+      Upgrading a cluster deployed before this parameter required a value? Its
+      repository still uses the old derived password, and the old derivation was
+      public, so recover it with:
+      ansible localhost -m debug -a
+      "msg={{ '{{' }} lookup('password', '/dev/null', length=20,
+      seed='pgedge{{ cluster_name }}-{{ zone }}') {{ '}}' }}"
+  when:
+  - backup_repo_configured | bool
+  - backup_repo_encrypted | bool
+  - inventory_hostname in (groups.pgedge | default([])) or
+    inventory_hostname in (groups.backup | default([]))
+
+# A password set where nothing encrypts is not harmless: it reads as encryption
+# to anyone reviewing the inventory, and PgBackRest refuses the configuration
+# outright rather than quietly ignoring it.
+
+- name: Ensure no cipher password is set where nothing is encrypting
+  assert:
+    that:
+    - backup_repo_cipher | length == 0
+    fail_msg: >-
+      backup_repo_cipher is set but backup_repo_cipher_type is none, so
+      PgBackRest is not encrypting this repository and the password does
+      nothing. Either remove it, or set a cipher type so it is used.
+  when:
+  - backup_repo_configured | bool
+  - not backup_repo_encrypted | bool
+  - inventory_hostname in (groups.pgedge | default([])) or
+    inventory_hostname in (groups.backup | default([]))
+
 # These roles simply won't work on anything but RHEL / Debian systems right
 # now. There may be workarounds, but for now it's best to fail early.
 

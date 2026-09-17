@@ -1,4 +1,4 @@
-[pgedge-{{ cluster_name }}-{{ zone }}]
+[{{ backup_stanza }}]
 
 {% if groups.backup is defined and inventory_hostname in groups.backup %}
 # This is a backup server, so list all hosts in the zone as backup targets
@@ -26,7 +26,9 @@ repo1-path={{ backup_repo_path }}
 repo1-retention-full={{ full_backup_count }}
 repo1-retention-diff={{ diff_backup_count }}
 repo1-cipher-type={{ backup_repo_cipher_type }}
+{% if backup_repo_encrypted | bool %}
 repo1-cipher-pass={{ backup_repo_cipher }}
+{% endif %}
 
 {% if backup_type == 'ssh' %}
 repo1-hardlink=y

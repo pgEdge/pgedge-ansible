@@ -1,0 +1,27 @@
+---
+
+# With the cluster gone from the configuration store, the data directories can
+# go. Every pgEdge node in every zone: the restored node because PgBackRest
+# restores into an empty directory, the other zones' first nodes because they
+# are rebuilt empty and refilled across Spock, and every replica because it is
+# rebuilt from its own zone's leader once that leader is up.
+#
+# The directory is recreated rather than left absent. setup_postgres creates it
+# with these owner and permissions before initdb runs, Patroni expects to find
+# it, and PgBackRest restores into it -- and a missing directory on a
+# non-default path is one the postgres user may not be able to create itself.
+
+- name: Erase the Postgres data directory
+  file:
+    path: "{{ pg_data }}"
+    state: absent
+  become: true
+
+- name: Recreate an empty Postgres data directory
+  file:
+    path: "{{ pg_data }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+  become: true

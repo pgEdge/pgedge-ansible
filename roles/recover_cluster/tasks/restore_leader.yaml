@@ -1,0 +1,224 @@
+
+# Bring back the one node the whole cluster is rebuilt from. Its Patroni
+# configuration is re-rendered first: the template emits a PgBackRest bootstrap
+# method only for the node recovery_node names, so this file differs from the
+# one the node was running with, and from the one every other node has.
+
+# Only the node being restored. Gated here rather than in the playbook,
+# where the role variables this depends on are not in scope.
+- block:
+  - name: Render this node's Patroni configuration with its bootstrap method
+    include_role:
+      name: setup_patroni
+      tasks_from: config
+
+  - name: Start Patroni so it bootstraps this node from the repository
+    systemd_service:
+      daemon_reload: true
+      name: "{{ patroni_service_name }}"
+      enabled: true
+      state: started
+    become: true
+
+  # Patroni reports the node as running only once the restore has finished, the
+  # WAL has been replayed to the target, and the node has been promoted. Until
+  # then it is in one of several intermediate states -- creating replica,
+  # starting, streaming -- and the only one worth waiting for is the end state,
+  # so this waits for the leader rather than for the absence of a failure.
+
+  # Wait for the restore, without pretending to know how long it takes.
+  #
+  # A fixed number of attempts is wrong for some cluster: the work here is a full
+  # backup read out of the repository plus every WAL segment since, which is a
+  # property of the database. What can be judged is whether it is still getting
+  # anywhere, so this watches two cheap signals and gives up only when both have
+  # been still for recovery_stall_minutes.
+  #
+  # PgBackRest appends to its restore log for the whole of the file copy, and
+  # pg_control's timestamp moves on every checkpoint once Postgres starts
+  # replaying WAL. Between them they cover both phases, and both are a stat call
+  # rather than a walk of a data directory that may be enormous.
+  #
+  # Run under async so a restore outlasting an SSH connection is not lost with
+  # it; recovery_max_hours is the backstop, not the expectation.
+
+  - name: Wait for the restored node to finish recovering and take the leader
+    shell:
+      cmd: |
+        set -u
+        ctl="{{ patronictl_cmd }}"
+        restore_log=/var/log/pgbackrest/{{ backup_stanza }}-restore.log
+        control={{ pg_data }}/global/pg_control
+        stall=$(( {{ recovery_stall_minutes }} * 60 ))
+        poll={{ recovery_poll_seconds }}
+
+        # A fingerprint of everything that moves while a restore is working.
+        #
+        # The two stats are free and cover both phases: PgBackRest appends to
+        # its restore log through the file copy, and pg_control's timestamp
+        # moves on every checkpoint once Postgres replays WAL.
+        #
+        # The size of the data directory is the backstop for what neither
+        # covers -- a repository logging elsewhere, or a quiet stretch of a
+        # very large copy -- but walking a data directory that may be
+        # terabytes is not something to do every poll, so it is sampled once
+        # every tenth. At the default poll that is every five minutes, well
+        # inside the fifteen-minute stall window it has to satisfy.
+        du_every=10
+        du_countdown=0
+        du_size=0
+
+        progress() {
+          if [ "$du_countdown" -le 0 ]; then
+            du_size=$(du -sk {{ pg_data }} 2>/dev/null | cut -f1 || echo 0)
+            du_countdown=$du_every
+          fi
+          du_countdown=$(( du_countdown - 1 ))
+          printf '%s:%s:%s' \
+            "$(stat -c %s "$restore_log" 2>/dev/null || echo 0)" \
+            "$(stat -c %Y "$control" 2>/dev/null || echo 0)" \
+            "${du_size:-0}"
+        }
+
+        last=""
+        last_moved=$(date +%s)
+        while :; do
+          state=$($ctl list {{ patroni_scope }} -f json 2>/dev/null |
+                  jq -r '.[] | select(.Host == "{{ inventory_hostname }}") |
+                         select(.Role == "Leader") | .State' 2>/dev/null || true)
+          if [ "$state" = "running" ]; then
+            echo "restored node is the running leader"
+            exit 0
+          fi
+
+          now=$(date +%s)
+          current=$(progress)
+          if [ "$current" != "$last" ]; then
+            last="$current"
+            last_moved=$now
+            echo "working: $current (log bytes:control mtime:data KiB), patroni state '${state:-not yet registered}'"
+          elif [ $(( now - last_moved )) -ge "$stall" ]; then
+            echo "no progress for {{ recovery_stall_minutes }} minutes:" \
+                 "$current, patroni state '${state:-not yet registered}'." \
+                 "Check $restore_log and the Patroni journal on this node." >&2
+            exit 1
+          fi
+          sleep "$poll"
+        done
+    register: restore_status
+    async: "{{ recovery_max_hours | int * 3600 }}"
+    poll: "{{ recovery_poll_seconds }}"
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  - name: Show how the restore progressed
+    debug:
+      msg: "{{ restore_status.stdout_lines | default([]) }}"
+
+  # A restore that stopped at a point-in-time target leaves the timeline advanced
+  # and the cluster promoted, which is what --target-action=promote arranges. What
+  # it does not do is tell anyone which point it actually reached, and that is the
+  # first thing to check against what was asked for -- particularly after a
+  # recovery_target that fell between two backups, where PgBackRest stops at the
+  # last point it could reach rather than failing.
+
+  - name: Read the point the restored cluster came back to
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: postgres
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT timeline_id, checkpoint_lsn::text AS checkpoint_lsn,
+               pg_last_wal_replay_lsn()::text AS replayed_to
+          FROM pg_control_checkpoint()
+    register: recovered_point
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  # Give the restored node the same restart the deployment path gives every
+  # node, and for the reason setup_patroni gives: Patroni records configuration
+  # that needs a restart but does not perform one. archive_mode is exactly that
+  # kind of setting, so a node that came back without it stays that way however
+  # long anyone waits -- and the symptom is WAL that never reaches the
+  # repository, on a cluster that otherwise looks healthy.
+
+  - name: Restart the restored node to apply configuration that needs it
+    command:
+      argv:
+      - patronictl
+      - -c
+      - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+      - restart
+      - -r
+      - any
+      - --force
+      - "{{ patroni_scope }}"
+      - "{{ ansible_hostname }}"
+    become: true
+    become_user: postgres
+
+  - name: Wait for the restored node to come back after the restart
+    shell:
+      cmd: >-
+        {{ patronictl_cmd }} list {{ patroni_scope }} -f json |
+        jq -r '.[] | select(.Host == "{{ inventory_hostname }}") |
+        select(.Role == "Leader") | .State'
+    register: restarted_state
+    retries: 30
+    delay: 10
+    until: restarted_state.stdout == 'running'
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  # Assert rather than hope. Everything after this depends on the restored zone
+  # archiving: the rebuilt zones are refilled from it, and finalize_backrest
+  # takes its next backup from it. A zone that cannot archive finishes the
+  # recovery looking correct and quietly stops producing recovery points.
+
+  - name: Read how the restored node is configured to archive
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: postgres
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT current_setting('archive_mode') AS archive_mode,
+               current_setting('archive_command') AS archive_command
+    register: restored_archiving
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  - name: Ensure the restored node will archive to the repository
+    assert:
+      that:
+      - archiving.archive_mode in ('on', 'always')
+      - "'pgbackrest' in archiving.archive_command"
+      fail_msg: >-
+        The restored node came back with archive_mode
+        "{{ archiving.archive_mode }}" and archive_command
+        "{{ archiving.archive_command }}". It has to archive to the repository:
+        the rebuilt zones are refilled from this node and the next backup is
+        taken from it, so a zone that cannot archive finishes the recovery
+        looking correct while producing no further recovery points.
+        archive_mode is a restart-level setting, so if it is off here the
+        restart above did not take effect -- check the Patroni journal and
+        whether the configuration store holds the archive settings
+        (patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}
+        show-config {{ patroni_scope }}).
+    vars:
+      archiving: "{{ restored_archiving.query_result | first }}"
+
+  - name: Show the point the cluster was recovered to
+    debug:
+      msg: >-
+        {{ inventory_hostname }} recovered from stanza {{ backup_stanza }} onto
+        timeline {{ point.timeline_id }}, checkpoint {{ point.checkpoint_lsn }},
+        WAL replayed to {{ point.replayed_to | default('end of archive') }}.
+    vars:
+      point: "{{ recovered_point.query_result | first }}"
+
+  when:
+  - inventory_hostname == recovery_node

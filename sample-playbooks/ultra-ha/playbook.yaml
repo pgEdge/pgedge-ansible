@@ -41,19 +41,33 @@
   roles:
   - install_repos
   - install_pgedge
-  - setup_postgres
   - role: install_etcd
     when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
   - install_patroni
   - install_backrest
   - role: install_pgbouncer
     when: pgbouncer_enabled | bool
+
+  # Before Postgres, and before Patroni. Two things need it there.
+  #
+  # Patroni's configuration carries the pgBackRest archive command, so Postgres
+  # starts archiving the moment Patroni starts it, and a pgbackrest.conf written
+  # later leaves a window where every archive attempt fails.
+  #
+  # And setup_postgres asks the repository whether it already holds a cluster
+  # before it initializes a data directory -- an empty data directory beside a
+  # repository full of backups means a restore was meant, not a build -- which
+  # it can only ask once pgbackrest.conf names the repository.
+  #
+  # This role only writes files; nothing in it touches Postgres.
+
+  - setup_backrest
+  - setup_postgres
   - role: setup_etcd
     when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
   - setup_patroni
   - role: setup_pgbouncer
     when: pgbouncer_enabled | bool
-  - setup_backrest
 
 # Install HAProxy on dedicated proxy nodes.
 #
@@ -78,8 +92,7 @@
   roles:
   - setup_pgedge
 
-# Finally, set up the backup server so we capture the final state of any
-# working primary nodes post-deployment.
+# Set up the backup server so it can reach the cluster's nodes.
 
 - hosts: backup
 
@@ -90,3 +103,21 @@
   - install_repos
   - install_backrest
   - setup_backrest
+
+# Finally, initialize the backup repository, so it captures the final state of
+# any working primary nodes post-deployment. This runs last because it is the
+# only part of backup setup that needs a cluster that is up and wired together.
+#
+# It takes a full backup only when the repository has none. Re-running this
+# playbook against a cluster whose repository already holds backups adds nothing
+# to it -- which matters, because repo1-retention-full defaults to 1, and a full
+# backup taken here would otherwise expire the recovery point the repository
+# already had.
+
+- hosts: pgedge:backup
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - finalize_backrest

@@ -5,6 +5,11 @@ all:
     debug_pgedge: false
     disable_selinux: false
     manage_host_file: false
+    # Set on 'all' rather than on 'pgedge', because the backup servers render
+    # the same repository configuration and have to arrive at the same value.
+    # A repository whose nodes and server disagree about the cipher is one
+    # neither can read.
+    backup_repo_cipher: TestCipher987
     # The pooler enforces its own HBA rules, which name the cluster's nodes,
     # this zone's proxies and the node's loopback -- and nothing else. The client
     # node is none of those, so the pooled endpoint has to be opened to it here.
