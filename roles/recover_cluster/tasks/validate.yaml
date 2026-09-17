@@ -70,6 +70,58 @@
       backup_repo_type to s3, or give the zone a host in the 'backup' group or
       a backup_host, before recovering.
 
+# backup_repo_configured only says a zone has somewhere to archive to. It says
+# nothing about whether the repository this recovery restores from actually
+# holds a backup -- and the first thing that would find out is restore_leader,
+# by which point every data directory in the cluster has already been erased.
+# So ask the repository itself, here, while the cluster is still intact.
+#
+# failed_when is off so the assert below can say what went wrong rather than
+# leaving a raw pgbackrest exit status as the only explanation.
+
+- name: Ask the repository what it holds for the node being restored
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - "--output=json"
+    - info
+  register: recovery_repo_info
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  become: true
+  become_user: postgres
+  when: inventory_hostname == recovery_node
+
+- name: Ensure the repository the recovery restores from can be read
+  assert:
+    that:
+    - recovery_repo_info.rc == 0
+    fail_msg: >-
+      pgbackrest could not read stanza {{ backup_stanza }} from
+      {{ recovery_node }}: {{ recovery_repo_info.stderr | default('') | trim }}
+      Nothing has been touched yet. A repository this node cannot read is a
+      repository it cannot restore from, so fix the access or the
+      configuration before running this again.
+  when: inventory_hostname == recovery_node
+
+- name: Ensure the repository holds a backup to restore from
+  vars:
+    recovery_repo_backups: >-
+      {{ recovery_repo_info.stdout | from_json |
+         selectattr('name', 'eq', backup_stanza) |
+         map(attribute='backup') | first | default([]) }}
+  assert:
+    that:
+    - recovery_repo_backups | length > 0
+    fail_msg: >-
+      Stanza {{ backup_stanza }} on {{ recovery_node }} holds no backup, so
+      there is nothing for this playbook to restore. It would erase every data
+      directory in the cluster and then have nothing to put back. Take a backup
+      first, or name a recovery_node whose zone has one.
+  when: inventory_hostname == recovery_node
+
 - name: Ensure the point-in-time target is one PgBackRest accepts
   assert:
     that:

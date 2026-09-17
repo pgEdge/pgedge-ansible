@@ -64,9 +64,15 @@
         # terabytes is not something to do every poll, so it is sampled once
         # every tenth. At the default poll that is every five minutes, well
         # inside the fifteen-minute stall window it has to satisfy.
+        #
+        # It assigns to $fingerprint rather than printing it, and is called as a
+        # plain command rather than as $(progress): a command substitution runs
+        # the function in a subshell, which discards the countdown on the way
+        # out and leaves every poll sampling the directory again.
         du_every=10
         du_countdown=0
         du_size=0
+        fingerprint=""
 
         progress() {
           if [ "$du_countdown" -le 0 ]; then
@@ -74,10 +80,10 @@
             du_countdown=$du_every
           fi
           du_countdown=$(( du_countdown - 1 ))
-          printf '%s:%s:%s' \
+          fingerprint=$(printf '%s:%s:%s' \
             "$(stat -c %s "$restore_log" 2>/dev/null || echo 0)" \
             "$(stat -c %Y "$control" 2>/dev/null || echo 0)" \
-            "${du_size:-0}"
+            "${du_size:-0}")
         }
 
         last=""
@@ -92,7 +98,8 @@
           fi
 
           now=$(date +%s)
-          current=$(progress)
+          progress
+          current=$fingerprint
           if [ "$current" != "$last" ]; then
             last="$current"
             last_moved=$now

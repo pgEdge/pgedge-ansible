@@ -24,7 +24,7 @@ apply across roles unless noted otherwise.
   server-level settings like ports and SELinux.
 - [Backup Configuration Parameters](#backup-configuration-parameters) -
   Configure PgBackRest repositories, encryption, and schedules.
-- [Recovery Parameters](#recovery-parameters) - Restore a cluster from its
+- [Recovery Parameters](recovery.md) - Restore a cluster from its
   PgBackRest repository.
 - [Spock Configuration Parameters](#spock-configuration-parameters) - Control
   logical replication exception handling.

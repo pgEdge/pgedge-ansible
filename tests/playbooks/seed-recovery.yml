@@ -90,6 +90,22 @@
   # The rows are in WAL that has not necessarily been archived yet. Force the
   # segment out and wait for PgBackRest to take it, because a restore can only
   # replay what reached the repository.
+  #
+  # Which segment is recorded before the switch, because that is the one holding
+  # the rows. Waiting on last_archived_wal merely being non-null would be
+  # satisfied by anything the archiver shipped at any point in the cluster's
+  # life, including segments written before this table existed.
+
+  - name: Note which WAL segment carries the marker rows
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT pg_walfile_name(pg_current_wal_lsn())"
+    register: marker_wal
+    changed_when: false
+    when:
+    - inventory_hostname == first_node_in_zone
+    - zone == seed_zone
 
   - name: Force the current WAL segment into the archive
     become_user: postgres
@@ -105,7 +121,8 @@
       become_user: postgres
       command: >
         psql -d postgres -t -A -F'|' -c
-        "SELECT last_archived_wal IS NOT NULL,
+        "SELECT COALESCE(last_archived_wal >=
+                         '{{ marker_wal.stdout | trim }}', false),
                 COALESCE(last_failed_time IS NULL
                          OR last_archived_time > last_failed_time, false)
            FROM pg_stat_archiver"

@@ -170,7 +170,8 @@
     retries: 120
     delay: 10
     until: >-
-      (patroni_list.stdout | default('[]') | from_json |
+      patroni_list.rc == 0 and
+      (patroni_list.stdout | default('[]', true) | from_json |
        selectattr('State', 'in', ['running', 'streaming']) | list | length)
       == (nodes_in_zone | length)
     when: inventory_hostname == first_node_in_zone

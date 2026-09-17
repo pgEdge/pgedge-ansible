@@ -25,7 +25,7 @@ import re
 import sys
 
 import yaml
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -42,7 +42,17 @@ ZONE_OF.update({HAPROXY[0]: 1, HAPROXY[1]: 2, BACKUP[0]: 1, BACKUP[1]: 2})
 
 
 def env():
+    # Autoescaping is declared off rather than left to the default, because it
+    # has to be off and the reason is not obvious. What renders here is a
+    # Patroni YAML configuration, not markup: HTML-escaping it would turn every
+    # & < > ' in a password, an archive command or a restore target into an
+    # entity. And Ansible's template module does not autoescape, so switching it
+    # on here would render something Ansible never produces, which is the one
+    # thing this script exists to rule out.
     e = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)),
+                    autoescape=select_autoescape(enabled_extensions=(),
+                                                 default_for_string=False,
+                                                 default=False),
                     trim_blocks=True, keep_trailing_newline=True)
     for name in ("ipaddr", "ansible.utils.ipaddr"):
         e.filters[name] = lambda v, *a: "10.0.0.9"
@@ -95,8 +105,33 @@ def context(os_family, restore, backups, replica, hosts_with_facts):
         backup_user="backrest", db_password="p", replication_password="p")
 
 
-def main():
-    template = env().get_template("patroni.yml.j2")
+def failed_checks(doc, restore, backups, replica):
+    """The switches each combination has to have produced, and what failed."""
+    params = doc["bootstrap"].get("dcs", {}).get("postgresql", {}).get(
+        "parameters", {})
+    checks = {
+        "bootstrap method":
+            (doc["bootstrap"].get("method") == "pgbackrest") == restore,
+        "archive_command":
+            ("pgbackrest" in params["archive_command"]) == backups,
+        "restore_command present":
+            ("restore_command" in params) == backups,
+        "pgbackrest replica method":
+            ("pgbackrest" in (doc["postgresql"].get(
+                "create_replica_methods") or [])) == replica,
+        # Every address the HBA rules name has to be a real one. A host whose
+        # facts were missing renders as an empty string or the literal 'None',
+        # and Postgres refuses to start on that line.
+        "hba addresses resolved":
+            all("/32" in line and " None/" not in line
+                for line in doc["postgresql"]["pg_hba"]
+                if line.startswith("host ") and "127.0.0.1" not in line),
+    }
+    return [name for name, ok in checks.items() if not ok]
+
+
+def check_switches(template):
+    """Render every combination of the switches that gate the template."""
     everyone = set(PGEDGE + HAPROXY + BACKUP)
     failures = []
 
@@ -115,49 +150,41 @@ def main():
             print(f"FAIL     {label}")
             continue
 
-        params = doc["bootstrap"].get("dcs", {}).get("postgresql", {}).get(
-            "parameters", {})
-        checks = {
-            "bootstrap method":
-                (doc["bootstrap"].get("method") == "pgbackrest") == restore,
-            "archive_command":
-                ("pgbackrest" in params["archive_command"]) == backups,
-            "restore_command present":
-                ("restore_command" in params) == backups,
-            "pgbackrest replica method":
-                ("pgbackrest" in (doc["postgresql"].get(
-                    "create_replica_methods") or [])) == replica,
-            # Every address the HBA rules name has to be a real one. A host whose
-            # facts were missing renders as an empty string or the literal
-            # 'None', and Postgres refuses to start on that line.
-            "hba addresses resolved":
-                all("/32" in line and " None/" not in line
-                    for line in doc["postgresql"]["pg_hba"]
-                    if line.startswith("host ") and "127.0.0.1" not in line),
-        }
-        bad = [name for name, ok in checks.items() if not ok]
+        bad = failed_checks(doc, restore, backups, replica)
         if bad:
             failures.append(f"{label}: {', '.join(bad)}")
             print(f"FAIL     {label}: {', '.join(bad)}")
         else:
             print(f"ok       {label}")
 
-    # A playbook whose plays are all 'pgedge' has no facts for the proxy and
-    # backup hosts. The template must not render against that, and this asserts
-    # the failure is still detectable rather than silently producing HBA lines
-    # with no address in them.
-    print()
+    return failures
+
+
+def check_missing_facts(template):
+    """A playbook whose plays are all 'pgedge' has no facts for the proxy and
+    backup hosts. The template must not render against that, and this asserts
+    the failure is still detectable rather than silently producing HBA lines
+    with no address in them.
+    """
     try:
         template.render(**context("RedHat", True, True, False, set(PGEDGE)))
     except Exception as exc:
         print("ok       missing proxy/backup facts are rejected "
               f"({type(exc).__name__})")
-    else:
-        failures.append(
-            "a template rendered with no facts for the proxy and backup hosts "
+        return []
+
+    print("FAIL     missing proxy/backup facts rendered anyway")
+    return ["a template rendered with no facts for the proxy and backup hosts "
             "produced output instead of failing; a playbook whose plays are all "
-            "'pgedge' would emit HBA rules with no addresses in them")
-        print("FAIL     missing proxy/backup facts rendered anyway")
+            "'pgedge' would emit HBA rules with no addresses in them"]
+
+
+def main():
+    template = env().get_template("patroni.yml.j2")
+
+    failures = check_switches(template)
+    print()
+    failures += check_missing_facts(template)
 
     if failures:
         print("\n" + "\n".join(f"  - {f}" for f in failures))

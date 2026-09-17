@@ -18,20 +18,26 @@
 #   pgbouncer_enabled: true
 #   pgbouncer_auth_password: <a real password>
 
+# PgBackRest encrypts the repository with this, and it has no default: a
+# generated password would have to be identical on every run and also
+# unguessable, and nothing can be both. It belongs under 'all' rather than
+# under 'pgedge', because the backup servers render the same repository
+# configuration and have to arrive at the same value as the nodes they serve:
+#
+#   all:
+#     vars:
+#       backup_repo_cipher: "{{ vault_backup_repo_cipher }}"
+#
+# Or leave PgBackRest's own encryption off and let the storage layer do it,
+# which is the arrangement that permits key rotation -- again under 'all', for
+# the same reason:
+#
+#   all:
+#     vars:
+#       backup_repo_cipher_type: none
+
 pgedge:
   vars:
-  # PgBackRest encrypts the repository with this, and it has no default: a
-  # generated password would have to be identical on every run and also
-  # unguessable, and nothing can be both. Set it on 'all' so the backup servers
-  # reach the same value as the nodes they serve.
-  #
-  #   backup_repo_cipher: "{{ vault_backup_repo_cipher }}"
-  #
-  # Or leave PgBackRest's own encryption off and let the storage layer do it,
-  # which is the arrangement that permits key rotation:
-  #
-  #   backup_repo_cipher_type: none
-
     db_password: secret
     is_ha_cluster: true
   hosts:

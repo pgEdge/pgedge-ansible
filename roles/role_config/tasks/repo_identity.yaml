@@ -72,26 +72,35 @@
     repo_identity_backups: >-
       {{ repo_identity_stanza.backup | default([]) | length }}
 
-# An empty data directory beside a repository holding backups is not a cluster
-# waiting to be built. Deploying over it produces an empty cluster that cannot
-# archive -- its new system identifier will not match the stanza -- and the
-# repository's recovery point stops advancing while the cluster looks fine.
+# An empty data directory beside a stanza that already describes a cluster is
+# not a cluster waiting to be built. Deploying over it produces an empty cluster
+# that cannot archive -- its new system identifier will not match any entry the
+# stanza holds -- and the repository's recovery point stops advancing while the
+# cluster looks fine.
+#
+# The test is the stanza's history, not its backup count. A stanza created for a
+# cluster that has not been backed up yet still names that cluster, and an empty
+# data directory here is still the wrong thing to deploy over: archiving would
+# be refused just the same, and there would not even be a backup to restore
+# from afterwards.
 
 - name: Refuse to build a new cluster where the repository already holds one
   fail:
     msg: >-
-      Stanza {{ backup_stanza }} already holds {{ repo_identity_backups }}
-      backup(s), and {{ inventory_hostname }} has no data directory to go with
-      them. Deploying here would initialize an empty cluster whose system
-      identifier does not match the stanza, so it could never archive to this
-      repository and the backups would stop advancing while the cluster looked
-      healthy. Restore the cluster instead: see the recovery documentation for
-      the playbook that rebuilds a cluster from its repository. To deploy a
-      genuinely new cluster beside these backups, give it its own cluster_name
+      Stanza {{ backup_stanza }} already describes a cluster and holds
+      {{ repo_identity_backups }} backup(s), and {{ inventory_hostname }} has
+      no data directory to go with it. Deploying here would initialize an
+      empty cluster whose system identifier matches no entry the stanza holds,
+      so it could never archive to this repository and the repository would
+      stop advancing while the cluster looked healthy. A stanza holding no
+      backup is no better: there would be nothing to recover from either.
+      Restore the cluster instead: see the recovery documentation for the
+      playbook that rebuilds a cluster from its repository. To deploy a
+      genuinely new cluster beside this stanza, give it its own cluster_name
       or zone so that it gets a stanza of its own.
   when:
   - not repo_identity_pg_control.stat.exists
-  - repo_identity_backups | int > 0
+  - repo_identity_ids | length > 0
 
 - name: Read the system identifier this cluster was initialized with
   command:

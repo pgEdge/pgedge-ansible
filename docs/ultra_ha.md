@@ -42,6 +42,7 @@ example inventory defines a two-zone cluster:
 all:
   vars:
     ansible_user: pgedge
+    backup_repo_cipher: "{{ vault_backup_repo_cipher }}"
 
 pgedge:
   vars:
@@ -86,6 +87,14 @@ rebuilt as streaming replicas.
 
 Note that these playbooks will also require that the passwords be changed from
 `secret`.
+
+`backup_repo_cipher` is the password PgBackRest encrypts the repository with.
+It has no default and the deployment refuses to run without one, so it is
+given here as a vaulted variable alongside the other secrets. It belongs under
+`all` rather than under `pgedge`: the backup servers render the same repository
+configuration as the nodes they serve and have to arrive at the same value. Set
+`backup_repo_cipher_type: none` instead where the storage layer encrypts — an
+S3 bucket with default encryption, for example — and leave the cipher unset.
 
 ## Creating a Playbook
 

@@ -31,7 +31,6 @@ This role requires the following roles for normal operation:
 
 - `role_config` provides shared configuration variables to the role.
 - `install_backrest` installs PgBackRest packages on inventory hosts.
-- `setup_postgres` initializes and configures Postgres instances.
 - `init_server` generates SSH keys for secure communication.
 
 ## When to Use
@@ -80,7 +79,7 @@ This role uses the following parameters from the inventory file:
 | `backup_repo_path` | Repository path for backup storage. |
 | `backup_repo_user` | OS user for backup operations. |
 | `backup_repo_cipher_type` | Encryption algorithm (default: `aes-256-cbc`). |
-| `backup_repo_cipher` | Encryption key; auto-generated from cluster settings if unset. |
+| `backup_repo_cipher` | Password PgBackRest encrypts the repository with. Required unless `backup_repo_cipher_type` is `none`; it has no default. |
 | `backup_host` | Backup server hostname; auto-detected from the `backup` group. |
 | `backup_user` | Backup database user (default: `backrest`). |
 | `backup_password` | Password for the backup database user. |
@@ -215,9 +214,12 @@ This role is idempotent and safe to re-run on inventory hosts. It writes
 configuration files and SSH trust and touches nothing in the repository.
 
 !!! warning "Encryption Keys"
-    The role auto-generates `backup_repo_cipher` based on cluster name and
-    zone when the parameter is unset. Losing this key makes backups
-    unrecoverable. Store the key securely.
+    `backup_repo_cipher` has no default and must be set explicitly unless
+    `backup_repo_cipher_type` is `none`. Set it on `all` rather than on
+    `pgedge`, so the backup servers render the same value as the nodes they
+    serve. Losing this key makes the repository unreadable and this collection
+    cannot rotate it, so store it securely — Ansible Vault, beside the
+    passwords.
 
 !!! note "HA Cluster Integration"
     For an HA cluster, `archive_command` and `restore_command` come from

@@ -31,6 +31,10 @@
   - inventory_hostname == first_node_in_zone
   - zone != recovery_zone
 
+# Only an SSH repository lives on the backup server. An S3 repository is
+# upgraded from the pgEdge node above, and a host that happens to sit in the
+# 'backup' group of an S3 deployment has no repository to upgrade at all.
+
 - name: Upgrade this zone's stanza from its backup server
   include_tasks: run_stanza_upgrade.yaml
   vars:
@@ -38,4 +42,5 @@
   when:
   - groups.backup is defined
   - inventory_hostname in groups.backup
+  - backup_type == 'ssh'
   - zone != recovery_zone

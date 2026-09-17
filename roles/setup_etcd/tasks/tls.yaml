@@ -3,9 +3,14 @@
 # All certificate generation is delegated to the Ansible controller so the
 # cryptography Python package is only required there, not on remote nodes.
 
-# An inventory-supplied authority is put in place first, so the generation below
-# finds one already there and leaves it alone. With none supplied this does
-# nothing and the behaviour is unchanged.
+# An inventory-supplied authority is put in place first, and the three CA
+# generation tasks below then skip themselves entirely. Relying on the modules
+# to leave a staged authority alone is not enough: openssl_privatekey rewrites a
+# key whose size is not the 4096 it asks for, and x509_certificate re-issues a
+# self-signed certificate that does not match the CSR it builds here, so a
+# supplied authority with any other subject or key size would be replaced by a
+# generated one. With no authority supplied these guards are all true and the
+# behaviour is unchanged.
 
 - name: Stage an inventory-supplied certificate authority
   include_role:
@@ -26,6 +31,7 @@
     size: 4096
   delegate_to: localhost
   run_once: true
+  when: etcd_ca_cert | default('') | length == 0
 
 - name: Generate CA certificate signing request
   community.crypto.openssl_csr:
@@ -42,6 +48,7 @@
     key_usage_critical: true
   delegate_to: localhost
   run_once: true
+  when: etcd_ca_cert | default('') | length == 0
 
 - name: Generate CA self-signed certificate
   community.crypto.x509_certificate:
@@ -52,6 +59,7 @@
     selfsigned_not_after: "+{{ tls_validity_days }}d"
   delegate_to: localhost
   run_once: true
+  when: etcd_ca_cert | default('') | length == 0
 
 - name: Generate peer private key for {{ inventory_hostname }}
   community.crypto.openssl_privatekey:
