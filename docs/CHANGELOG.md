@@ -91,6 +91,12 @@ in full.
   recreated it. All the rules now go through one task using the module's own
   per-rule mode instead, matching how the role's own `primary_setup.yaml` and
   `finalize_backrest` already write to the same file. (EE-40)
+- `setup_pgedge` no longer reports Spock node and subscription creation as
+  changed on every run. Both used a `DO $$ ... $$` block, which always reports
+  changed regardless of whether its `IF NOT FOUND` branch actually fired, since
+  PostgreSQL's own command tag for an anonymous block carries no row count.
+  Both the HA and non-HA task files now check for existence with a plain
+  `SELECT` first and only run the creation query when needed. (EE-40)
 
 ## v1.1.0
 

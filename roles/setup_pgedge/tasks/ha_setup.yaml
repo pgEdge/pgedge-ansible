@@ -21,26 +21,48 @@
 
 # Now that proxies are verified, it's safe to start wiring the cluster
 # together, starting with establishing our own node.
+#
+# Neither task here uses a DO $$ ... $$ block, unlike an earlier
+# version of both: Postgres's own command tag for an anonymous block
+# is just "DO", with no row count, so postgresql_query has nothing to
+# detect a real change from and always reports changed regardless of
+# whether the IF NOT FOUND branch fired. A plain SELECT existence
+# check first (which the module correctly never reports as changed),
+# followed by a plain function-call creation query gated on that
+# check, makes changed_when: true on the creation query accurate.
 
-- name: Set up Spock to manage node metadata
+- name: Check whether this node is already known to Spock
   community.postgresql.postgresql_query:
     login_port: "{{ pg_port }}"
     login_db: "{{ item }}"
     login_unix_socket: /var/run/postgresql
-    query: |-
-      DO $$
-      BEGIN
-        PERFORM FROM spock.node WHERE node_name = %(node_name)s;
-        IF NOT FOUND THEN
-          PERFORM spock.node_create (
-            node_name := %(node_name)s, dsn := %(dsn)s
-          );
-        END IF;
-      END; $$ LANGUAGE plpgsql;
+    query: "SELECT 1 FROM spock.node WHERE node_name = %(node_name)s"
     named_args:
       node_name: "edge{{ zone }}"
-      dsn: "host={{ subscribe_target }} user={{ pgedge_user }} dbname={{ item }} port={{ proxy_port }}"
+  register: spock_node_status
   loop: "{{ db_names }}"
+  become: true
+  become_user: postgres
+  changed_when: false
+
+- name: Set up Spock to manage node metadata
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item.item }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT spock.node_create(node_name := %(node_name)s,
+      dsn := %(dsn)s)
+    named_args:
+      node_name: "edge{{ zone }}"
+      dsn: >-
+        host={{ subscribe_target }} user={{ pgedge_user }}
+        dbname={{ item.item }} port={{ proxy_port }}
+  loop: "{{ spock_node_status.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.query_result | length == 0
+  changed_when: true
   become: true
   become_user: postgres
 
@@ -245,41 +267,55 @@
 # - The first node in the `haproxy` group for this zone, if any.
 # - The first pgedge node in the zone itself, assuming no proxies match.
 
-- name: Subscribe to any other pgEdge nodes in the cluster, by zone
+- name: Check which subscriptions to other pgEdge nodes already exist
   community.postgresql.postgresql_query:
     login_port: "{{ pg_port }}"
     login_db: "{{ item.1 }}"
     login_unix_socket: /var/run/postgresql
-    query: |
-      DO $$
-      BEGIN
-        PERFORM FROM spock.subscription WHERE sub_name = %(sub_name)s;
-        IF NOT FOUND THEN
-          PERFORM spock.sub_create(subscription_name := %(sub_name)s, provider_dsn := %(dsn)s);
-        END IF;
-      END;
-      $$ LANGUAGE plpgsql;
+    query: "SELECT 1 FROM spock.subscription WHERE sub_name = %(sub_name)s"
     named_args:
       sub_name: "sub_n{{ zone }}_n{{ item.0 }}"
-      dsn: "host={{ conn_target }} user={{ pgedge_user }} dbname={{ item.1 }} port={{ proxy_port }}"
+  register: spock_subscription_status
+  loop: "{{ zone_list | reject('equalto', zone) | product(db_names) | list }}"
+  become: true
+  become_user: postgres
+  changed_when: false
+
+- name: Subscribe to any other pgEdge nodes in the cluster, by zone
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item.item.1 }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT spock.sub_create(subscription_name := %(sub_name)s,
+      provider_dsn := %(dsn)s)
+    named_args:
+      sub_name: "sub_n{{ zone }}_n{{ item.item.0 }}"
+      dsn: >-
+        host={{ conn_target }} user={{ pgedge_user }}
+        dbname={{ item.item.1 }} port={{ proxy_port }}
   vars:
     remote_first_node: >-
       {{ groups['pgedge'] |
       map('extract', hostvars) |
-      selectattr('zone', 'eq', item.0) |
+      selectattr('zone', 'eq', item.item.0) |
       map(attribute='inventory_hostname') | list | first }}
     remote_proxy_node: >-
       {{ hostvars[remote_first_node].proxy_node | default('') }}
     remote_proxies: >-
       {{ groups['haproxy'] | default(()) |
       map('extract', hostvars) |
-      selectattr('zone', 'eq', item.0) |
+      selectattr('zone', 'eq', item.item.0) |
       map(attribute='inventory_hostname') | list }}
     conn_target: >-
       {{ remote_proxy_node if remote_proxy_node > ''
          else remote_proxies | first if remote_proxies
          else remote_first_node }}
-  loop: "{{ zone_list | reject('equalto', zone) | product(db_names) | list }}"
+  loop: "{{ spock_subscription_status.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.query_result | length == 0
+  changed_when: true
   become: true
   become_user: postgres
 
