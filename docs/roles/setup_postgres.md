@@ -172,7 +172,7 @@ This role generates and modifies the following files on inventory hosts:
 | `{{ pg_data }}/server.key` | New | SSL private key with mode 600. |
 | `~postgres/.pgpass` | New | Password file for automated database connections. |
 | `{{ pg_config_dir }}/postgresql.conf` | Modified | Postgres settings configured for pgEdge deployment. |
-| `{{ pg_data }}/pg_hba.conf` | Modified | Authentication rules configured for users and nodes. |
+| `{{ pg_config_dir }}/pg_hba.conf` | Modified | Authentication rules configured for users and nodes. |
 
 ## Platform-Specific Behavior
 
@@ -201,9 +201,15 @@ service name is `postgresql-{{ pg_version }}`.
 This role is idempotent and safe to re-run on inventory hosts. The role
 initializes the data directory only when the directory is missing, preserves
 existing SSL certificates, and creates users and databases only when they do
-not exist. The role updates configuration blocks in `postgresql.conf` and
-`pg_hba.conf` to match the current inventory settings.
+not exist. The role adds or updates the rules it manages in `pg_hba.conf`,
+and updates the managed block in `postgresql.conf` to match the current
+inventory settings.
 
 !!! tip "Configuration Management"
-    Postgres configuration uses the Ansible `blockinfile` module, which
-    preserves manual changes made outside the managed block.
+    `postgresql.conf` is managed with the Ansible `blockinfile` module,
+    which preserves manual changes made outside the managed block.
+    `pg_hba.conf` is managed rule by rule with the
+    `community.postgresql.postgresql_pg_hba` module, which leaves rules
+    the role does not manage in place. Rules are only added and updated,
+    never removed, so a rule for a host dropped from the inventory must
+    be deleted by hand.

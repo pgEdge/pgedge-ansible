@@ -79,6 +79,18 @@ in full.
   5432. (EE-39)
 - `make build` rebuilds the tarball when any shipped file changes or is
   deleted. (EE-39)
+- `setup_postgres` role documentation no longer attributes `pg_hba.conf`
+  management to the `blockinfile` module, which only handles `postgresql.conf`,
+  and now gives the path of `pg_hba.conf` as `pg_config_dir` rather than
+  `pg_data`, which named the wrong directory on Debian. (EE-40)
+- `setup_postgres` no longer rewrites `pg_hba.conf` down to a single rule on
+  every run after the first. One of several tasks writing that file used
+  `overwrite: true`, which compares its own rules against the entire file
+  rather than just the rules that task manages, so every run wiped whatever the
+  other tasks (and `custom_hba_rules`) had already added, then immediately
+  recreated it. All the rules now go through one task using the module's own
+  per-rule mode instead, matching how the role's own `primary_setup.yaml` and
+  `finalize_backrest` already write to the same file. (EE-40)
 
 ## v1.1.0
 

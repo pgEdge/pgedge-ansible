@@ -63,53 +63,50 @@
 # Otherwise, follow the principal of least access and only name necessary
 # database and user combinations.
 #
-# Do this with one line per rule for easier editing later.
+# No overwrite: true here. primary_setup.yaml (HA) and finalize_backrest's
+# add_hba_rules.yaml add their own rules to this same file later,
+# independently of this task and each other, and overwrite compares
+# the rules given in *this* task against the *entire* file — any rule
+# left out of that list gets wiped the moment the file already
+# contains it. An earlier version of this task did use overwrite:
+# true, on the reasoning that it should have the file to itself since
+# it runs first, and that looked idempotent right up until an HA or
+# backup-enabled run added its own rules afterward, which the very
+# next run of this task then deleted. Without overwrite, the module
+# compares each rule here against the existing file individually and
+# only touches the ones that changed, which is what lets those other
+# additions coexist safely. One rule per list entry keeps them as easy
+# to read and edit as separate tasks would.
 
-- name: Ensure local peer access for the postgres user
+- name: Ensure the required and custom pg_hba.conf rules are all present
   community.postgresql.postgresql_pg_hba:
     dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: local
-    users: postgres
-    databases: all
-    method: peer
     create: true
-    overwrite: true
+    rules: "{{ pg_hba_rules | from_yaml }}"
+  vars:
+    pg_hba_rules: |
+      - contype: local
+        users: postgres
+        databases: all
+        method: peer
+      - contype: host
+        users: all
+        databases: all
+        method: scram-sha-256
+        source: 127.0.0.1/32
+      {% for host in groups['pgedge'] %}
+      - contype: host
+        users: "{{ pgedge_user }},{{ db_user }}"
+        databases: "{{ (db_names + ['postgres']) | join(',') }}"
+        method: scram-sha-256
+        source: "{{ hostvars[host].ansible_default_ipv4.address }}/32"
+      {% endfor %}
+      {% for rule in custom_hba_rules %}
+      - contype: "{{ rule.contype | default('host') }}"
+        users: "{{ rule.users | default('postgres') }}"
+        databases: "{{ rule.databases | default('postgres') }}"
+        method: "{{ rule.method | default('scram-sha-256') }}"
+        source: "{{ rule.source | default('127.0.0.1/32') }}"
+      {% endfor %}
   become: true
   become_user: postgres
-
-- name: Allow localhost connections from any user
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: host
-    users: all
-    databases: all
-    method: scram-sha-256
-    source: 127.0.0.1/32
-  become: true
-  become_user: postgres
-
-- name: Add access for the pgedge communication and admin/DB user
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: host
-    users: "{{ pgedge_user + ',' + db_user }}"
-    databases: "{{ (db_names + ['postgres']) | join(',') }}"
-    method: scram-sha-256
-    source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
-  loop: "{{ groups['pgedge'] }}"
-  become: true
-  become_user: postgres
-
-- name: Add customized user / host access
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: "{{ item.contype | default('host') }}"
-    users: "{{ item.users | default('postgres') }}"
-    databases: "{{ item.databases | default('postgres') }}"
-    method: "{{ item.method | default('scram-sha-256') }}"
-    source: "{{ item.source | default('127.0.0.1/32') }}"
-  loop: "{{ custom_hba_rules }}"
-  become: true
-  become_user: postgres
-  when: 
-  - custom_hba_rules | length > 0
