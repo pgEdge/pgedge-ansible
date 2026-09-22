@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+The [release notes](release_notes/unreleased.md#changes) describe each change
+in full.
+
+### Added
+
+- New `install_coldfront` and `setup_coldfront` roles add ColdFront tiered
+  storage to pgEdge Distributed Postgres nodes, and new `install_lakekeeper`
+  and `setup_lakekeeper` roles build the Lakekeeper catalog it commits
+  through, keeping its warehouse's storage profile up to date. (EE-40)
+- New `coldfront_enabled` parameter adds ColdFront's libraries and settings to
+  the Postgres configuration. New `lakekeeper_*` and `coldfront_s3_*`
+  parameters locate the catalog and the object store. (EE-40)
+- `init_server` refuses ColdFront on an HA cluster, without a catalog or
+  complete object store settings, or on an unsupported `pg_version`, and a
+  Lakekeeper host with the default password or colliding ports. (EE-40)
+- The `simple-cluster` sample playbook and end-to-end test can add ColdFront,
+  with a ColdFront reconfiguration check. (EE-40)
+- `setup_postgres` gained a `plain_instance` task file for roles that need a
+  Postgres instance of their own. (EE-40)
+- `coldfront_mesh` orders ColdFront's cold-tier commits across every node of a
+  Spock cluster. `init_server` refuses it unless `db_names` lists
+  `coldfront_db`. (EE-40)
+- New `coldfront_peer_alive_window_ms` parameter. (EE-40)
+- The simple-cluster end-to-end test can run ColdFront in mesh mode. (EE-40)
+
 ### Fixed
 
 - The configuration reference gives the Debian defaults of `pg_data`,

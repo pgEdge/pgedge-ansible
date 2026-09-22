@@ -14,6 +14,44 @@
 #
 #   pgbouncer_enabled: true
 #   pgbouncer_auth_password: <a real password>
+#
+# To add ColdFront tiered storage, set coldfront_enabled on the pgedge group
+# and put the host that serves the Lakekeeper Iceberg catalog in a lakekeeper
+# group. Both groups read the catalog and object store settings, so those go
+# under all. This collection deploys no object store. Point
+# coldfront_s3_endpoint at an S3-compatible store whose bucket already exists;
+# for AWS S3, leave it empty, set coldfront_s3_region, and set
+# coldfront_s3_path_style to false.
+#
+#   all:
+#     vars:
+#       lakekeeper_host: 192.168.6.20
+#       coldfront_s3_endpoint: https://s3.example.com
+#       coldfront_s3_bucket: iceberg
+#       coldfront_s3_access_key: <the store's access key>
+#       coldfront_s3_secret_key: <the store's secret key>
+#
+#   pgedge:
+#     vars:
+#       coldfront_enabled: true
+#
+#   lakekeeper:
+#     vars:
+#       lakekeeper_db_password: <a real password>
+#     hosts:
+#       192.168.6.20:
+#
+# With coldfront_mesh at its default of false, each node serializes only its
+# own cold-tier commits, so write any one Iceberg table from a single node. To
+# order cold-tier commits across all three nodes instead, turn on mesh mode,
+# which needs the ColdFront database in db_names as well:
+#
+#   pgedge:
+#     vars:
+#       coldfront_mesh: true
+#       db_names:
+#       - demo
+#       - coldfront
 
 pgedge:
   vars:

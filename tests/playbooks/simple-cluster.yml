@@ -21,6 +21,49 @@
   - name: Confirm every host in the inventory is reachable
     ping:
 
+# The Lakekeeper catalog, on the host tests/inventories/coldfront.yml adds for
+# ColdFront; without that layer this play matches no hosts. setup_coldfront
+# waits on the catalog's /health and gives up after 30s, so the catalog has to
+# be serving before the pgEdge nodes are configured.
+
+- hosts: lakekeeper
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: init_server
+
+  - include_role:
+      name: install_repos
+
+  - include_tasks: switch-repo.yml
+
+  - include_role:
+      name: install_lakekeeper
+
+  # The compose overlay creates the bucket from a side container, so it
+  # can still be arriving once this host is reachable. setup_lakekeeper
+  # writes to the bucket to prove the warehouse credentials work, and a
+  # bucket that does not exist yet fails that write rather than waiting
+  # for it. Inert outside the test network, where seaweedfs_filer is
+  # unset.
+
+  - name: Wait for the object store bucket to exist
+    uri:
+      url: "{{ seaweedfs_filer }}/buckets/{{ coldfront_s3_bucket }}/"
+      status_code: 200
+    register: bucket
+    retries: 30
+    delay: 2
+    until: bucket is success
+    when: seaweedfs_filer is defined
+
+  - include_role:
+      name: setup_lakekeeper
+
 - hosts: pgedge
   any_errors_fatal: true
 
@@ -43,6 +86,12 @@
       name: install_pgbouncer
     when: pgbouncer_enabled | default(false) | bool
 
+  # Before setup_postgres, which preloads ColdFront's libraries.
+
+  - include_role:
+      name: install_coldfront
+    when: coldfront_enabled | default(false) | bool
+
   - include_role:
       name: setup_postgres
 
@@ -52,3 +101,7 @@
 
   - include_role:
       name: setup_pgedge
+
+  - include_role:
+      name: setup_coldfront
+    when: coldfront_enabled | default(false) | bool
