@@ -1,0 +1,12 @@
+---
+
+# Mesh mode for the ColdFront layer, passed with -e on top of
+# tests/inventories/coldfront.yml: run-test.sh's mesh argument, or the
+# mesh input of the simple-cluster workflow. The ColdFront database
+# joins Spock alongside demo, and setup_coldfront arms ColdFront's
+# bakery, so cold-tier commits are ordered across every node.
+
+coldfront_mesh: true
+db_names:
+- demo
+- coldfront

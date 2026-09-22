@@ -5,6 +5,10 @@
 # Set pgbouncer_enabled on that group to give every node a connection pooler in
 # front of its own Postgres.
 #
+# Set coldfront_enabled on that group, and put the host that serves the
+# Lakekeeper Iceberg catalog in the lakekeeper group, to add ColdFront tiered
+# storage. The inventory shows how.
+#
 # CHECK the README for how these roles work
 ---
 
@@ -29,7 +33,12 @@
   - name: Confirm every host in the inventory is reachable
     ping:
 
-- hosts: pgedge
+# The Lakekeeper catalog every cold-tier commit goes through, on the
+# lakekeeper group's host; an inventory without that group skips this play.
+# It comes before the pgEdge nodes, because setup_coldfront fails if the
+# catalog is not already answering.
+
+- hosts: lakekeeper
 
   collections:
   - pgedge.platform
@@ -37,10 +46,30 @@
   roles:
   - init_server
   - install_repos
+  - install_lakekeeper
+  - setup_lakekeeper
+
+- hosts: pgedge
+
+  collections:
+  - pgedge.platform
+
+  # install_coldfront comes before setup_postgres, which preloads ColdFront's
+  # libraries and creates its role, database and extensions where
+  # coldfront_enabled is set, and Postgres will not start with a library it
+  # cannot find.
+
+  roles:
+  - init_server
+  - install_repos
   - install_pgedge
   - role: install_pgbouncer
     when: pgbouncer_enabled | bool
+  - role: install_coldfront
+    when: coldfront_enabled | bool
   - setup_postgres
   - role: setup_pgbouncer
     when: pgbouncer_enabled | bool
   - setup_pgedge
+  - role: setup_coldfront
+    when: coldfront_enabled | bool

@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "coldfront",
+      "credentials": [
+        {
+          "accessKey": "coldfront",
+          "secretKey": "coldfrontsecret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

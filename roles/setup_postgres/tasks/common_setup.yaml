@@ -113,3 +113,80 @@
   become_user: postgres
   changed_when: false
   when: pgbouncer_enabled | bool
+
+# ColdFront's role, database and extensions, wherever coldfront_enabled is set:
+# the NOLOGIN role pg_duckdb gates DuckDB execution on, and the database of its
+# own that ColdFront's tiered storage lives in.
+#
+# Creating the extensions needs ColdFront's libraries loaded, and Postgres
+# loads them only when it starts, so ask it what it has loaded first. A restart
+# that pg_allow_restart held back then stops the run here, with its reason,
+# rather than at CREATE EXTENSION.
+
+- name: Read the libraries Postgres has loaded
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: SHOW shared_preload_libraries
+  register: live_preload_libraries
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: coldfront_enabled | bool
+
+- name: Ensure Postgres has loaded ColdFront's libraries
+  assert:
+    that:
+    - "'pg_duckdb' in loaded"
+    - "'coldfront' in loaded"
+    fail_msg: >-
+      Postgres on {{ inventory_hostname }} has loaded
+      {{ loaded | join(', ') }}, not ColdFront's libraries, so ColdFront's
+      extensions cannot be created yet. setup_postgres restarts Postgres to
+      load them only where pg_allow_restart allows. Restart it, then run
+      setup_postgres again.
+    quiet: true
+  vars:
+    loaded: >-
+      {{ live_preload_libraries.query_result[0].shared_preload_libraries
+         | split(',') | map('trim') | list }}
+  when: coldfront_enabled | bool
+
+- name: Create the role pg_duckdb gates DuckDB execution on
+  community.postgresql.postgresql_user:
+    name: "{{ coldfront_duckdb_role }}"
+    role_attr_flags: NOLOGIN
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+  when: coldfront_enabled | bool
+
+- name: Create the ColdFront database
+  community.postgresql.postgresql_db:
+    name: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+  when: coldfront_enabled | bool
+
+# In mesh mode coldfront_db is one of db_names, which setup_pgedge puts into
+# Spock, and the bakery's claim and release go through dblink. Spock replicates
+# a CREATE EXTENSION issued once a database has a Spock node to the other
+# nodes, which create the extension themselves, so all of them are created
+# here, before setup_pgedge, as upstream's mesh setup does.
+
+- name: Create the ColdFront extensions
+  community.postgresql.postgresql_ext:
+    name: "{{ item }}"
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  loop: >-
+    {{ (['dblink'] if coldfront_mesh | bool else [])
+       + ['pg_duckdb', 'coldfront'] }}
+  become: true
+  become_user: postgres
+  when: coldfront_enabled | bool

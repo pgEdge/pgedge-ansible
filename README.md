@@ -128,7 +128,8 @@ Sample playbooks are provided in the
 [sample-playbooks](./sample-playbooks) directory:
 
 - [simple-cluster](./sample-playbooks/simple-cluster) - Deploys a standard
-  three-node pgEdge Distributed Postgres cluster.
+  three-node pgEdge Distributed Postgres cluster, optionally with the
+  ColdFront tiered-storage add-on and a Lakekeeper catalog host.
 - [ultra-ha](./sample-playbooks/ultra-ha) - Deploys a two-zone Ultra-HA
   cluster with Patroni, etcd, HAProxy, and PgBackRest.
 

@@ -1,0 +1,27 @@
+---
+
+lakekeeper_url: "http://{{ lakekeeper_host }}:{{ lakekeeper_port }}"
+
+# ColdFront's own tables Spock replicates in mesh mode. claims and
+# claim_acks carry the bakery's protocol between nodes; storage_secret
+# carries the object-store credential; partition_config, tiered_views
+# and archive_watermark let a table provisioned on one node be used on
+# the others. coldfront.deferred_acks stays local, as upstream intends.
+coldfront_bakery_tables:
+- coldfront.claims
+- coldfront.claim_acks
+
+coldfront_catalog_tables:
+- coldfront.storage_secret
+- coldfront.partition_config
+- coldfront.tiered_views
+- coldfront.archive_watermark
+
+# Whether this node calls coldfront.set_storage_secret(). In mesh mode
+# the first pgEdge host makes the call for the cluster: the row reaches
+# the other nodes through Spock, and an ENABLE ALWAYS trigger on
+# coldfront.storage_secret materializes each node's own DuckDB secret
+# as Spock applies it. Outside mesh mode every node makes its own call.
+coldfront_sets_secret: >-
+  {{ not coldfront_mesh | bool
+     or inventory_hostname == groups['pgedge'] | first }}

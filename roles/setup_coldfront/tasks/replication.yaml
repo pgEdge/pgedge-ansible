@@ -1,0 +1,69 @@
+---
+
+# Mesh mode only, once setup_pgedge has made this node a Spock node in
+# coldfront_db: add ColdFront's tables to the node's default replication
+# set, as upstream's one-time mesh setup does. Without the bakery's
+# tables there, a peer's acknowledgements never reach the writer that
+# asked for them, and every claim waits forever.
+#
+# Membership is read first and only the missing tables are added, so a
+# re-run reports no change.
+#
+# The table names go in as one comma-separated string, because
+# postgresql_query turns a list argument into an array literal built
+# from Python's own quoting, which PostgreSQL would read as part of
+# each name.
+
+- name: Check which ColdFront tables Spock does not replicate yet
+  community.postgresql.postgresql_query:
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT t.name
+      FROM unnest(string_to_array(%(tables)s, ',')) AS t(name)
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM spock.replication_set rs
+        JOIN spock.replication_set_table rst ON rst.set_id = rs.set_id
+        WHERE rs.set_name = 'default'
+        AND rst.set_reloid = t.name::regclass)
+    named_args:
+      tables: >-
+        {{ (coldfront_bakery_tables + coldfront_catalog_tables) | join(',') }}
+  register: coldfront_unreplicated
+  changed_when: false
+  become: true
+  become_user: postgres
+
+# Upstream's own function for the bakery's tables, which also checks
+# membership before adding each one.
+
+- name: Add the bakery's tables to Spock's default replication set
+  community.postgresql.postgresql_query:
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+    query: SELECT coldfront._ensure_claims_replicated()
+  when: >-
+    coldfront_unreplicated.query_result | map(attribute='name')
+    | select('in', coldfront_bakery_tables) | list | length > 0
+  changed_when: true
+  become: true
+  become_user: postgres
+
+- name: Add ColdFront's catalog tables to Spock's default replication set
+  community.postgresql.postgresql_query:
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT spock.repset_add_table('default', %(table)s::regclass, false)
+    named_args:
+      table: "{{ item }}"
+  loop: >-
+    {{ coldfront_unreplicated.query_result | map(attribute='name')
+       | select('in', coldfront_catalog_tables) | list }}
+  changed_when: true
+  become: true
+  become_user: postgres
