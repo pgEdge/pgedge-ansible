@@ -1,0 +1,21 @@
+---
+
+# If the pg_data directory is in a non-default location, the Postgres user may
+# not be able to create it. Downstream tools will have problems with this so
+# this will be a universal step.
+
+- name: Ensure Postgres data directory exists and is owned by postgres user
+  file:
+    path: "{{ pg_data }}"
+    state: directory
+    owner: postgres
+    mode: "0700"
+  become: true
+
+- name: Ensure Postgres configuration path exists and is owned by postgres user
+  file:
+    path: "{{ pg_config_dir }}"
+    state: directory
+    owner: postgres
+    mode: "0700"
+  become: true

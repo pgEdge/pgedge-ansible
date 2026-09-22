@@ -79,6 +79,12 @@
 # name other than "main", the Debian default, this is a new cluster beside the
 # one the package created; for "main" it is one that a recovery erased, or one
 # with its own pg_data that replaces the package's.
+#
+# The port is given because pg_createcluster otherwise takes the first one no
+# configured cluster claims, and the package's main cluster, stopped above,
+# still claims 5432. setup_postgres writes pg_port into the configuration
+# afterwards anyway, but an instance created through plain_instance.yaml has
+# no other configuration and has to listen where the role using it connects.
 
 - name: Install and set up Postgres using Postgres CLI tooling
   command:
@@ -86,6 +92,8 @@
     - pg_createcluster
     - -d
     - "{{ pg_data }}"
+    - -p
+    - "{{ pg_port }}"
     - "{{ pg_version }}"
     - "{{ cluster_name }}"
   args:

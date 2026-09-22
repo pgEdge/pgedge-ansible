@@ -1,0 +1,101 @@
+# The simple-cluster-coldfront scenario: two pgEdge nodes carrying the
+# ColdFront extension, one Lakekeeper host for the Iceberg catalog, and
+# SeaweedFS standing in for the S3-compatible object store.
+#
+# Two pgEdge nodes rather than three. coldfront_mesh defaults to false,
+# so each node's cold tier is independent and a third node proves
+# nothing extra about ColdFront; two still prove Spock replicates with
+# pg_duckdb and coldfront preloaded alongside it.
+#
+# SeaweedFS is deliberately NOT an Ansible inventory host, the same way
+# tests/compose/dcs-consul.yml keeps Consul out of the inventory.
+# run-test.sh waits for SSH on every inventory host, and SeaweedFS runs
+# no sshd. Its address lives in tests/vars/simple-cluster-coldfront.yml.
+#
+# The SeaweedFS tag is pinned rather than floating. From 4.x its S3
+# gateway also starts a built-in Iceberg REST catalog on 8181, which is
+# Lakekeeper's port. Separate containers mean no actual collision here,
+# but install_lakekeeper's port assert only looks at one host, so a
+# floating tag would turn into a confusing catalog mismatch rather than
+# a named failure.
+
+networks:
+  pgedge-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.6.0/24
+
+x-common: &common
+  build:
+    context: ../docker
+    dockerfile: Dockerfile.rocky9
+  privileged: true
+  cgroup: host
+  volumes:
+    - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  networks:
+    pgedge-test: {}
+
+services:
+  n1:
+    <<: *common
+    hostname: n1
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.10
+
+  n2:
+    <<: *common
+    hostname: n2
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.11
+
+  lakekeeper:
+    <<: *common
+    hostname: lakekeeper
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.30
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.80
+    hostname: seaweedfs
+    command: >-
+      server -dir=/data -ip=192.168.6.31
+      -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.31
+
+  # Lakekeeper writes to the bucket when it creates the warehouse, to
+  # prove the credentials work, and it does not create the bucket
+  # first. SeaweedFS serves S3 from directories under the filer's
+  # /buckets path, so the bucket has to exist before the playbook runs.
+  #
+  # The loop tests for the bucket and creates it, rather than creating
+  # it and testing the exit status. depends_on waits for the container
+  # to start, not for it to serve, and SeaweedFS needs around twenty
+  # seconds before its filer answers on gRPC, so the first attempts
+  # fail. weed shell exits 0 even when the command inside it failed, so
+  # its status cannot end the loop. Asking the filer whether the bucket
+  # is there can only succeed once it really is.
+  seaweedfs-init:
+    image: chrislusf/seaweedfs:3.80
+    depends_on:
+      - seaweedfs
+    restart: "no"
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        until wget -q -O /dev/null
+        http://192.168.6.31:8888/buckets/iceberg/;
+        do echo 's3.bucket.create -name iceberg'
+        | weed shell -master=192.168.6.31:9333 -filer=192.168.6.31:8888;
+        sleep 2; done
+    networks:
+      pgedge-test: {}

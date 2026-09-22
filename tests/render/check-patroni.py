@@ -118,7 +118,9 @@ def hostvars_for(hosts_with_facts):
 # role_config's parameter layers, in the order each reads the one before. The
 # sizing layers read the cluster's shape and max_parallel_workers, and
 # pg_default_parameters is built from them.
-PARAMETER_LAYERS = ("pg_user_parameters",
+PARAMETER_LAYERS = ("pg_coldfront_parameters",
+                    "pg_coldfront_preload_libraries",
+                    "pg_user_parameters",
                     "zone_list", "nodes_in_zone", "pg_spock_nodes",
                     "pg_connectable_dbs", "pg_spock_subscriptions",
                     "pg_physical_standbys", "pg_parallel_workers",
@@ -172,7 +174,8 @@ ULTRA_HA = dict(groups={"pgedge": PGEDGE},
                 db_names=["demo"], pg_version=17, is_ha_cluster=True)
 
 
-def parameters(pg_parameters, backups, zone=1, shape=ULTRA_HA):
+def parameters(pg_parameters, backups, zone=1, shape=ULTRA_HA,
+               coldfront=False):
     """role_config's parameter layers for an inventory's pg_parameters and the
     shape of its cluster, evaluated as Ansible would. Returns every layer by
     name."""
@@ -187,6 +190,10 @@ def parameters(pg_parameters, backups, zone=1, shape=ULTRA_HA):
                role_vars["pg_required_preload_libraries"],
                pg_default_preload_libraries=
                role_vars["pg_default_preload_libraries"],
+               coldfront_enabled=coldfront, coldfront_mesh=False,
+               coldfront_duckdb_role="coldfront_duckdb",
+               coldfront_db="coldfront", lakekeeper_host="10.0.0.30",
+               lakekeeper_port=8181, lakekeeper_warehouse="wh",
                **shape)
     for name in PARAMETER_LAYERS:
         ctx[name] = e.from_string(role_vars[name]).render(**ctx)
@@ -425,6 +432,33 @@ def check_parameters(e, template):
     if preload != "spock, snowflake":
         failures.append(f"{label}: got '{preload}'")
         print(f"FAIL     {label}")
+    else:
+        print(f"ok       {label}")
+
+    # With ColdFront enabled, its libraries load after pg_stat_statements and
+    # before the inventory's own, and its settings are required parameters,
+    # which init_server refuses from pg_parameters. Without coldfront_mesh
+    # there is no DSN for coordinating commits between nodes.
+    layers = parameters({"shared_preload_libraries": "auto_explain"}, True,
+                        coldfront=True)
+    dcs = layers["pg_effective_parameters"]
+    checks = {
+        "libraries in order": dcs["shared_preload_libraries"]
+            == "spock, snowflake, pg_stat_statements, pg_duckdb, coldfront, "
+               "auto_explain",
+        "autoinstall off": dcs.get("duckdb.autoinstall_known_extensions")
+            == "off",
+        "settings required": all(
+            name in layers["pg_required_parameters"]
+            for name in ("duckdb.postgres_role", "coldfront.local_pg_dsn",
+                         "coldfront.lakekeeper_endpoint")),
+        "no mesh DSN": "coldfront.dblink_self" not in dcs,
+    }
+    bad = [name for name, ok in checks.items() if not ok]
+    label = "ColdFront parameters"
+    if bad:
+        failures.append(f"{label}: {', '.join(bad)}")
+        print(f"FAIL     {label}: {', '.join(bad)}")
     else:
         print(f"ok       {label}")
 

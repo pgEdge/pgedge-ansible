@@ -1,0 +1,141 @@
+---
+
+# Both are read at query time, not just at setup time: the cold tier
+# reads and writes the object store, and commits go through the
+# catalog. Checking here turns "the extension cannot commit" into a
+# named failure with an address attached. An empty coldfront_s3_endpoint
+# means AWS's own endpoint resolution, which has nothing local to wait
+# for.
+
+- name: Check that the object store is reachable from this host
+  wait_for:
+    host: "{{ coldfront_s3_reachable_host }}"
+    port: "{{ coldfront_s3_reachable_port }}"
+    timeout: 30
+  when: coldfront_s3_endpoint | length > 0
+
+- name: Check that the Iceberg catalog is reachable from this host
+  uri:
+    url: "{{ lakekeeper_url }}/health"
+    method: GET
+    status_code: 200
+  register: lakekeeper_health
+  retries: 15
+  delay: 2
+  until:
+  - lakekeeper_health is success
+  - (lakekeeper_health.json.health | default('')) == 'ok'
+
+# ColdFront's libraries and settings are among the parameters setup_postgres
+# writes where coldfront_enabled is set, and it restarts Postgres to load them
+# the way it applies any parameter that needs a restart: one node at a time,
+# and only where pg_allow_restart allows. This only checks the result, before
+# anything is created, since the extensions cannot be created until the
+# libraries have loaded.
+
+- name: Read the libraries Postgres has loaded
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: SHOW shared_preload_libraries
+  register: live_preload_libraries
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- name: Ensure Postgres has loaded ColdFront's libraries
+  assert:
+    that:
+    - "'pg_duckdb' in loaded"
+    - "'coldfront' in loaded"
+    fail_msg: >-
+      Postgres on {{ inventory_hostname }} has loaded
+      {{ loaded | join(', ') }}, not ColdFront's libraries. Set
+      coldfront_enabled, and run install_coldfront before setup_postgres,
+      which then restarts Postgres to load them unless pg_allow_restart is
+      false.
+    quiet: true
+  vars:
+    loaded: >-
+      {{ live_preload_libraries.query_result[0].shared_preload_libraries
+         | split(',') | map('trim') | list }}
+
+- name: Create the role pg_duckdb gates DuckDB execution on
+  community.postgresql.postgresql_user:
+    name: "{{ coldfront_duckdb_role }}"
+    role_attr_flags: NOLOGIN
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: Create the ColdFront database
+  community.postgresql.postgresql_db:
+    name: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: Create the ColdFront extensions
+  community.postgresql.postgresql_ext:
+    name: "{{ item }}"
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  loop:
+  - pg_duckdb
+  - coldfront
+  become: true
+  become_user: postgres
+
+# An upsert on coldfront.storage_secret, so running it every pass is
+# harmless and keeps the stored credential in step with the inventory.
+#
+# All six arguments are passed, because those left out default to
+# us-east-1, path style and plain HTTP. The region always reaches the
+# DuckDB secret, so a bucket in another Region would be signed for the
+# wrong one. ColdFront's object store docs call for a NULL endpoint on
+# AWS S3, which selects AWS's own per-Region addressing; the URL style
+# and SSL setting only apply once an endpoint is set.
+#
+# no_log hides the task's output, because the module returns the query
+# with the secret filled in and repeats the arguments in its error
+# message.
+
+- name: Point ColdFront at the object store
+  community.postgresql.postgresql_query:
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT coldfront.set_storage_secret(%(key)s, %(secret)s,
+      NULLIF(%(endpoint)s, ''), %(region)s, %(url_style)s,
+      %(use_ssl)s::boolean)
+    named_args:
+      key: "{{ coldfront_s3_access_key }}"
+      secret: "{{ coldfront_s3_secret_key }}"
+      endpoint: "{{ coldfront_s3_hostport }}"
+      region: "{{ coldfront_s3_region }}"
+      url_style: "{{ coldfront_s3_url_style }}"
+      use_ssl: "{{ coldfront_s3_endpoint.startswith('https') | lower }}"
+  changed_when: false
+  no_log: true
+  become: true
+  become_user: postgres
+
+# The file holds db_password and the object-store secret, so --diff
+# leaves it out.
+
+- name: Write the archiver, partitioner and compactor configuration
+  template:
+    src: coldfront-config.yaml.j2
+    dest: /etc/pgedge/coldfront/config.yaml
+    owner: coldfront
+    group: coldfront
+    mode: "0600"
+    backup: true
+  register: coldfront_config_file
+  diff: false
+  become: true
