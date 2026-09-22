@@ -1,0 +1,45 @@
+{#-
+  libpq's keyword/value syntax, which pgx also parses: a value goes in
+  single quotes, with each backslash or single quote in it escaped by a
+  backslash.
+-#}
+{% macro libpq_quote(value) -%}
+'{{ value | string | replace('\\', '\\\\') | replace("'", "\\'") }}'
+{%- endmacro %}
+# Managed by Ansible. Read by the archiver, partitioner and compactor
+# from /etc/pgedge/coldfront/config.yaml.
+#
+# The tools run as the coldfront OS user, the only one that can read
+# this file, so the DSN goes over TCP, where pg_hba.conf checks the
+# password. Over the Unix socket peer authentication would refuse
+# db_user.
+#
+# Each string is written as a JSON string, which YAML reads as a
+# double-quoted scalar, so no value can change the file's structure.
+---
+
+postgres:
+  dsn: {{ ('host=127.0.0.1 port=' ~ pg_port
+           ~ ' dbname=' ~ libpq_quote(coldfront_db)
+           ~ ' user=' ~ libpq_quote(db_user)
+           ~ ' password=' ~ libpq_quote(db_password)
+           ~ ' sslmode=disable') | to_json }}
+
+iceberg:
+  warehouse: {{ lakekeeper_warehouse | to_json }}
+  lakekeeper_endpoint: {{ (lakekeeper_url ~ '/catalog') | to_json }}
+
+s3:
+  endpoint: {{ coldfront_s3_hostport | to_json }}
+  region: {{ coldfront_s3_region | to_json }}
+  access_key: {{ coldfront_s3_access_key | to_json }}
+  secret_key: {{ coldfront_s3_secret_key | to_json }}
+  use_ssl: {{ coldfront_s3_endpoint.startswith('https') | lower }}
+  url_style: {{ coldfront_s3_url_style | to_json }}
+
+# Tiered tables live in coldfront.partition_config, not here. Register
+# one with "archiver register", or list them under archiver.tables and
+# load them with "archiver import --config
+# /etc/pgedge/coldfront/config.yaml".
+archiver:
+  tables: []

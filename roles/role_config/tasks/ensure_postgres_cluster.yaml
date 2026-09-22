@@ -1,0 +1,97 @@
+---
+
+# A plain, standalone Postgres cluster for a role that is not a pgEdge
+# Distributed Postgres node — Lakekeeper's catalog store and the AI DBA
+# Workbench's datastore, both of which need their own private instance
+# rather than Spock, Snowflake, or any pgEdge cluster HBA rule. Unlike
+# setup_postgres, this does not configure the instance for pgEdge
+# Distributed Postgres at all.
+#
+# On Debian the server package creates a cluster named main as it
+# installs, so with cluster_name set to main the guard below finds that
+# cluster and skips. Any other name, the collection's default included,
+# gets an instance of its own. RHEL's package creates none, so there the
+# instance is initialized here on the first run.
+#
+# This does not run as a dependency, because it needs pg_version,
+# cluster_name and pg_data resolved for the service's own instance, which
+# can differ from a pgEdge Distributed Postgres node's. Roles that need a
+# standalone instance include it explicitly:
+#
+#   - name: Ensure the Postgres cluster exists
+#     include_role:
+#       name: role_config
+#       tasks_from: ensure_postgres_cluster
+
+# Debian's server package creates a cluster named main on 5432 as it
+# installs, and starts it. An instance created on that same port cannot
+# start while main holds it, so stop and disable main first, exactly as
+# setup_postgres does for a pgEdge Distributed Postgres node. The
+# official Debian container images ship a policy-rc.d that refuses
+# service starts during package installs, so the test containers never
+# have main running, but a real host does.
+
+- name: Stop and disable the package's default cluster if it holds the port
+  service:
+    name: "postgresql@{{ pg_version }}-main"
+    state: stopped
+    enabled: false
+  become: true
+  when:
+  - ansible_facts['os_family'] == 'Debian'
+  - cluster_name != 'main'
+  - pg_port == 5432
+
+# -p matters. Without it pg_createcluster takes the next port no cluster
+# on the host has claimed, so an instance created where the package
+# already left a cluster of its own lands on 5433 and nothing answers on
+# the port the rest of the collection connects to. The cluster then runs
+# perfectly well while every client fails with "No such file or
+# directory" on the socket, which reads as though Postgres never
+# started.
+
+- name: Ensure the Postgres cluster exists on Debian
+  command:
+    argv:
+    - pg_createcluster
+    - -d
+    - "{{ pg_data }}"
+    - -p
+    - "{{ pg_port }}"
+    - "{{ pg_version }}"
+    - "{{ cluster_name }}"
+  args:
+    creates: "{{ pg_data }}/PG_VERSION"
+  become: true
+  when: ansible_facts['os_family'] == 'Debian'
+
+# RHEL has no pg_createcluster equivalent: postgresql-common's
+# multi-cluster tooling is a Debian-only package. A RHEL instance needs
+# its own systemd unit installed before postgresql-<ver>-setup can
+# initialize it, exactly as setup_postgres does for a pgEdge Distributed
+# Postgres node. This template is a copy of setup_postgres's, kept here
+# because ensure_postgres_cluster has to work before that role has run
+# at all; the two must stay identical.
+
+- name: Install service file for Postgres on RHEL
+  template:
+    src: pgedge-postgres.service.j2
+    dest: "/etc/systemd/system/{{ pg_service_name }}.service"
+  become: true
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Ensure the Postgres cluster exists on RHEL
+  command:
+    cmd: "postgresql-{{ pg_version }}-setup initdb {{ pg_service_name }}"
+  args:
+    creates: "{{ pg_data }}/PG_VERSION"
+  become: true
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Start and enable Postgres
+  systemd:
+    name: "{{ pg_service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  become: true

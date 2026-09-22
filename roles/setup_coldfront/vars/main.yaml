@@ -1,0 +1,3 @@
+---
+
+lakekeeper_url: "http://{{ lakekeeper_host }}:{{ lakekeeper_port }}"

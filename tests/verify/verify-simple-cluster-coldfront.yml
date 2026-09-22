@@ -1,0 +1,189 @@
+---
+
+# verify-simple-cluster.yml already covers the pgEdge stack underneath,
+# so this checks only what enabling ColdFront adds.
+#
+# The data check creates public.e2e_events and never drops it, because
+# dropping a decoupled table unwinds Iceberg catalog state as well as
+# Postgres state, and a half-finished cleanup leaves a worse starting
+# point than a fresh container. Re-running against a kept cluster fails
+# on the create.
+
+- hosts: lakekeeper
+  become: true
+
+  vars:
+    lakekeeper_port: 8181
+    lakekeeper_warehouse: wh
+
+  tasks:
+  - name: Check Lakekeeper reports itself healthy
+    uri:
+      url: "http://{{ lakekeeper_host }}:{{ lakekeeper_port }}/health"
+      status_code: 200
+    register: lakekeeper_health
+
+  - name: Assert the catalog is healthy
+    assert:
+      that: lakekeeper_health.json.health | default('') == 'ok'
+      fail_msg: "Lakekeeper /health returned {{ lakekeeper_health.json }}"
+
+  - name: List the Lakekeeper warehouses
+    uri:
+      url: >-
+        http://{{ lakekeeper_host }}:{{ lakekeeper_port
+        }}/management/v1/warehouse
+      status_code: 200
+    register: warehouses
+
+  - name: Assert the warehouse over the object store exists
+    assert:
+      that: >-
+        lakekeeper_warehouse in (warehouses.json['warehouses']
+        | default([]) | map(attribute='name') | list)
+      fail_msg: >-
+        No warehouse named {{ lakekeeper_warehouse }}, only
+        {{ warehouses.json['warehouses'] | default([])
+           | map(attribute='name') | join(', ') or 'none' }}.
+
+- hosts: pgedge
+  become: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    pg_version: 17
+    coldfront_db: coldfront
+    coldfront_schema: public
+
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  - name: Check Postgres is accepting connections
+    command: >
+      pg_isready -h 127.0.0.1 -p {{ pg_port | default(5432) }}
+    changed_when: false
+
+  # The last shared_preload_libraries in postgresql.conf wins, which is
+  # why setup_coldfront appends its own block after setup_postgres's. A
+  # conf.d file would load before that block and be silently overridden
+  # by it, leaving pg_duckdb and coldfront unloaded.
+
+  - name: Read the preloaded shared libraries
+    become_user: postgres
+    command: >
+      psql -d {{ coldfront_db }} -t -A -c "SHOW shared_preload_libraries"
+    register: preload
+    changed_when: false
+
+  - name: Assert ColdFront extended the preload list rather than replacing it
+    assert:
+      that:
+      - "'spock' in preload.stdout"
+      - "'snowflake' in preload.stdout"
+      - "'pg_duckdb' in preload.stdout"
+      - "'coldfront' in preload.stdout"
+      fail_msg: >
+        shared_preload_libraries is "{{ preload.stdout }}", which has lost
+        one of spock, snowflake, pg_duckdb or coldfront.
+
+  - name: Check the ColdFront extensions are installed
+    become_user: postgres
+    command: >
+      psql -d {{ coldfront_db }} -t -A -c
+      "SELECT extname FROM pg_extension
+       WHERE extname IN ('pg_duckdb', 'coldfront') ORDER BY extname"
+    register: coldfront_ext
+    changed_when: false
+
+  - name: Assert both ColdFront extensions exist
+    assert:
+      that:
+      - "'coldfront' in coldfront_ext.stdout_lines"
+      - "'pg_duckdb' in coldfront_ext.stdout_lines"
+      fail_msg: >
+        Expected pg_duckdb and coldfront in {{ coldfront_db }}, found
+        {{ coldfront_ext.stdout_lines | default([]) | join(', ')
+           or 'neither' }}.
+
+  - name: Read the catalog settings ColdFront commits through
+    become_user: postgres
+    command: >
+      psql -d {{ coldfront_db }} -t -A -c
+      "SELECT current_setting('coldfront.warehouse') || ' ' ||
+       current_setting('coldfront.lakekeeper_endpoint')"
+    register: coldfront_gucs
+    changed_when: false
+
+  - name: Assert the node points at the catalog
+    assert:
+      that: lakekeeper_host in coldfront_gucs.stdout
+      fail_msg: >
+        coldfront.warehouse / coldfront.lakekeeper_endpoint are
+        "{{ coldfront_gucs.stdout }}", which does not name
+        {{ lakekeeper_host }}.
+
+  - name: Check the archiver configuration was written
+    stat:
+      path: /etc/pgedge/coldfront/config.yaml
+    register: coldfront_config
+
+  - name: Assert the archiver configuration exists
+    assert:
+      that: coldfront_config.stat.exists
+      fail_msg: "/etc/pgedge/coldfront/config.yaml is missing"
+
+  # Each statement gets its own connection. Batched into one psql
+  # invocation they would share an implicit transaction, where a failure
+  # in the last statement silently discards the earlier ones.
+
+  - name: Create a decoupled Iceberg table
+    community.postgresql.postgresql_query:
+      db: "{{ coldfront_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT coldfront.create_iceberg_table(%(schema)s, %(table)s,
+        %(columns)s::jsonb)
+      named_args:
+        schema: "{{ coldfront_schema }}"
+        table: e2e_events
+        columns: >-
+          [{"name": "id", "type": "bigint"},
+           {"name": "ts", "type": "timestamptz"},
+           {"name": "note", "type": "text"}]
+    become_user: postgres
+    run_once: true
+
+  - name: Insert rows into the Iceberg table
+    community.postgresql.postgresql_query:
+      db: "{{ coldfront_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        INSERT INTO {{ coldfront_schema }}.e2e_events (id, ts, note)
+        VALUES (1, now(), 'one'), (2, now(), 'two'), (3, now(), 'three')
+    become_user: postgres
+    run_once: true
+
+  # A decoupled table keeps no Postgres heap, so a row can only come
+  # back by reading the Parquet the insert committed to the object
+  # store.
+
+  - name: Read the rows back through the cold tier
+    community.postgresql.postgresql_query:
+      db: "{{ coldfront_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: "SELECT count(*) AS n FROM {{ coldfront_schema }}.e2e_events"
+    register: coldfront_count
+    changed_when: false
+    become_user: postgres
+    run_once: true
+
+  - name: Assert every inserted row came back
+    assert:
+      that: coldfront_count.query_result[0].n | int == 3
+      fail_msg: >
+        Expected 3 rows back from {{ coldfront_schema }}.e2e_events, got
+        {{ coldfront_count.query_result[0].n | default('no result') }}.
+    run_once: true

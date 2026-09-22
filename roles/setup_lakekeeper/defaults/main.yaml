@@ -1,0 +1,16 @@
+---
+
+# Address Lakekeeper binds to, as distinct from the address the pgEdge
+# nodes reach it on, for a host where those differ.
+lakekeeper_bind_ip: "{{ lakekeeper_host }}"
+
+# Catalog state. This Postgres instance exists for Lakekeeper alone.
+lakekeeper_db: lakekeeper
+lakekeeper_db_user: lakekeeper
+lakekeeper_db_password: secret
+
+# Iceberg namespace pre-created in the warehouse. Decoupled (Iceberg-only)
+# tables need it to exist in its own committed REST call, because
+# coldfront.create_iceberg_table() defers the Iceberg CREATE SCHEMA to
+# commit but POSTs the CREATE TABLE eagerly.
+lakekeeper_namespace: public

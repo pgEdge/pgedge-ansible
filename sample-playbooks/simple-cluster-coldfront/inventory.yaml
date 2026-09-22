@@ -1,0 +1,38 @@
+# This inventory will produce a pgEdge cluster with the following:
+#
+# * 3 zones
+# * 1 pgEdge node in each zone
+# * 1 Lakekeeper host serving the Iceberg catalog
+#
+# Note: zones are currently a logical node assignment. This is also
+#       used for snowflake IDs.
+#
+# The catalog and object store settings are under all because both
+# groups read them: setup_lakekeeper creates the warehouse in the
+# bucket, and setup_coldfront writes through that warehouse. The bucket
+# must already exist; this collection does not create it.
+
+all:
+  vars:
+    lakekeeper_host: 192.168.6.20
+    # For AWS S3, leave coldfront_s3_endpoint empty, set
+    # coldfront_s3_region, and set coldfront_s3_path_style to false.
+    coldfront_s3_endpoint: https://s3.example.com
+    coldfront_s3_bucket: iceberg
+    coldfront_s3_access_key: coldfront
+    coldfront_s3_secret_key: secret
+
+pgedge:
+  vars:
+    db_password: secret
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 2
+    192.168.6.12:
+      zone: 3
+
+lakekeeper:
+  hosts:
+    192.168.6.20:

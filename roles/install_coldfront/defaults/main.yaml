@@ -1,0 +1,8 @@
+---
+
+# ColdFront packages are published for these Postgres major versions
+# only, confirmed against both apt.pgedge.com and dnf.pgedge.com.
+coldfront_supported_pg_versions:
+- 16
+- 17
+- 18

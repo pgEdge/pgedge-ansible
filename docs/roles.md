@@ -76,7 +76,7 @@ the restored zone. See [Recovering a Cluster from Backup](recovery.md).
 
 ## Role Categories
 
-The roles in this collection fall into five categories.
+The roles in this collection fall into six categories.
 
 ### Configuration Foundation
 
@@ -120,3 +120,23 @@ The roles in this collection fall into five categories.
 |------|-------------|
 | [`recover_postgres`](roles/recover_postgres.md) | Builds the cluster's Postgres from a backup, in place of `setup_postgres`. |
 | [`wipe_cluster`](roles/wipe_cluster.md) | Tears down every cluster component except the backups, ahead of a redeployment or a recovery. |
+
+### ColdFront Tiered Storage
+
+These roles are optional and not part of the numbered execution order
+above. `install_lakekeeper`/`setup_lakekeeper` build a dedicated
+Lakekeeper host, independent of any pgEdge cluster.
+`install_coldfront`/`setup_coldfront` add to the `pgedge` play, after
+`setup_pgedge`, once Lakekeeper is serving. The
+`sample-playbooks/simple-cluster-coldfront` playbook runs all four in
+that order.
+
+| Role | Description |
+|------|-------------|
+| [`install_lakekeeper`](roles/install_lakekeeper.md) | Installs Lakekeeper and its standalone Postgres instance. |
+| [`setup_lakekeeper`](roles/setup_lakekeeper.md) | Configures Lakekeeper's catalog and bootstraps the warehouse. |
+| [`install_coldfront`](roles/install_coldfront.md) | Installs the ColdFront tiered-storage extension. |
+| [`setup_coldfront`](roles/setup_coldfront.md) | Configures the ColdFront tiered-storage extension. |
+
+See the [ColdFront Configuration](configuration/coldfront.md) reference
+for how these roles fit together.

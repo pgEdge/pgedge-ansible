@@ -233,3 +233,24 @@ default_patroni_dcs_params:
   cacert: "{{ patroni_tls_dir }}/ca.crt"
   cert: "{{ patroni_tls_dir }}/patroni.crt"
   key: "{{ patroni_tls_dir }}/patroni.key"
+
+# coldfront_s3_endpoint is a full URL (e.g. http://192.168.88.4:8333);
+# left empty it means "use AWS's own endpoint resolution", which has no
+# host or port for setup_lakekeeper and setup_coldfront to wait for.
+coldfront_s3_reachable_host: >-
+  {{ coldfront_s3_endpoint | urlsplit('hostname') }}
+coldfront_s3_reachable_port: >-
+  {{ coldfront_s3_endpoint | urlsplit('port') | default(
+       443 if coldfront_s3_endpoint.startswith('https') else 80, true
+     ) }}
+
+# coldfront.set_storage_secret() and the archiver's config.yaml take the
+# endpoint as host[:port] and get the scheme from use_ssl instead, so
+# this keeps only the URL's network location, without any path or
+# trailing slash. Lakekeeper's storage profile takes the full URL.
+coldfront_s3_hostport: "{{ coldfront_s3_endpoint | urlsplit('netloc') }}"
+
+# ColdFront's own names for the two S3 addressing styles, which
+# coldfront.set_storage_secret() and the archiver's config.yaml both
+# take. The archiver refuses any other value.
+coldfront_s3_url_style: "{{ 'path' if coldfront_s3_path_style else 'vhost' }}"

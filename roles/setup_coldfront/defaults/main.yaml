@@ -1,0 +1,22 @@
+---
+
+# ColdFront's own least-privilege NOLOGIN role that pg_duckdb gates
+# DuckDB execution on (duckdb.postgres_role). Members reach the cold
+# tier without superuser via coldfront.grant_app_access(); superusers
+# always qualify regardless.
+coldfront_duckdb_role: coldfront_duckdb
+
+# The additional database ColdFront's tiered storage lives in, separate
+# from whatever general-purpose databases the cluster already lists in
+# db_names.
+coldfront_db: coldfront
+
+# Whether ColdFront coordinates cold-tier commits between nodes with its
+# Ricart-Agrawala bakery, upstream's "mesh" mode. The bakery needs
+# coldfront.dblink_self, which only true sets. With false, the default,
+# each node serializes only its own cold-tier commits with a local
+# advisory lock, as upstream's single-node "vanilla" mode does, so on
+# more than one node each Iceberg table must be written from one node
+# only. Setting this to true, and everything a real multi-zone Spock
+# mesh needs beyond it, is follow-up work.
+coldfront_mesh: false

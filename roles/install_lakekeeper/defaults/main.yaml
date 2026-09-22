@@ -1,0 +1,7 @@
+---
+
+# This role reads only lakekeeper_port and lakekeeper_metrics_port, and
+# setup_lakekeeper reads both as well, so they live in role_config.
+# Everything else Lakekeeper needs belongs to setup_lakekeeper alone and
+# is declared there, so that including that role on its own still has
+# its own settings in scope.

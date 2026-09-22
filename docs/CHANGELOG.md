@@ -44,6 +44,31 @@ in full.
   keys in `backup_repo_params` for S3-compatible stores such as MinIO. (EE-39)
 - `init_server` validates S3 repository settings and refuses a backup server in
   an S3 zone. (EE-39)
+- New `install_lakekeeper` and `setup_lakekeeper` roles build Lakekeeper, the
+  Iceberg REST catalog ColdFront's cold tier commits through, on its own
+  dedicated host with its own standalone PostgreSQL instance. (EE-40)
+- New `install_coldfront` and `setup_coldfront` roles add the ColdFront
+  tiered-storage extension to an existing pgEdge Distributed Postgres node.
+  Recent data stays in native PostgreSQL partitions; older data archives to
+  Iceberg on S3-compatible storage. (EE-40)
+- New `simple-cluster-coldfront` sample playbook sets up a pgEdge Distributed
+  Postgres cluster with ColdFront, and the Lakekeeper host its cold tier
+  commits through, in a single run. (EE-40)
+- New `coldfront_s3_*` parameters locate and authenticate to the S3-compatible
+  object store behind the cold tier. The setting is deliberately generic: real
+  AWS S3, MinIO, and a self-hosted store are all equally valid backends.
+  (EE-40)
+- `role_config` gained an `ensure_postgres_cluster` task file for roles that
+  need a standalone PostgreSQL instance rather than a pgEdge Distributed
+  Postgres node, used by `install_lakekeeper`. (EE-40)
+- `setup_postgres` now templates `shared_preload_libraries` from a new
+  `pgedge_preload_libraries` list rather than a literal string, so
+  `setup_coldfront` can extend it without overwriting Spock and Snowflake.
+  (EE-40)
+- New ColdFront end-to-end test builds two pgEdge nodes, a Lakekeeper host and
+  a SeaweedFS object store, then checks that the catalog serves its warehouse,
+  that the extensions are loaded beside Spock and Snowflake, and that a
+  decoupled Iceberg table accepts a write and returns it. (EE-40)
 
 ### Changed
 
@@ -106,6 +131,10 @@ in full.
   PostgreSQL's own command tag for an anonymous block carries no row count.
   Both the HA and non-HA task files now check for existence with a plain
   `SELECT` first and only run the creation query when needed. (EE-40)
+- `install_repos` now refreshes the APT cache before installing its
+  prerequisite packages, so a play that includes it without `init_server` no
+  longer fails on a freshly provisioned Debian host with "No package matching
+  'curl' is available". (EE-40)
 
 ## v1.1.0
 
