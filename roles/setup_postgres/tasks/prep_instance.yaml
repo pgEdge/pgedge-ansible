@@ -53,6 +53,7 @@
     insertafter: EOF
   become: true
   become_user: postgres
+  register: pgedge_conf
 
 # Ensure all necessary pg_hba.conf lines are listed for:
 #
@@ -110,3 +111,4 @@
       {% endfor %}
   become: true
   become_user: postgres
+  register: pg_hba_conf

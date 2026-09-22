@@ -79,6 +79,15 @@ in full.
   5432. (EE-39)
 - `make build` rebuilds the tarball when any shipped file changes or is
   deleted. (EE-39)
+- `setup_postgres` now restarts PostgreSQL when it changes the managed block in
+  `postgresql.conf`, and reloads it when it changes only `pg_hba.conf`, rather
+  than only making sure the service is running. An instance that was already
+  running kept its old settings, so with `cluster_name` set to `main` on
+  Debian, whose server package starts that cluster as it installs, Spock
+  failed to install with "spock is not in shared_preload_libraries". It also
+  kept its old access rules, so the nodes already in a cluster went on
+  refusing connections from a node added to it. HA clusters, where Patroni
+  runs PostgreSQL, are unchanged. (EE-40)
 - `setup_postgres` role documentation no longer attributes `pg_hba.conf`
   management to the `blockinfile` module, which only handles `postgresql.conf`,
   and now gives the path of `pg_hba.conf` as `pg_config_dir` rather than

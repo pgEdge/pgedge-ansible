@@ -5,11 +5,27 @@
 
 # Start the database so we can perform additional administrative actions.
 # Make sure the service is enabled while we're at it.
+#
+# Restart instead when prep_instance.yaml just changed postgresql.conf.
+# An instance that was already running otherwise keeps its old settings,
+# including shared_preload_libraries, which only a restart applies. That
+# happens on any later run that changes the managed block, and on the
+# first run when cluster_name is main on Debian, whose server package
+# creates and starts that cluster as it installs.
+#
+# Reload when only pg_hba.conf changed. A running instance rereads that
+# file only when it is reloaded or restarted, so a node added to the
+# inventory would otherwise have its rule written on every other node
+# and still be refused by all of them. A restart rereads pg_hba.conf
+# too, which covers a run that changed both files.
 
 - name: Ensure Postgres instance is started
   service:
     name: "{{ pg_service_name }}"
-    state: started
+    state: >-
+      {{ 'restarted' if pgedge_conf.changed
+         else 'reloaded' if pg_hba_conf.changed
+         else 'started' }}
     enabled: true
   become: true
 
