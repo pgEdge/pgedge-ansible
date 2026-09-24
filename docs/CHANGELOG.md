@@ -75,16 +75,15 @@ cluster can never discard the recovery point its repository was holding.
   rather than after a timeout drains. It runs under `async`, so a restore that
   outlasts an SSH connection is not lost with it.
 - New `etcd_ca_cert` and `etcd_ca_key` supply the certificate authority that
-  signs etcd's certificates and every node's Patroni client certificate, so it
-  can live in Ansible Vault beside the passwords rather than only in a
-  gitignored directory beside the playbook. That directory holds the one
-  artifact nothing can recreate: `setup_etcd` generates the authority and then
-  skips itself forever once the etcd data directory exists, while
-  `setup_patroni` only signs against it — so a controller that lost it could no
-  longer add a replica, rebuild a node, recover the cluster, or re-run the
-  deployment. Both parameters are empty by default and an inventory that sets
-  neither behaves exactly as before. A supplied authority that differs from the
-  one already staged is refused rather than applied, because signing against a
+  signs etcd's certificates and every node's Patroni client certificate from
+  Ansible Vault. Previously the authority existed only on the controller that
+  first deployed the cluster, so any other controller — including a fresh CI
+  runner — could not add a replica, rebuild a node, recover the cluster, or
+  re-run the deployment. The etcd configuration page now explains how to
+  generate a new authority or capture an existing one, and how to vault it.
+  Both parameters are empty by default and an inventory that sets neither
+  behaves exactly as before. A supplied authority that differs from the one
+  already staged is refused rather than applied, because signing against a
   different authority than the running etcd trusts leaves no node able to reach
   the store.
 - New `recovery_reset_dcs` rebuilds the distributed configuration store from

@@ -176,7 +176,7 @@ Two things are worth knowing:
   recovery playbook, or supply the authority from the inventory with
   `etcd_ca_cert` and `etcd_ca_key` — see
   [etcd Configuration](configuration/etcd.md), which is the more durable
-  arrangement because that directory is gitignored and nothing recreates it.
+  arrangement because it works from any controller.
 - Postgres server certificates are the lesser half of the same point.
   `setup_postgres` stages them from a path resolved against the playbook's own
   location, so a recovery run without the deployment's `tls/` gives the rebuilt
