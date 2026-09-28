@@ -170,10 +170,11 @@ again.
 Two things are worth knowing:
 
 - The recovery needs the cluster's certificate authority. `setup_patroni` signs
-  each rebuilt node's client certificate against it and never creates one, so
-  without it the recovery fails with "The CA certificate file tls/etcd/ca.crt
-  does not exist". Either copy the deployment's `tls/` directory next to the
-  recovery playbook, or supply the authority from the inventory with
+  each rebuilt node's client certificate against it, so the recovery checks
+  before it erases anything that the controller holds the authority the
+  cluster's etcd trusts, and stops if it does not. Either copy the deployment's
+  `tls/` directory next to the recovery playbook, or supply the authority from
+  the inventory with
   `etcd_ca_cert` and `etcd_ca_key` — see
   [etcd Configuration](configuration/etcd.md), which is the more durable
   arrangement because it works from any controller.

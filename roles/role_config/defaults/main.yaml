@@ -189,6 +189,15 @@ patroni_tls_dir: "/etc/patroni/tls"
 etcd_ca_cert: ""
 etcd_ca_key: ""
 
+# Where each node keeps its etcd data and the certificates etcd serves with.
+# setup_etcd and install_etcd use them, and so does everything that has to ask a
+# node about its etcd without running either role: the certificate authority
+# check reads the authority each existing member trusts, and a store reset
+# erases the data directory before setup_etcd is loaded.
+
+etcd_data_dir: "/var/lib/etcd"
+etcd_tls_dir: "/etc/etcd/tls"
+
 # Patroni cluster name within the DCS. This is the second half of every key
 # Patroni writes, and the collection derives it from values that are identical
 # on every node. A store shared by more than one zone needs a distinct scope

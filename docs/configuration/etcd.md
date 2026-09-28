@@ -119,11 +119,24 @@ A generated authority exists only on the controller that ran that first
 deployment. Any other controller — a colleague's workstation, a fresh CI
 runner, a new checkout — cannot sign certificates for the cluster, so it
 cannot add a replica, rebuild a node, recover the cluster, or re-run the
-deployment. It fails with:
+deployment.
+
+Before signing anything, the collection reads the authority every running etcd
+member trusts and compares it with the one on the controller. When the
+controller has none, it stops rather than generating a new one:
 
 ```
-The CA certificate file tls/etcd/ca.crt does not exist
+This cluster's etcd already trusts a certificate authority, and this
+controller does not hold it: etcd_ca_cert is unset and there is no
+tls/etcd/ca.crt beside the playbook.
 ```
+
+It also stops when the controller's authority, supplied or staged, differs
+from the one the members trust. Without that check, adding a node from such a
+controller would generate a new authority and reissue every node's Patroni
+certificate against it, and no node could reach etcd afterwards. A new
+cluster, with no etcd members yet, is the only case where an authority is
+generated.
 
 Supplying the authority from an Ansible Vault file lets any controller with
 the vault password manage the cluster. Automated or disposable environments

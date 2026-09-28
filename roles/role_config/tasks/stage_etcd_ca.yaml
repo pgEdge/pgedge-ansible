@@ -10,8 +10,8 @@
 # creates it, and setup_etcd skips itself entirely once the etcd data directory
 # exists. So on a live cluster the authority cannot be recreated, and a
 # controller that has lost that directory can no longer add a replica, rebuild a
-# node, or re-run the deployment. setup_patroni fails outright, with "The CA
-# certificate file tls/etcd/ca.crt does not exist".
+# node, or re-run the deployment. The check at the end of this file stops it
+# there, before anything is signed.
 #
 # Supplying it from the inventory puts it where every other secret this
 # collection needs already lives -- an Ansible Vault variable beside db_password
@@ -91,3 +91,68 @@
   run_once: true
   no_log: true
   when: etcd_ca_cert | default('') | length > 0
+
+# Whatever authority the controller now holds -- supplied, staged by an earlier
+# run, or about to be generated because there is none -- has to be the one the
+# cluster's running etcd already trusts. setup_etcd's own guard is per host: it
+# skips a node whose etcd data exists and builds one whose data does not. So a
+# node being added or rebuilt passes that guard, and from a controller without
+# the authority it would mint a new one, sign the new node against it, and then
+# setup_patroni would reissue every node's client certificate against it too --
+# while the members still running trust only the old one. Nothing would fail
+# until Patroni lost the store everywhere at once.
+#
+# The members are asked directly, on every pgEdge host rather than the play's,
+# so a run limited to the node being added still sees the rest of the cluster.
+# A host with no etcd data is no member and has no say: that is a new cluster,
+# a new node, or a zone whose store was just erased to be rebuilt. The paths
+# are each host's own, because a delegated task otherwise templates the running
+# host's.
+
+- name: Read the certificate authority each existing etcd member trusts
+  shell: >-
+    if [ -d {{ data_dir | quote }}/postgresql ] &&
+       [ -f {{ tls_dir | quote }}/ca.crt ];
+    then cat {{ tls_dir | quote }}/ca.crt; fi
+  vars:
+    data_dir: "{{ hostvars[item].etcd_data_dir | default(etcd_data_dir) }}"
+    tls_dir: "{{ hostvars[item].etcd_tls_dir | default(etcd_tls_dir) }}"
+  loop: "{{ groups['pgedge'] }}"
+  delegate_to: "{{ item }}"
+  become: true
+  run_once: true
+  changed_when: false
+  register: member_cas
+
+- name: Ensure the controller signs with the authority the cluster trusts
+  assert:
+    that:
+    - trusted_cas | length <= 1
+    - trusted_cas | length == 0 or controller_ca == trusted_cas[0]
+    fail_msg: >-
+      {% if trusted_cas | length > 1 -%}
+      The etcd members of this cluster do not agree on a certificate authority,
+      so there is no single one to sign new certificates with. Some zone's store
+      was rebuilt under a different authority than the rest; recover with
+      recovery_reset_dcs, which rebuilds every zone under one.
+      {%- elif controller_ca | length == 0 -%}
+      This cluster's etcd already trusts a certificate authority, and this
+      controller does not hold it: etcd_ca_cert is unset and there is no
+      tls/etcd/ca.crt beside the playbook. Continuing would generate a new
+      authority that none of the running members trust, and reissue every
+      node's Patroni certificate against it. Supply the original authority with
+      etcd_ca_cert and etcd_ca_key, or copy tls/etcd/ from the controller that
+      deployed the cluster. See the etcd configuration documentation.
+      {%- else -%}
+      The certificate authority on this controller is not the one this
+      cluster's etcd trusts. Signing against it would leave no node able to
+      reach the configuration store. Supply the cluster's own authority with
+      etcd_ca_cert and etcd_ca_key, or replace tls/etcd/ with the one from the
+      controller that deployed the cluster.
+      {%- endif %}
+  vars:
+    trusted_cas: >-
+      {{ member_cas.results | map(attribute='stdout') | map('trim')
+         | select | unique | list }}
+    controller_ca: "{{ lookup('file', 'tls/etcd/ca.crt', errors='ignore') | default('', true) | trim }}"
+  run_once: true

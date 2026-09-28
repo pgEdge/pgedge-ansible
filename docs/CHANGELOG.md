@@ -86,6 +86,15 @@ cluster can never discard the recovery point its repository was holding.
   already staged is refused rather than applied, because signing against a
   different authority than the running etcd trusts leaves no node able to reach
   the store.
+- Adding or rebuilding a node from a controller without the cluster's
+  certificate authority no longer generates a new one. The etcd setup skipped
+  nodes that already ran etcd but not the node being added, so it minted an
+  authority for that node, and every node's Patroni client certificate was then
+  reissued against an authority the running etcd did not trust. Every play that
+  signs certificates now reads the authority each existing etcd member trusts
+  and stops unless the controller holds that one. A recovery makes the same
+  check before it erases anything, unless `recovery_reset_dcs` is rebuilding
+  the store.
 - New `recovery_reset_dcs` rebuilds the distributed configuration store from
   nothing rather than removing the cluster from it, for when the store itself is
   what is broken -- etcd that has lost quorum, or keys a half-finished recovery

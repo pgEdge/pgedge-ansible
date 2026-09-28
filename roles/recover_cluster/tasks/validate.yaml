@@ -133,3 +133,16 @@
       name or immediate. Every type but immediate also needs recovery_target
       set to the value it stops at.
   run_once: true
+
+# Every rebuilt node gets a Patroni client certificate signed on the controller,
+# and a controller that does not hold the authority the cluster's etcd trusts
+# cannot sign one that works. That is checked when setup_patroni signs, but by
+# then every data directory has been erased, so it is checked here first. A
+# store reset is the exception: it rebuilds etcd under whatever authority the
+# controller has, and reissues every certificate to match.
+
+- name: Ensure this controller holds the authority the cluster's etcd trusts
+  include_role:
+    name: role_config
+    tasks_from: stage_etcd_ca
+  when: not recovery_reset_dcs | default(false) | bool
