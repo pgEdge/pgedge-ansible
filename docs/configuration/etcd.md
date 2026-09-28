@@ -179,18 +179,31 @@ cluster's configuration store must be rebuilt under a new one. See
 
 Run the following from the directory holding `ca.crt` and `ca.key`, replacing
 `/path/to/inventory` with the directory that holds your inventory file. It
-writes both files into a variable file, encrypts that file, and removes the
-unencrypted copies:
+writes both files into a variable file readable only by you, encrypts it into
+the inventory, and removes the unencrypted copies:
 
 ```bash
-mkdir -p /path/to/inventory/group_vars/pgedge
-{
-  echo "vault_etcd_ca_cert: |"; sed 's/^/  /' ca.crt
-  echo "vault_etcd_ca_key: |";  sed 's/^/  /' ca.key
-} > /path/to/inventory/group_vars/pgedge/etcd_ca.yml
-ansible-vault encrypt /path/to/inventory/group_vars/pgedge/etcd_ca.yml
-rm ca.crt ca.key
+(
+  set -e
+  umask 077
+  inv=/path/to/inventory/group_vars/pgedge
+  tmp=$(mktemp ./etcd_ca.XXXXXX)
+  trap 'rm -f "$tmp"' EXIT
+  {
+    echo "vault_etcd_ca_cert: |"; sed 's/^/  /' ca.crt
+    echo "vault_etcd_ca_key: |";  sed 's/^/  /' ca.key
+  } > "$tmp"
+  mkdir -p "$inv"
+  ansible-vault encrypt --output "$inv/etcd_ca.yml" "$tmp"
+  rm ca.crt ca.key
+)
 ```
+
+The unencrypted variable file never reaches the inventory: it is built beside
+`ca.key`, and only the encrypted result is written there. If any step fails —
+most often a mistyped vault password confirmation — the temporary file is
+removed, nothing is written to the inventory, and `ca.crt` and `ca.key` are
+left where they are, so you can run it again.
 
 `ansible-vault encrypt` prompts for a vault password. If you already keep
 other secrets in a vault, use the same password so a single
