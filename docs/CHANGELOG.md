@@ -53,7 +53,10 @@ cluster can never discard the recovery point its repository was holding.
   seen, so PgBackRest would refuse to archive there and the zone would finish
   the recovery unable to back itself up. The upgrade records the new cluster as
   another entry in the stanza's history and leaves the earlier backups in
-  place, where retention expires them as new full backups accumulate.
+  place, where retention expires them as new full backups accumulate. It runs
+  as soon as each zone's leader is rebuilt, before the Spock refill, so the WAL
+  that copy generates is archived as it goes, not kept in `pg_wal` until the
+  end of the recovery.
 - The Ultra-HA end-to-end test now verifies the backup surface rather than
   printing it. It asserts that the running server's `archive_command` invokes
   pgBackRest rather than the template's `/bin/true` placeholder, that WAL

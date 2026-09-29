@@ -37,12 +37,13 @@ The procedure runs in this order:
    node entries, every subscription, and the replication origins behind them.
 6. Rebuild every other zone's leader as an empty cluster, exactly as a first
    deployment would.
-7. Subscribe each rebuilt zone to the restored one with structure and data
+7. Record each rebuilt zone's new cluster in its stanza with
+   `pgbackrest stanza-upgrade`, so the zone can archive again before the copy
+   in the next step fills its `pg_wal`.
+8. Subscribe each rebuilt zone to the restored one with structure and data
    synchronization, and wait for the copy to finish.
-8. Build the rest of the subscription mesh with `setup_pgedge`, then rebuild
+9. Build the rest of the subscription mesh with `setup_pgedge`, then rebuild
    every replica from its own zone's leader.
-9. Record each rebuilt zone's new cluster in its stanza with
-   `pgbackrest stanza-upgrade`, so the zone can archive again.
 10. Re-establish the backup schedule with `finalize_backrest`, which takes a backup
     only if the repository has none — so the recovery point survives the
     recovery.
@@ -218,6 +219,12 @@ The recovery runs `pgbackrest stanza-upgrade` on those zones, which records the
 new cluster as another entry in the stanza's history rather than replacing what
 is there. The zone archives again immediately and its earlier backups stay in
 the repository.
+
+The upgrade runs as soon as each zone's leader is rebuilt, before that zone is
+refilled. Until then every `archive-push` is refused and Postgres keeps every
+WAL segment, and the refill writes the whole database into the zone. Leaving
+the upgrade until the end would let a large enough copy fill the disk partway
+through the recovery.
 
 Those earlier backups are historical from that point on. They describe a cluster
 that no longer exists, at a position the recovery deliberately moved away from,

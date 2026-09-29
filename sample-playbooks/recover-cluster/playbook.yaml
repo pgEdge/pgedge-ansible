@@ -117,11 +117,7 @@
       name: recover_cluster
       tasks_from: clean_spock
 
-# Rebuild the remaining zones' leaders as ordinary empty clusters, then refill
-# each of them from the restored zone. The refill is the only subscription in
-# the collection that copies anything, and it has to finish before the rest of
-# the mesh is built: every other subscription is created on the understanding
-# that both ends already hold the same data.
+# Rebuild the remaining zones' leaders as ordinary empty clusters.
 
 - hosts: pgedge
   any_errors_fatal: true
@@ -134,6 +130,39 @@
       name: recover_cluster
       tasks_from: rebuild_zone
 
+# Each rebuilt zone carries a system identifier its stanza has never seen, so
+# PgBackRest refuses every archive-push there until the stanza is told about it,
+# and pg_wal keeps every segment in the meantime. That has to be fixed before
+# the refill below, which writes the whole database into the zone: left until
+# the end, a large enough copy fills the disk partway through the recovery. The
+# restored zone needs nothing: it is the same cluster the backups came from.
+#
+# Its own play because an SSH repository is upgraded from the backup server,
+# which is not a pgEdge node.
+
+- hosts: pgedge:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: recover_cluster
+      tasks_from: upgrade_stanza
+
+# Refill each rebuilt zone from the restored one. The refill is the only
+# subscription in the collection that copies anything, and it has to finish
+# before the rest of the mesh is built: every other subscription is created on
+# the understanding that both ends already hold the same data.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
   - include_role:
       name: recover_cluster
       tasks_from: rehydrate
@@ -157,8 +186,9 @@
       name: recover_cluster
       tasks_from: rebuild_replicas
 
-# The repository is untouched by everything above: this playbook restores from
-# it and never writes to it. Running finalize_backrest afterwards re-establishes the
+# Nothing above removes anything from the repository: the stanza upgrades add
+# to each rebuilt zone's history, and the rest only restores from it or
+# archives into it. Running finalize_backrest afterwards re-establishes the
 # backup schedule on the rebuilt nodes and takes a backup only if the repository
 # has none, so the recovery point the cluster was just restored from is left
 # where it is.
@@ -169,13 +199,5 @@
   - pgedge.platform
 
   tasks:
-  # Each rebuilt zone carries a system identifier its stanza has never seen, so
-  # PgBackRest would refuse to archive there until the stanza is told about it.
-  # The restored zone needs nothing: it is the same cluster the backups came
-  # from.
-  - include_role:
-      name: recover_cluster
-      tasks_from: upgrade_stanza
-
   - include_role:
       name: finalize_backrest

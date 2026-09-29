@@ -36,9 +36,9 @@ files in order:
 | `restore_leader` | `recovery_node` | Start Patroni so it restores the node from the repository, and wait for it to take the leader. |
 | `clean_spock` | `recovery_node` | Remove the replication metadata the restore brought back, and verify it is gone. |
 | `rebuild_zone` | each other zone's first node | Rebuild the zone's leader as an empty cluster. |
+| `upgrade_stanza` | each rebuilt zone's repository host | Record the zone's new cluster in its stanza so it can archive before the refill fills `pg_wal`. |
 | `rehydrate` | each other zone's first node | Copy the restored zone's schema and data, and wait for the copy. |
 | `rebuild_replicas` | every non-leader node | Rebuild each replica from its own zone's leader. |
-| `upgrade_stanza` | each rebuilt zone's repository host | Record the zone's new cluster in its stanza so it can archive again. |
 
 Each task file decides for itself which hosts it concerns. None of those
 conditions can be written in the playbook, because they read role variables and
@@ -104,6 +104,10 @@ immediately and its earlier backups stay in the repository. Those backups are
 historical from that point on: they describe a cluster that no longer exists, at
 a position the recovery deliberately moved away from, so restoring one would
 resurrect the divergence the recovery just undid.
+
+The upgrade runs straight after `rebuild_zone`, not at the end. Until it runs,
+every `archive-push` from the zone is refused and Postgres keeps every WAL
+segment, and `rehydrate` is about to write the whole database into the zone.
 
 ## Idempotency
 
