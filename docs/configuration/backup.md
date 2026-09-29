@@ -285,7 +285,7 @@ an inventory, where they would sit waiting for the next unrelated run.
 | `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the latest backup that can reach the target. |
 | `recovery_stall_minutes` | `15` | Give up only after the restore has made no progress for this long. Progress is what this watches; `recovery_max_hours` is the hard ceiling either way. |
 | `recovery_poll_seconds` | `30` | How often to look. |
-| `recovery_max_hours` | `24` | Hard ceiling on the wait. The task is killed at this point even while the restore is still making progress, so raise it for a restore expected to take longer. |
+| `recovery_max_hours` | `24` | Hard ceiling on each wait (the restore, each zone's Spock copy, each replica). The task is killed at this point even while it is still making progress, so raise it for a restore or copy expected to take longer. |
 | `recovery_reset_dcs` | `false` | Rebuild the distributed configuration store from nothing rather than removing the cluster from it. |
 
 In the following example, the command restores a cluster to a point in time:

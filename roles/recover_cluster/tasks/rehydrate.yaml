@@ -81,6 +81,11 @@
   # Wait here rather than at the end. Every remaining subscription in the cluster
   # is created without copying anything, on the understanding that the zones
   # already hold the same data -- which is only true once this copy has finished.
+  #
+  # The copy is likely the longest step in the recovery, so the wait runs under
+  # async like the restore and replica waits: one SSH session held open for the
+  # whole copy is one a dropped connection would fail, with every data directory
+  # already gone.
 
   - name: Wait for this zone to finish copying the restored zone
     community.postgresql.postgresql_query:
@@ -92,6 +97,8 @@
       named_args:
         sub_name: "sub_n{{ zone }}_n{{ recovery_zone }}"
     loop: "{{ db_names }}"
+    async: "{{ recovery_max_hours | int * 3600 }}"
+    poll: "{{ recovery_poll_seconds }}"
     become: true
     become_user: postgres
 

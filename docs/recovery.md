@@ -157,7 +157,7 @@ could reach rather than failing.
 | `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the latest backup that can reach the target. |
 | `recovery_stall_minutes` | `15` | Give up only after the restore has made no progress for this long. A restore that keeps moving is left alone, up to `recovery_max_hours`. |
 | `recovery_poll_seconds` | `30` | How often to look. |
-| `recovery_max_hours` | `24` | Hard ceiling on the wait, not an expected duration. The task is killed at this point even if the restore is still progressing, so raise it for a restore expected to run longer. |
+| `recovery_max_hours` | `24` | Hard ceiling on each wait (the restore, each zone's Spock copy, each replica), not an expected duration. The task is killed at this point even if it is still progressing, so raise it for a restore or copy expected to run longer. |
 | `recovery_reset_dcs` | `false` | Rebuild the distributed configuration store from nothing instead of removing the cluster from it. For when the store itself is what is broken. |
 
 ## Running It Again
