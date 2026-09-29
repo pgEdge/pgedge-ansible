@@ -139,8 +139,10 @@ replica_from_backup: >-
 #
 # --target-action=promote leaves Postgres promoted at the target rather than
 # paused waiting for someone to notice, which is what lets Patroni take the
-# recovered cluster over as its leader. It does not apply to an immediate
-# target, which stops at the end of the backup with nothing to decide.
+# recovered cluster over as its leader. An immediate target needs it as much
+# as any other: Postgres treats reaching consistency as reaching a recovery
+# target, and PgBackRest's default action there is pause, which leaves Patroni
+# waiting for an end of recovery that never comes.
 
 recovery_restore_args: >-
   {{ ['--stanza=' + backup_stanza, '--delta'] +
@@ -148,7 +150,7 @@ recovery_restore_args: >-
      (['--type=' + recovery_target_type] if recovery_target_type > '' else []) +
      (['--target="' + recovery_target + '"'] if recovery_target > '' else []) +
      (['--target-action=promote']
-      if recovery_target_type not in ('', 'immediate') else []) +
+      if recovery_target_type > '' else []) +
      ['restore'] }}
 
 recovery_restore_command: "pgbackrest {{ recovery_restore_args | join(' ') }}"
