@@ -119,6 +119,10 @@ postgresql:
     - pg_clonecluster
 {% endif %}
 {% if ansible_os_family == 'Debian' %}
+  # Debian keeps postgresql.conf in /etc/postgresql/<version>/<cluster>, which
+  # basebackup does not create, and Patroni fails to start a replica without
+  # it. pg_clonecluster_patroni runs pg_createcluster before pg_basebackup, so
+  # on Debian it has to come ahead of basebackup in every list above.
   pg_clonecluster:
     command: /usr/share/patroni/pg_clonecluster_patroni
 {% endif %}

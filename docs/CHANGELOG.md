@@ -162,7 +162,10 @@ cluster can never discard the recovery point its repository was holding.
   `finalize_backrest` now reads the store, patches it only when it disagrees,
   and waits for Postgres to take up the new command before the first backup.
 - The Patroni template now spells replica creation as `create_replica_methods`
-  rather than the legacy `create_replica_method`. Patroni accepts both.
+  rather than the legacy `create_replica_method`. Patroni reads both, although
+  its configuration validator knows only the new spelling. Debian replicas are
+  still built with `pg_clonecluster`, as before. Debian needs it: it creates
+  the `/etc/postgresql` configuration directory that `basebackup` leaves out.
 
 ### Security
 
