@@ -144,6 +144,10 @@ cluster can never discard the recovery point its repository was holding.
   holds a cluster before initializing a data directory. A non-HA cluster's
   `archive_command` and `restore_command` moved to `finalize_backrest`, which runs
   when Postgres is up to be reloaded.
+- `setup_postgres` on Debian now drops a cluster whose configuration directory
+  outlived its data directory before creating it again. A recovery erases the
+  data directory of every zone it rebuilds, and `pg_createcluster` refused to
+  recreate a cluster whose configuration was still in `/etc/postgresql`.
 - `recover_cluster`'s quiesce step now acts only on systemd units that exist, so
   a recovery can be run against replacement hardware where the deployment
   stopped before creating them. On RHEL the Postgres unit file is written by

@@ -16,6 +16,36 @@
   - pg_port == 5432
   become: true
 
+# A cluster whose configuration directory survived its data directory is left
+# over from one whose data was erased, which is what a recovery does to every
+# zone it rebuilds. pg_createcluster refuses to create a cluster over existing
+# configuration, so drop the remains first, as pg_clonecluster_patroni does
+# before it clones a replica. Nothing is lost: the data directory holds no
+# cluster, and Patroni rewrites the configuration files when it starts.
+
+- name: Check for a cluster configuration left without its data
+  stat:
+    path: "{{ item }}"
+  loop:
+  - "{{ pg_config_dir }}/postgresql.conf"
+  - "{{ pg_data }}/PG_VERSION"
+  register: debian_cluster_files
+  become: true
+  when: cluster_name != 'main'
+
+- name: Drop the configuration of a cluster that has no data
+  command:
+    argv:
+    - pg_dropcluster
+    - "{{ pg_version }}"
+    - "{{ cluster_name }}"
+  become: true
+  become_user: postgres
+  when:
+  - cluster_name != 'main'
+  - debian_cluster_files.results[0].stat.exists
+  - not debian_cluster_files.results[1].stat.exists
+
 # If the user supplied a cluster name other than "main", which is the Debian
 # default, create a new cluster rather than risk breaking an existing one.
 
