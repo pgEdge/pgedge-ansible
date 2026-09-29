@@ -70,6 +70,29 @@
       backup_repo_type to s3, or give the zone a host in the 'backup' group or
       a backup_host, before recovering.
 
+# Every rebuilt zone's stanza has to be upgraded before the zone can archive,
+# and in SSH mode that can only be done on the repository host itself. The
+# recovery upgrades it from the zone's host in the 'backup' group, but a server
+# named only by backup_host is outside the inventory, so nothing would upgrade
+# it. The zone would then keep every WAL segment through the refill and fail
+# finalize_backrest's identity check at the end. The inventory can say where
+# the repository is, so refuse now, before anything is erased.
+
+- name: Ensure every rebuilt zone's repository host is in the inventory
+  assert:
+    that:
+    - backup_host in (groups.backup | default([]))
+    fail_msg: >-
+      Zone {{ zone }} reaches its SSH repository through backup_host
+      {{ backup_host }}, which is not in the 'backup' group. The recovery has
+      to run pgbackrest stanza-upgrade on that server once the zone is rebuilt,
+      and it can only reach servers in the inventory. Add {{ backup_host }} to
+      the 'backup' group with zone {{ zone }} before recovering.
+  when:
+  - backup_type == 'ssh'
+  - backup_host > ''
+  - zone != recovery_zone
+
 # backup_repo_configured only says a zone has somewhere to archive to. It says
 # nothing about whether the repository this recovery restores from actually
 # holds a backup -- and the first thing that would find out is restore_leader,

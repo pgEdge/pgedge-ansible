@@ -144,6 +144,12 @@ cluster can never discard the recovery point its repository was holding.
   holds a cluster before initializing a data directory. A non-HA cluster's
   `archive_command` and `restore_command` moved to `finalize_backrest`, which runs
   when Postgres is up to be reloaded.
+- The recovery playbook refuses, before erasing anything, a rebuilt zone whose
+  SSH repository is named only by `backup_host`. `stanza-upgrade` has to run on
+  the repository host, and a host outside the inventory would never be
+  upgraded, so the zone could not archive and would fail `finalize_backrest`'s
+  identity check at the end. Adding the server to the `backup` group lets the
+  recovery upgrade it.
 - `setup_postgres` on Debian now drops a cluster whose configuration directory
   outlived its data directory before creating it again. A recovery erases the
   data directory of every zone it rebuilds, and `pg_createcluster` refused to

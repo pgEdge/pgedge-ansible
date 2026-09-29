@@ -94,6 +94,12 @@ repository that already has one.
   `pgbackrest` directly.
 - Every zone has a backup repository configured, so the rebuilt zones can
   archive once they are back.
+- Every SSH repository a rebuilt zone uses is on a host in the `backup` group.
+  The recovery has to run `pgbackrest stanza-upgrade` on that server, and a
+  server named only by `backup_host` is outside the inventory. The playbook
+  refuses such a zone before it erases anything. Add the server to the `backup`
+  group with the zone's `zone` value. The zone being restored is exempt, since
+  its stanza needs no upgrade.
 - The repository holds at least one backup for the zone being restored, and the
   WAL needed to reach the target.
 - `recovery_node` names the **first** pgEdge node of its zone as the inventory
