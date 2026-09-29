@@ -18,7 +18,11 @@ The role performs the following tasks on inventory hosts:
   for non-HA clusters add the matching `pg_hba.conf` entries.
 - Create the repository stanza when the repository does not already have one.
 - For non-HA clusters, set the Postgres `archive_command` and `restore_command`
-  to use PgBackRest. HA clusters get both from the Patroni configuration.
+  to use PgBackRest. HA clusters get both from the Patroni configuration
+  template. This role also checks the Patroni configuration store and adds
+  them there if they are missing, because a cluster that was bootstrapped
+  without a repository keeps the `/bin/true` placeholder in the store. It then
+  waits until every node's Postgres is using the new `archive_command`.
 - Take an initial full backup when the stanza holds no backups.
 - Create cron entries for scheduled full and differential backups.
 

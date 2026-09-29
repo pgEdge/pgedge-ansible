@@ -155,7 +155,12 @@ cluster can never discard the recovery point its repository was holding.
   store is lost when the cluster is removed from the store and bootstrapped
   again, which is what a recovery does: a recovered cluster came back with
   `archive_command` reverted to `/bin/true` and silently stopped archiving.
-  `setup_backrest`'s `config_postgres_ha.yaml` has been removed.
+  The patch in `setup_backrest`'s `config_postgres_ha.yaml` has been replaced
+  by a check in `finalize_backrest`. Patroni applies the template only when it
+  bootstraps a cluster, so an HA cluster deployed without a backup server and
+  given one later still has `/bin/true` in its configuration store.
+  `finalize_backrest` now reads the store, patches it only when it disagrees,
+  and waits for Postgres to take up the new command before the first backup.
 - The Patroni template now spells replica creation as `create_replica_methods`
   rather than the legacy `create_replica_method`. Patroni accepts both.
 

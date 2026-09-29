@@ -23,16 +23,27 @@
   - backup_type != 'ssh'
   - inventory_hostname == first_node_in_zone
 
-# Bind Postgres to PgBackRest through the archive and restore commands. Only a
-# non-HA cluster needs this: an HA cluster gets both from the Patroni
-# configuration template, which is the only place they can live and survive a
-# recovery. They are set after the stanza exists so that the first archive
-# attempt has somewhere to go, and before the first backup, which cannot
-# complete until WAL archiving actually works.
+# Bind Postgres to PgBackRest through the archive and restore commands. They
+# are set after the stanza exists so that the first archive attempt has
+# somewhere to go, and before the first backup, which cannot complete until WAL
+# archiving actually works.
+#
+# An HA cluster gets both from the Patroni configuration template, which is
+# what lets them survive a recovery, but the template reaches the store only at
+# bootstrap. The HA path makes sure a cluster that bootstrapped without a
+# repository gets them too.
 
 - name: Point Postgres at the repository
   include_tasks: config_postgres.yaml
   when: not is_ha_cluster
+
+- name: Point Patroni at the repository
+  include_tasks: config_postgres_ha.yaml
+  vars:
+    archive_params:
+      archive_command: "pgbackrest --stanza={{ backup_stanza }} archive-push %p"
+      restore_command: "pgbackrest --stanza={{ backup_stanza }} archive-get %f %p"
+  when: is_ha_cluster
 
 - name: Take the bootstrap backup if the repository has none
   include_tasks: first_backup.yaml

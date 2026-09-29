@@ -1,0 +1,71 @@
+---
+
+# Make sure the Patroni configuration store holds the PgBackRest archive and
+# restore commands.
+#
+# The Patroni template already renders them, but Patroni reads bootstrap.dcs
+# only when it bootstraps a cluster. A cluster deployed without a repository and
+# given one later bootstrapped with the /bin/true placeholder, and the store
+# keeps that no matter what the template says now. That cluster would get a
+# stanza and a backup schedule and never archive a thing, and its first backup
+# would wait for WAL that never arrives.
+#
+# The store is read first and patched only when it disagrees, so a cluster that
+# already archives is left alone. Patroni pushes the change to every member and
+# reloads Postgres itself.
+
+- name: Read the Patroni configuration store
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - show-config
+    - "{{ patroni_scope }}"
+  register: dcs_config
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: inventory_hostname == first_node_in_zone
+
+- name: Point the Patroni configuration store at the repository
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - edit-config
+    - --force
+    - --apply
+    - "-"
+    - "{{ patroni_scope }}"
+    stdin: "{{ {'postgresql': {'parameters': archive_params}} | to_nice_yaml }}"
+  become: true
+  become_user: postgres
+  vars:
+    stored: >-
+      {{ ((dcs_config.stdout | from_yaml | default({}, true)).postgresql
+          | default({}, true)).parameters | default({}, true) }}
+  when:
+  - inventory_hostname == first_node_in_zone
+  - stored | combine(archive_params) != stored
+
+# The first backup cannot finish until archiving works, and Patroni applies a
+# store change on its own schedule rather than when edit-config returns. Every
+# member is checked because any of them may be the one taking backups.
+
+- name: Wait for Postgres to take up the archive command
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: SHOW archive_command
+  register: live_archive_command
+  until: >-
+    live_archive_command.query_result[0].archive_command
+    == archive_params.archive_command
+  retries: 12
+  delay: 5
+  changed_when: false
+  become: true
+  become_user: postgres
