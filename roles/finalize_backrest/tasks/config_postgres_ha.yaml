@@ -51,8 +51,23 @@
   - stored | combine(archive_params) != stored
 
 # The first backup cannot finish until archiving works, and Patroni applies a
-# store change on its own schedule rather than when edit-config returns. Every
-# member is checked because any of them may be the one taking backups.
+# store change on its own schedule rather than when edit-config returns. Only
+# the leader archives, so only the leader is waited for. The replicas are no
+# good for this anyway: setup_patroni waits for the primary and not for them,
+# so on a fresh deployment a replica can still be cloning when this runs and
+# has no Postgres to ask.
+
+- name: Find this zone's leader
+  shell: |-
+    {{ ctl }} list {{ patroni_scope }} -f json \
+        | jq -r '.[] | select(.Role == "Leader") | .Host'
+  vars:
+    ctl: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
+  register: zone_leader
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: inventory_hostname == first_node_in_zone
 
 - name: Wait for Postgres to take up the archive command
   community.postgresql.postgresql_query:
@@ -62,6 +77,7 @@
     query: SHOW archive_command
   register: live_archive_command
   until: >-
+    live_archive_command.query_result is defined and
     live_archive_command.query_result[0].archive_command
     == archive_params.archive_command
   retries: 12
@@ -69,3 +85,4 @@
   changed_when: false
   become: true
   become_user: postgres
+  when: inventory_hostname == hostvars[first_node_in_zone].zone_leader.stdout | trim
