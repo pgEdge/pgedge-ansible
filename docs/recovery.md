@@ -131,8 +131,14 @@ ansible-playbook -i inventory.yaml playbook.yaml \
   -e recovery_node=192.168.6.10 \
   -e recovery_confirm=true \
   -e recovery_target_type=time \
-  -e 'recovery_target=2026-09-15 14:30:00+00'
+  -e "recovery_target='2026-09-15 14:30:00+00'"
 ```
+
+The inner quotes around the target matter. Ansible splits a `key=value`
+argument at its spaces, so `-e 'recovery_target=2026-09-15 14:30:00+00'` sets
+the target to the date alone and quietly discards the time of day. The
+recovery refuses a `time` target without one rather than restoring to
+midnight.
 
 Pass these on the command line rather than writing them into an inventory, where
 they would sit waiting for the next unrelated run.

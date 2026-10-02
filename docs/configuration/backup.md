@@ -295,7 +295,7 @@ ansible-playbook -i inventory.yaml playbook.yaml \
   -e recovery_node=192.168.6.10 \
   -e recovery_confirm=true \
   -e recovery_target_type=time \
-  -e 'recovery_target=2026-09-15 14:30:00+00'
+  -e "recovery_target='2026-09-15 14:30:00+00'"
 ```
 
 !!! warning "Recovery destroys data"

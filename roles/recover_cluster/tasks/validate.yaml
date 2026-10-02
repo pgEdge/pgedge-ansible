@@ -187,6 +187,24 @@
       set to the value it stops at.
   run_once: true
 
+# A time target has to carry a time of day; PgBackRest refuses a bare date when
+# it picks the backup set, and by then every data directory is gone. A bare date
+# is also exactly what Ansible leaves behind from -e 'recovery_target=DATE TIME',
+# which splits at the space and drops the rest without a word.
+
+- name: Ensure a time target carries a time of day
+  assert:
+    that:
+    - recovery_target is match('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}')
+    fail_msg: >-
+      recovery_target is "{{ recovery_target }}", which is not a time PgBackRest
+      can restore to. It needs a date and a time of day, as
+      "2026-09-15 14:30:00+00". If you passed both, Ansible split them at the
+      space: quote the value inside the argument, as
+      -e "recovery_target='2026-09-15 14:30:00+00'".
+  when: recovery_target_type == 'time'
+  run_once: true
+
 # Every rebuilt node gets a Patroni client certificate signed on the controller,
 # and a controller that does not hold the authority the cluster's etcd trusts
 # cannot sign one that works. That is checked when setup_patroni signs, but by

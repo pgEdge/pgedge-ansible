@@ -36,7 +36,7 @@ usage() {
   echo ""
   echo "Point-in-time recovery instead of latest:"
   echo "  $0 ultra-ha rocky9 -- -e recovery_target_type=time \\"
-  echo "     -e 'recovery_target=2026-09-16 18:00:00+00'"
+  echo "     -e \"recovery_target='2026-09-16 18:00:00+00'\""
   exit 1
 }
 
