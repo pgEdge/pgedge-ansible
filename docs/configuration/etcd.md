@@ -138,6 +138,9 @@ certificate against it, and no node could reach etcd afterwards. A new
 cluster, with no etcd members yet, is the only case where an authority is
 generated.
 
+The controller also stops when `tls/etcd/` holds `ca.crt` without `ca.key`, or
+a `ca.key` that is not the key of `ca.crt`. Copy both files together.
+
 Supplying the authority from an Ansible Vault file lets any controller with
 the vault password manage the cluster. Automated or disposable environments
 should always set these parameters.

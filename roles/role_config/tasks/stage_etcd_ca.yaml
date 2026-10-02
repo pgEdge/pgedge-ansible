@@ -92,6 +92,71 @@
   no_log: true
   when: etcd_ca_cert | default('') | length > 0
 
+# The generation in setup_etcd skips itself only when a certificate is already
+# staged, so a staged certificate has to come with the key that signed it. A
+# ca.crt left without its ca.key -- a partial copy of tls/etcd/ from another
+# controller, say -- would otherwise pass every check here, and generation would
+# then mint a new key, find the staged certificate no longer matches it, and
+# replace that too: the authority the cluster trusts gone from the controller,
+# and every node signed after it unable to reach etcd. A key with the wrong
+# certificate fails the same way, only later, so both are refused here. A key
+# without a certificate is left to generation: with no certificate there is
+# nothing for the cluster to have trusted, and the check below decides whether
+# generating one is safe.
+
+- name: Check which parts of an authority are staged here
+  stat:
+    path: "tls/etcd/{{ item }}"
+  loop:
+  - ca.crt
+  - ca.key
+  register: staged_ca_files
+  delegate_to: localhost
+  run_once: true
+
+- name: Ensure a staged certificate authority comes with its private key
+  assert:
+    that: not crt_staged or key_staged
+    fail_msg: >-
+      tls/etcd/ca.crt is staged on this controller but tls/etcd/ca.key is not.
+      The certificate cannot sign anything without its key, and continuing
+      would generate a new authority over it. Copy ca.key from the controller
+      that deployed the cluster, or supply both with etcd_ca_cert and
+      etcd_ca_key.
+  vars:
+    crt_staged: "{{ staged_ca_files.results[0].stat.exists }}"
+    key_staged: "{{ staged_ca_files.results[1].stat.exists }}"
+  run_once: true
+
+- name: Read the staged certificate authority
+  community.crypto.x509_certificate_info:
+    path: "tls/etcd/ca.crt"
+  register: staged_ca_cert
+  delegate_to: localhost
+  run_once: true
+  when: staged_ca_files.results[0].stat.exists
+
+- name: Read the staged certificate authority's private key
+  community.crypto.openssl_privatekey_info:
+    path: "tls/etcd/ca.key"
+  register: staged_ca_key
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  when: staged_ca_files.results[0].stat.exists
+
+- name: Ensure the staged private key belongs to the staged certificate
+  assert:
+    that: staged_ca_key.public_key == staged_ca_cert.public_key
+    fail_msg: >-
+      tls/etcd/ca.key on this controller is not the private key of
+      tls/etcd/ca.crt, so nothing it signs would verify against the
+      certificate the nodes trust. Replace both with the matching pair from the
+      controller that deployed the cluster, or supply them together with
+      etcd_ca_cert and etcd_ca_key.
+  run_once: true
+  when: staged_ca_files.results[0].stat.exists
+
 # Whatever authority the controller now holds -- supplied, staged by an earlier
 # run, or about to be generated because there is none -- has to be the one the
 # cluster's running etcd already trusts. setup_etcd's own guard is per host: it

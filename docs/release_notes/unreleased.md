@@ -157,7 +157,10 @@ another, such as a second workstation or a CI runner, needs `etcd_ca_cert` and
 `etcd_ca_key` set from Ansible Vault before that controller can run the
 playbook. Previously a controller without the authority generated a new one and
 reissued the cluster's certificates against it, and Patroni then could not
-reach etcd. [etcd_ca_cert and etcd_ca_key](../configuration/etcd.md#etcd_ca_cert-and-etcd_ca_key)
+reach etcd. The play also stops when the controller's `tls/etcd/` holds the
+certificate without its private key, or with a key that does not match it,
+which previously generated a new authority over the staged one.
+[etcd_ca_cert and etcd_ca_key](../configuration/etcd.md#etcd_ca_cert-and-etcd_ca_key)
 describes how to capture the authority from the original controller.
 
 A cluster that is only ever managed from the controller that deployed it needs
