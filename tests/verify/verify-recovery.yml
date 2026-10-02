@@ -255,3 +255,92 @@
       success_msg: >-
         Zone {{ zone }}: {{ running | length }} members running, one leader.
     when: inventory_hostname == first_node_in_zone
+
+# Every zone's writes have to reach every other zone, and nothing above shows
+# that. The marker rows reached the rebuilt zones through the initial copy, not
+# through streaming, and the mesh counts say the subscriptions exist, not that
+# anything flows through them. The direction most at risk is out of a rebuilt
+# zone: its Spock node is new, so its replication set holds only what was added
+# to it, and its tables arrived by synchronize_structure rather than by DDL
+# anyone ran there. A table missing from that set replicates nothing, silently.
+#
+# So each zone's leader changes a marker row of its own -- the row whose id is
+# its zone number, so the count the first play checks stays the same and a
+# re-run still passes -- and every other zone waits to see the change. The note
+# carries the time it was written, so a value left by an earlier run cannot
+# stand in for this one.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    marker_wait_retries: 60
+
+  tasks:
+  - name: Determine whether this node is its zone's primary
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c "SELECT NOT pg_is_in_recovery()"
+    register: writeback_primary
+    changed_when: false
+
+  - name: Change this zone's own marker row
+    become_user: postgres
+    command: >
+      psql -d demo -q -t -A -v ON_ERROR_STOP=1 -c
+      "UPDATE recovery_marker
+          SET note = format('written on zone %s after the recovery at %s',
+                            {{ zone | int }}, clock_timestamp())
+        WHERE id = {{ zone | int }}
+       RETURNING note"
+    register: writeback
+    when: writeback_primary.stdout | trim == 't'
+
+  - name: Wait for every other zone's change to arrive here
+    become_user: postgres
+    vars:
+      writers: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('writeback.stdout', 'defined')
+           | rejectattr('zone', 'eq', zone) | list }}
+      expected: >-
+        {{ writers | map(attribute='zone') | map('int')
+           | zip(writers | map(attribute='writeback.stdout') | map('trim'))
+           | map('join', '|') | sort | list }}
+    command: >
+      psql -d demo -t -A -F'|' -c
+      "SELECT id, note FROM recovery_marker
+        WHERE id IN ({{ writers | map(attribute='zone') | map('int')
+                        | join(', ') }})
+        ORDER BY id"
+    register: writeback_seen
+    changed_when: false
+    retries: "{{ marker_wait_retries }}"
+    delay: 5
+    until: writeback_seen.stdout_lines | sort == expected
+    failed_when: false
+    when: writeback_primary.stdout | trim == 't'
+
+  - name: Assert writes made after the recovery reach every zone
+    vars:
+      writers: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('writeback.stdout', 'defined')
+           | rejectattr('zone', 'eq', zone) | list }}
+      expected: >-
+        {{ writers | map(attribute='zone') | map('int')
+           | zip(writers | map(attribute='writeback.stdout') | map('trim'))
+           | map('join', '|') | sort | list }}
+    assert:
+      that: writeback_seen.stdout_lines | sort == expected
+      fail_msg: >-
+        Zone {{ zone }} did not receive every other zone's change after
+        {{ marker_wait_retries | int * 5 }} seconds. Expected {{ expected }},
+        found {{ writeback_seen.stdout_lines }}. A change missing from a rebuilt
+        zone means that zone's Spock node is not publishing recovery_marker:
+        check spock.replication_set_table on it, since its tables arrived by
+        synchronize_structure rather than by DDL run there.
+      success_msg: >-
+        Zone {{ zone }} received the changes made on every other zone after
+        the recovery.
+    when: writeback_primary.stdout | trim == 't'

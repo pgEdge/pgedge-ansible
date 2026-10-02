@@ -1406,8 +1406,8 @@
     - pooled_in_zone | length > 0
 
 # The one check that can tell a repository left alone from one quietly
-# rewritten: re-apply finalize_backrest and confirm the repository is byte for
-# byte the same set of backups afterwards.
+# rewritten: re-apply finalize_backrest and confirm the repository holds the
+# same set of backup labels afterwards -- no backup added, none expired.
 #
 # This is the regression the role is built around. The role used to take a full
 # backup unconditionally, so a second deployment run against a cluster whose
