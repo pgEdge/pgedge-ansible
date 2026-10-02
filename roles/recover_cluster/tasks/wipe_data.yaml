@@ -6,15 +6,32 @@
 # are rebuilt empty and refilled across Spock, and every replica because it is
 # rebuilt from its own zone's leader once that leader is up.
 #
-# The directory is recreated rather than left absent. setup_postgres creates it
+# The directory itself must still exist afterward. setup_postgres creates it
 # with these owner and permissions before initdb runs, Patroni expects to find
 # it, and PgBackRest restores into it -- and a missing directory on a
 # non-default path is one the postgres user may not be able to create itself.
+#
+# Empty the directory rather than remove it: pg_data is often a mount point,
+# and removing a mount point fails after its contents are already gone, so every
+# re-run would fail at the same task. Listing the top level and removing each
+# entry keeps this in Ansible rather than relying on find -delete, which not
+# every find supports. A symlinked pg_wal loses its link, not its target.
 
-- name: Erase the Postgres data directory
+- name: Find the contents of the Postgres data directory
+  find:
+    paths: "{{ pg_data }}"
+    file_type: any
+    hidden: true
+  register: recovery_pg_data
+  become: true
+
+- name: Erase the contents of the Postgres data directory
   file:
-    path: "{{ pg_data }}"
+    path: "{{ item.path }}"
     state: absent
+  loop: "{{ recovery_pg_data.files }}"
+  loop_control:
+    label: "{{ item.path }}"
   become: true
 
 - name: Recreate an empty Postgres data directory
