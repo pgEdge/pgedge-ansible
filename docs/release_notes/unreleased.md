@@ -111,8 +111,35 @@ The repository of an existing cluster is encrypted with the old derived
 password. You can recover that password, because anyone could derive it.
 [Upgrading a cluster deployed before this was required](../configuration/backup.md#upgrading-a-cluster-deployed-before-this-was-required)
 gives the command. Store the value in Ansible Vault and set
-`backup_repo_cipher` from it. Each zone has its own repository, and so its own
-password.
+`backup_repo_cipher` from it.
+
+The derived password included the zone, so every zone of a cluster that used
+the default has a different password. The sample inventories and the role
+documentation set one `backup_repo_cipher` for the whole cluster. That is fine
+for a new cluster, because nothing requires the zones to differ. It is wrong for
+an upgraded multi-zone cluster. A single value matches at most one zone's
+repository. The playbook rewrites `pgbackrest.conf` on every other zone with the
+wrong password, and archiving fails on those zones' primaries.
+
+Recover the password of each zone, store each one in Ansible Vault, and select
+it by zone. Keep the setting under `all` so that the backup servers resolve the
+same value as the nodes they serve:
+
+```yaml
+# vault.yaml
+vault_backup_repo_ciphers:
+  1: <recovered password for zone 1>
+  2: <recovered password for zone 2>
+```
+
+```yaml
+all:
+  vars:
+    backup_repo_cipher: "{{ vault_backup_repo_ciphers[zone | int] }}"
+```
+
+A cluster that already set `backup_repo_cipher` explicitly does not need this
+step, because its repositories already use the value in its inventory.
 
 Treat a recovered password as compromised. It lets you keep reading the
 existing repository, but you should plan to re-encrypt the repository.
