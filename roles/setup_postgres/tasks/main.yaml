@@ -19,6 +19,10 @@
 # Skipped during a recovery, which is the one time an empty data directory
 # beside a full repository is exactly what was intended: the zones that are not
 # restored are rebuilt empty on purpose and refilled across Spock.
+#
+# In an HA zone only the first node is asked. Replicas are never initialized
+# here; Patroni clones them from the leader, so a new or wiped replica has an
+# empty data directory beside a full repository by design.
 
 - name: Ensure the backup repository does not already hold this cluster
   include_role:
@@ -29,6 +33,7 @@
   when:
   - backup_repo_configured | bool
   - recovery_node == ''
+  - not is_ha_cluster or inventory_hostname == first_node_in_zone
 
 - name: Ensure RHEL pgedge Postgres service is set up
   include_tasks: rhel_prep.yaml
