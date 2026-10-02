@@ -10,6 +10,14 @@ all:
     # A repository whose nodes and server disagree about the cipher is one
     # neither can read.
     backup_repo_cipher: TestCipher987
+    # No scheduled backups. set_cron installs nothing for a schedule that is not
+    # five fields, and the default of 00:10 is one a CI run can cross: the
+    # verify playbook would find a second backup where it asserts exactly one,
+    # and a backup taken after the recovery test seeds its marker rows would
+    # restore them itself, so the test would no longer prove WAL replay. Set on
+    # 'all' because both the nodes and the backup servers install the jobs.
+    full_backup_schedule: ""
+    diff_backup_schedule: ""
     # The pooler enforces its own HBA rules, which name the cluster's nodes,
     # this zone's proxies and the node's loopback -- and nothing else. The client
     # node is none of those, so the pooled endpoint has to be opened to it here.
