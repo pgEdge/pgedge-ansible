@@ -15,6 +15,9 @@
     mode: "0600"
   become: true
   become_user: "{{ os_user }}"
+  # The file holds the repository cipher passphrase and any object-store
+  # secret key, and --diff would print both.
+  diff: false
 
 - name: Create a log folder for PgBackRest
   file:

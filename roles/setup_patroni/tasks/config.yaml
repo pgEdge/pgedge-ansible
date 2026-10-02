@@ -14,3 +14,6 @@
     owner: postgres
     group: postgres
   become: true
+  # The file holds the superuser and replication passwords, and --diff would
+  # print both.
+  diff: false

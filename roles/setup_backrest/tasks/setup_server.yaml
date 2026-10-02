@@ -43,3 +43,5 @@
     mode: "0600"
   become: true
   become_user: "{{ backup_repo_user }}"
+  # The line is a password, and --diff would print it.
+  diff: false
