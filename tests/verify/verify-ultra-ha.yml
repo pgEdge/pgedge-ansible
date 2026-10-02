@@ -881,24 +881,55 @@
     debug:
       msg: "HAProxy running on {{ inventory_hostname }}"
 
-# Verify Backup nodes
-- hosts: backup
+# Verify the backup repository, from whichever host reads it for each zone: the
+# zone's backup server for an SSH repository, and the zone's first pgEdge node
+# for an S3 one, where there is no server and the nodes drive the repository
+# themselves. Spelled as a play over both groups that sends every other host
+# home, rather than as a play over 'backup', because an S3 run has no 'backup'
+# group -- and a play matching no hosts passes having checked nothing at all.
+- hosts: pgedge:backup
   become: true
 
-  vars:
+  vars: &repo_reader_vars
+    # This playbook applies no role, so what role_config would derive is
+    # spelled out here. backup_repo_type arrives from the inventory or, for the
+    # S3 run, from tests/vars/backup-s3.yml.
+    cluster_name: demo
+    repo_is_s3: "{{ backup_repo_type | default('ssh') == 's3' }}"
+    reads_repo: >-
+      {{ inventory_hostname ==
+           (groups['pgedge'] | map('extract', hostvars) |
+            selectattr('zone', 'eq', zone) |
+            map(attribute='inventory_hostname') | first)
+         if repo_is_s3 | bool
+         else inventory_hostname in groups['backup'] | default([]) }}
     # PgBackRest refuses to run as root, and this play becomes root for
-    # everything else it does. The repository is owned by backup_repo_user,
-    # whose default is the Ansible user -- but that default lives in
-    # role_config, which this playbook never applies, so it is spelled out
-    # here. An inventory that sets backup_repo_user is picked up; a separate
-    # name avoids overriding it, since play vars outrank inventory vars.
+    # everything else it does. A pgEdge node reads the repository as postgres,
+    # as the scheduled backups do. A backup server's repository is owned by
+    # backup_repo_user, whose default is the Ansible user -- but that default
+    # lives in role_config, so it is spelled out too. An inventory that sets
+    # backup_repo_user is picked up; a separate name avoids overriding it,
+    # since play vars outrank inventory vars.
     #
     # ansible_user_id would be wrong here: this play gathers facts under
     # become, so it reports root rather than the account the repository
     # belongs to.
-    repo_owner: "{{ backup_repo_user | default(ansible_user) }}"
+    repo_owner: >-
+      {{ 'postgres' if repo_is_s3 | bool
+         else backup_repo_user | default(ansible_user) }}
+    stanza_name: "pgedge-{{ cluster_name }}-{{ zone }}"
+    # How many stanzas the repository should hold: an SSH repository serves
+    # one zone, while every zone shares the S3 bucket and keeps its own stanza
+    # there.
+    expected_stanzas: >-
+      {{ groups['pgedge'] | map('extract', hostvars, 'zone') | unique | length
+         if repo_is_s3 | bool else 1 }}
 
   tasks:
+  - name: Leave the repository to the host that reads it for this zone
+    meta: end_host
+    when: not reads_repo | bool
+
   - name: Read what the repository holds
     command: pgbackrest --output=json info
     register: backrest_info
@@ -909,23 +940,24 @@
     debug:
       msg: "pgbackrest info output: {{ backrest_info.stdout | from_json }}"
 
-  # One stanza per backup host, because a stanza describes one physical cluster
-  # and each of these servers holds the repository for one zone. A second stanza
-  # here means the cluster's identity moved -- a changed cluster_name or zone --
-  # and the backups being taken are no longer the ones anybody would restore.
+  # One stanza per zone, because a stanza describes one physical cluster and
+  # each zone is one. An extra stanza means the cluster's identity moved -- a
+  # changed cluster_name or zone -- and the backups being taken are no longer
+  # the ones anybody would restore.
 
-  - name: Assert the repository holds exactly one healthy stanza
+  - name: Assert the repository holds this zone's stanza and no stray ones
     vars:
       stanzas: "{{ backrest_info.stdout | from_json }}"
     assert:
       that:
-      - stanzas | length == 1
-      - stanzas[0].status.code | int == 0
+      - stanzas | length == expected_stanzas | int
+      - stanza_name in stanzas | map(attribute='name')
+      - stanzas | map(attribute='status.code') | map('int') | unique == [0]
       fail_msg: >-
-        Expected one stanza in status ok on {{ inventory_hostname }}, found
-        {{ stanzas | length }}:
-        {{ stanzas | map(attribute='name') | list }} with statuses
-        {{ stanzas | map(attribute='status') | list }}.
+        Expected {{ expected_stanzas }} stanza(s), including {{ stanza_name }},
+        all in status ok, as read from {{ inventory_hostname }}. Found
+        {{ stanzas | length }}: {{ stanzas | map(attribute='name') | list }}
+        with statuses {{ stanzas | map(attribute='status') | list }}.
 
   # A deployment takes exactly one full backup, and only when the repository has
   # none. More than one means something took a backup it was not asked for --
@@ -935,7 +967,9 @@
 
   - name: Assert the deployment took exactly one full backup and nothing else
     vars:
-      stanza: "{{ backrest_info.stdout | from_json | first }}"
+      stanza: >-
+        {{ backrest_info.stdout | from_json |
+           selectattr('name', 'eq', stanza_name) | first }}
       backups: "{{ stanza.backup | default([]) }}"
     assert:
       that:
@@ -954,8 +988,9 @@
   - name: Record the backups the repository held before the re-run
     set_fact:
       backrest_labels_before: >-
-        {{ (backrest_info.stdout | from_json | first).backup | default([]) |
-           map(attribute='label') | list }}
+        {{ (backrest_info.stdout | from_json |
+            selectattr('name', 'eq', stanza_name) | first).backup |
+           default([]) | map(attribute='label') | list }}
 
 # Verify the access gates from a host that no pg_hba rule names and no role was
 # applied to. From a pgEdge node these checks are meaningless — every rule the
@@ -1432,23 +1467,16 @@
     include_role:
       name: finalize_backrest
 
-- hosts: backup
+- hosts: pgedge:backup
   become: true
 
-  vars:
-    # PgBackRest refuses to run as root, and this play becomes root for
-    # everything else it does. The repository is owned by backup_repo_user,
-    # whose default is the Ansible user -- but that default lives in
-    # role_config, which this playbook never applies, so it is spelled out
-    # here. An inventory that sets backup_repo_user is picked up; a separate
-    # name avoids overriding it, since play vars outrank inventory vars.
-    #
-    # ansible_user_id would be wrong here: this play gathers facts under
-    # become, so it reports root rather than the account the repository
-    # belongs to.
-    repo_owner: "{{ backup_repo_user | default(ansible_user) }}"
+  vars: *repo_reader_vars
 
   tasks:
+  - name: Leave the repository to the host that reads it for this zone
+    meta: end_host
+    when: not reads_repo | bool
+
   - name: Read what the repository holds after the re-run
     command: pgbackrest --output=json info
     register: backrest_info_after
@@ -1458,8 +1486,9 @@
   - name: Assert re-applying finalize_backrest added and expired nothing
     vars:
       labels_after: >-
-        {{ (backrest_info_after.stdout | from_json | first).backup | default([]) |
-           map(attribute='label') | list }}
+        {{ (backrest_info_after.stdout | from_json |
+            selectattr('name', 'eq', stanza_name) | first).backup |
+           default([]) | map(attribute='label') | list }}
     assert:
       that:
       - labels_after == backrest_labels_before

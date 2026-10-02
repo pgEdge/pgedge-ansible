@@ -29,6 +29,17 @@ on:
           - all
           - etcd3
           - consul
+      backup:
+        description: >-
+          Backup repository: ssh is a dedicated backup server per zone, s3 a
+          MinIO object store over TLS from a private CA.
+        type: choice
+        required: true
+        default: ssh
+        options:
+          - all
+          - ssh
+          - s3
       recover:
         description: >-
           Also rebuild the cluster from its backup repository and verify the
@@ -40,18 +51,23 @@ on:
 
 jobs:
   test:
-    name: Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }}
+    name: Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         os: ${{ inputs.os == 'all' && fromJSON('["debian12","rocky9"]') || fromJSON(format('["{0}"]', inputs.os)) }}
         dcs: ${{ inputs.dcs == 'all' && fromJSON('["etcd3","consul"]') || fromJSON(format('["{0}"]', inputs.dcs)) }}
+        backup: ${{ inputs.backup == 'all' && fromJSON('["ssh","s3"]') || fromJSON(format('["{0}"]', inputs.backup)) }}
     env:
       COMPOSE_ARGS: >-
         -f tests/compose/ultra-ha-${{ matrix.os }}.yml
         ${{ matrix.dcs != 'etcd3' && format('-f tests/compose/dcs-{0}.yml', matrix.dcs) || '' }}
+        ${{ matrix.backup == 's3' && '-f tests/compose/backup-s3.yml' || '' }}
       DCS_VARS: ${{ matrix.dcs != 'etcd3' && format('-e @tests/vars/dcs-{0}.yml', matrix.dcs) || '' }}
+      # The repository is layered onto the base inventory: the backup servers
+      # for SSH, or the MinIO store's variables for S3, which may not have any.
+      BACKUP_ARGS: ${{ matrix.backup == 's3' && '-e @tests/vars/backup-s3.yml' || '-i tests/inventories/ultra-ha-ssh.yml' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -130,11 +146,21 @@ jobs:
           echo "ERROR: Consul did not elect a leader" >&2
           exit 1
 
+      # Before the deployment: the first thing to reach the repository is
+      # setup_postgres's identity check, which skips a repository it cannot
+      # read, so a CA that arrived late would only fail the final backup.
+      - name: Wait for S3 and install its CA on the nodes
+        if: matrix.backup == 's3'
+        run: |
+          tests/prepare-s3.sh e2e $COMPOSE_ARGS -- \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            --private-key tests/.ssh/id_ed25519
+
       - name: Run playbook
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/ultra-ha.yml \
-            -i tests/inventories/ultra-ha.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS
@@ -144,6 +170,7 @@ jobs:
           tests/check-idempotence.sh \
             tests/inventories/ultra-ha.yml \
             tests/playbooks/ultra-ha.yml \
+            $BACKUP_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS
@@ -152,7 +179,7 @@ jobs:
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-ultra-ha.yml \
-            -i tests/inventories/ultra-ha.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
 
@@ -172,7 +199,7 @@ jobs:
           DEPLOY_PLAYBOOK_DIR: tests/playbooks
         run: |
           tests/run-recovery-test.sh \
-            ultra-ha ${{ matrix.os }} ${{ matrix.dcs }}
+            ultra-ha ${{ matrix.os }} ${{ matrix.dcs }} ${{ matrix.backup }}
 
       - name: Show container logs on failure
         if: failure()

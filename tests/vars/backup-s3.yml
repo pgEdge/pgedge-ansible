@@ -1,0 +1,32 @@
+---
+
+# Points the cluster's repository at the MinIO container from
+# tests/compose/backup-s3.yml. Pass with:
+#
+#   ansible-playbook -e @tests/vars/backup-s3.yml ...
+#
+# and leave out tests/inventories/ultra-ha-ssh.yml, whose backup servers an S3
+# zone may not have.
+#
+# Set up the way an S3-compatible store most often differs from AWS, which is
+# the case these settings exist for: path-style addressing, a port of its own,
+# and a certificate from a private authority. The certificate is verified, not
+# waved through -- tests/prepare-s3.sh copies the container's CA to every
+# pgEdge node at storage_ca_file before the deployment starts.
+#
+# The endpoint is a name rather than the container's address because the
+# certificate has to match it, and Docker's resolver answers for the service
+# name on the test network.
+#
+# Every zone shares the bucket and the path. Each keeps its own stanza in it,
+# which is what the verify playbooks expect to find.
+
+backup_repo_type: s3
+backup_repo_params:
+  endpoint: minio
+  bucket: pgbackrest-test
+  access_key: pgedge-test
+  secret_key: TestS3Secret987
+  uri_style: path
+  storage_port: 9000
+  storage_ca_file: /etc/pgedge-test/s3-ca.crt

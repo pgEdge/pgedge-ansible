@@ -152,9 +152,13 @@
   # recovery abandoned. So under a target, the newest backup in every zone must
   # also be on the timeline that zone is running on.
 
+  # Named, because the repository may hold more than this zone's stanza: every
+  # zone shares an S3 bucket, and an unnamed info lists all of them, in an order
+  # that has nothing to do with which zone is asking.
+
   - name: Ask the repository what it holds for this zone
     become_user: postgres
-    command: pgbackrest --output=json info
+    command: pgbackrest --output=json --stanza=pgedge-demo-{{ zone }} info
     register: repo_info
     changed_when: false
     when: node_is_primary.stdout | trim == 't'

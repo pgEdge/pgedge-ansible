@@ -61,12 +61,11 @@ haproxy:
     192.168.6.17:
       zone: 2
 
-backup:
-  hosts:
-    192.168.6.18:
-      zone: 1
-    192.168.6.19:
-      zone: 2
+# The repository is chosen by what is layered on top of this file: the
+# ultra-ha-ssh.yml inventory adds the 'backup' group for an SSH repository, and
+# tests/vars/backup-s3.yml points the cluster at an object store instead. The
+# 'backup' group cannot live here, because init_server refuses a backup server
+# in a zone whose repository is S3.
 
 # A client with no deployment role at all: not in pgedge, haproxy or backup, and
 # named by no pg_hba rule. Phase 4's whole point — the access gates cannot be

@@ -1,0 +1,16 @@
+# Layered onto ultra-ha.yml for an SSH repository: one dedicated backup server
+# per zone. Pass both:
+#
+#   ansible-playbook -i tests/inventories/ultra-ha.yml \
+#                    -i tests/inventories/ultra-ha-ssh.yml ...
+#
+# Kept apart so that an S3 run can leave it out. init_server refuses a backup
+# server in a zone whose repository is S3, and an inventory cannot take a group
+# away again once another source has defined it.
+
+backup:
+  hosts:
+    192.168.6.18:
+      zone: 1
+    192.168.6.19:
+      zone: 2

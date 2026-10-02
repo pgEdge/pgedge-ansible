@@ -27,12 +27,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
-  echo "Usage: $0 <scenario> <os> [dcs] [-- extra ansible args...]"
+  echo "Usage: $0 <scenario> <os> [dcs] [backup] [-- extra ansible args...]"
   echo "  scenario: ultra-ha (the only recoverable scenario)"
   echo "  os:       debian12 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
+  echo "  backup:   ssh (default) | s3 -- as the deployment was given"
   echo ""
-  echo "Deploy first with: tests/run-test.sh <scenario> <os> [dcs] --keep"
+  echo "Deploy first with:"
+  echo "  tests/run-test.sh <scenario> <os> [dcs] [backup] --keep"
   echo ""
   echo "Point-in-time recovery instead of latest:"
   echo "  $0 ultra-ha rocky9 -- -e recovery_target_type=time \\"
@@ -43,6 +45,7 @@ usage() {
 SCENARIO="${1:-}"
 OS="${2:-}"
 DCS="etcd3"
+BACKUP="ssh"
 
 [ -z "$SCENARIO" ] || [ -z "$OS" ] && usage
 
@@ -51,11 +54,16 @@ if [ "$SCENARIO" != "ultra-ha" ]; then
   exit 1
 fi
 
+# The DCS and the backup type are told apart by value, as run-test.sh does, so
+# either can be given without the other.
 shift 2
-if [ "${1:-}" != "--" ] && [ -n "${1:-}" ]; then
-  DCS="$1"
+while [ -n "${1:-}" ] && [ "$1" != "--" ]; do
+  case "$1" in
+    ssh|s3) BACKUP="$1" ;;
+    *) DCS="$1" ;;
+  esac
   shift
-fi
+done
 [ "${1:-}" = "--" ] && shift
 EXTRA_ARGS=("$@")
 
@@ -82,13 +90,22 @@ if [ "$DCS" != "etcd3" ]; then
   EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/dcs-${DCS}.yml")
 fi
 
+# The repository the deployment used, layered on the same way run-test.sh
+# layers it. The S3 store's CA is already on the nodes from the deployment.
+INVENTORY_ARGS=(-i "$INVENTORY")
+case "$BACKUP" in
+  ssh) INVENTORY_ARGS+=(-i "$SCRIPT_DIR/inventories/${SCENARIO}-ssh.yml") ;;
+  s3) EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/backup-s3.yml") ;;
+  *) echo "ERROR: unknown backup type: $BACKUP"; usage ;;
+esac
+
 # The node to restore from its repository: the first pgEdge node the inventory
 # lists, which is the first node of its zone and so the one the role requires.
 # Asked of Ansible rather than scraped out of the YAML, because the 'haproxy'
 # and 'backup' groups list addresses at the same indentation and a text match
 # picks whichever appears first in the file.
 RECOVERY_NODE="$(ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" \
-  ansible-inventory -i "$INVENTORY" --list |
+  ansible-inventory "${INVENTORY_ARGS[@]}" --list |
   python3 -c "import json,sys; print(json.load(sys.stdin)['pgedge']['hosts'][0])")"
 
 if [ -z "$RECOVERY_NODE" ]; then
@@ -96,7 +113,8 @@ if [ -z "$RECOVERY_NODE" ]; then
   exit 1
 fi
 
-echo "==> Recovering ${SCENARIO} on ${OS} (dcs=${DCS}) from ${RECOVERY_NODE}"
+echo "==> Recovering ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP})" \
+  "from ${RECOVERY_NODE}"
 
 # Offline, and first: the Patroni template is re-rendered on the restored node
 # partway through a recovery, after the cluster has been erased. A template that
@@ -128,7 +146,7 @@ sed -n 's/^  - name: /      /p' \
 
 run() {
   ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
-    "$1" -i "$INVENTORY" --private-key "$KEY" "${@:2}"
+    "$1" "${INVENTORY_ARGS[@]}" --private-key "$KEY" "${@:2}"
 }
 
 # Step 1: put data in the cluster that only a restore can bring back -- once.
@@ -142,7 +160,7 @@ run() {
 # So seed when there is a cluster to seed, and otherwise carry straight on.
 echo "==> Step 1: Checking whether there is a cluster to seed..."
 if ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible pgedge \
-     -i "$INVENTORY" --private-key "$KEY" -b --become-user postgres \
+     "${INVENTORY_ARGS[@]}" --private-key "$KEY" -b --become-user postgres \
      -m command -a "psql -d postgres -t -A -c 'SELECT 1'" >/dev/null 2>&1; then
   echo "    Cluster is up; seeding data that exists only in archived WAL."
   run "$SCRIPT_DIR/playbooks/seed-recovery.yml" "${EXTRA_VARS[@]}"
