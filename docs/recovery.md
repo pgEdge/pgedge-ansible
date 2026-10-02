@@ -30,27 +30,31 @@ The procedure runs in this order:
 2. Remove each zone's cluster from the Patroni configuration store, and confirm
    it is gone.
 3. Erase and recreate every pgEdge data directory.
-4. Start Patroni on the node named by `recovery_node`. Its configuration carries
+4. Pause the scheduled backups, so a full backup taken once the restored zone
+   is up cannot expire the one the recovery restores from, which a second
+   attempt would need. See
+   [Scheduled Backups During a Recovery](#scheduled-backups-during-a-recovery).
+5. Start Patroni on the node named by `recovery_node`. Its configuration carries
    a PgBackRest bootstrap method, so Patroni restores the node from the
    repository, replays WAL to the recovery target, and promotes it.
-5. Strip the Spock metadata the restored node came back with — the other zones'
+6. Strip the Spock metadata the restored node came back with — the other zones'
    node entries, every subscription, and the replication origins behind them.
-6. Rebuild every other zone's leader as an empty cluster, exactly as a first
+7. Rebuild every other zone's leader as an empty cluster, exactly as a first
    deployment would.
-7. Record each rebuilt zone's new cluster in its stanza with
+8. Record each rebuilt zone's new cluster in its stanza with
    `pgbackrest stanza-upgrade`, so the zone can archive again before the copy
    in the next step fills its `pg_wal`.
-8. Subscribe each rebuilt zone to the restored one with structure and data
+9. Subscribe each rebuilt zone to the restored one with structure and data
    synchronization, and wait for the copy to finish.
-9. Build the rest of the subscription mesh with `setup_pgedge`.
-10. Take a full backup of every rebuilt zone, and of the restored zone too if
+10. Build the rest of the subscription mesh with `setup_pgedge`.
+11. Take a full backup of every rebuilt zone, and of the restored zone too if
     the recovery stopped at a point-in-time target. See
     [What Happens to the Rebuilt Zones' Backups](#what-happens-to-the-rebuilt-zones-backups)
     and [What Happens to the Restored Zone's Backups](#what-happens-to-the-restored-zones-backups).
-11. Rebuild every replica from its own zone's leader.
-12. Re-establish the backup schedule with `finalize_backrest`, which takes a
-    backup only if the repository has none of the cluster running now — so the
-    recovery point survives the recovery.
+12. Rebuild every replica from its own zone's leader.
+13. Re-establish the backup schedule with `finalize_backrest`, which re-enables
+    the paused entries and takes a backup only if the repository has none of
+    the cluster running now — so the recovery point survives the recovery.
 
 ## Rebuilding onto Replacement Hardware
 
@@ -155,6 +159,16 @@ succeeds untouched; one that has wedged is reported in fifteen minutes rather
 than after a timeout drains. Progress is printed as it goes, so `-v` shows
 movement.
 
+A restore that fails outright is reported at once instead. When a bootstrap
+fails, Patroni renames the data directory aside to `<pg_data>_<timestamp>` and
+exits, so either a new copy of that kind or a Patroni service that is no longer
+running ends the wait immediately. The recovery then stops Patroni, so that a
+unit configured to restart it cannot start another restore, and removes the
+copy this attempt made: it holds part of a restore the repository still has,
+and the logs that explain the failure are under `/var/log/pgbackrest` and the
+Patroni journal rather than inside it. Copies left by earlier failures, which
+may predate the recovery, are not touched.
+
 The playbook reports the timeline and WAL position the restored cluster came
 back to. Check it against the target that was asked for: when a target falls
 outside what the repository can reach, PgBackRest stops at the last point it
@@ -188,7 +202,7 @@ one zone and then failed rebuilding another is not half-recovered in a way that
 has to be unpicked; the next run erases the restored zone too and restores it
 again.
 
-Two things are worth knowing:
+A few things are worth knowing:
 
 - The recovery needs the cluster's certificate authority. `setup_patroni` signs
   each rebuilt node's client certificate against it, so the recovery checks
@@ -286,6 +300,34 @@ recovery abandoned. A later restore that takes the latest backup would land on
 that timeline rather than on the cluster running now. So after a point-in-time
 recovery the restored zone takes a full backup as well, which under the
 default retention also expires the backups from before the target.
+
+## Scheduled Backups During a Recovery
+
+The cron entries `finalize_backrest` installs keep running while a recovery is
+under way unless something stops them, and from the moment the restored zone is
+up they have a cluster to back up. A scheduled full backup that lands there —
+during the recovery, or between a failed attempt and the next — completes, and
+under the default `full_backup_count` of 1 it expires the full backup the
+recovery restored from and the WAL that goes with it. The next attempt then has
+nothing older than the incident to restore, and no point-in-time target before
+that new backup can be reached. A scheduled backup that is still running when
+the recovery takes its own also holds the stanza's lock, and fails the
+recovery's.
+
+So the recovery disables both entries, on every host that has them, once every
+data directory is erased and before anything is restored. They stay disabled
+across a failed attempt, which is what the next attempt needs, and the closing
+`finalize_backrest` installs them again by the same name, enabled. If a
+recovery is abandoned rather than finished, run `finalize_backrest` or re-enable
+the entries with `crontab -e` as the user that runs PgBackRest: `postgres` on
+the pgEdge nodes, or the repository's owner on a dedicated backup server.
+
+Only an entry the collection would install again is paused. When
+`full_backup_schedule` or `diff_backup_schedule` is an empty string,
+`finalize_backrest` would never re-enable that entry, so one an earlier
+deployment left is not touched and keeps running; remove it as
+[Turning off scheduled backups](configuration/backup.md#turning-off-scheduled-backups)
+describes.
 
 ## What a Recovery Leaves Behind
 

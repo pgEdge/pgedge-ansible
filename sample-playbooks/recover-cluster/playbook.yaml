@@ -100,6 +100,23 @@
       name: recover_cluster
       tasks_from: wipe_data
 
+# Hold the scheduled backups until the end, where finalize_backrest restores
+# them. Until now no zone was running and a scheduled backup could only fail;
+# from the next play the restored zone is up, and a full backup taken there
+# between attempts would expire the one this recovery restores from. Its own
+# play because an SSH repository's schedule lives on the backup server.
+
+- hosts: pgedge:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: recover_cluster
+      tasks_from: pause_backups
+
 # Restore the one node the rest of the cluster is rebuilt from, then strip the
 # replication metadata it came back with. That metadata describes zones that are
 # about to be rebuilt from nothing, and a subscription that resumes against it
@@ -222,7 +239,9 @@
 # point-in-time recovery, when the newer ones are on the abandoned timeline; a
 # rebuilt zone's only describe the cluster it replaced. Running
 # finalize_backrest afterwards re-establishes the backup schedule on the rebuilt
-# nodes, and finds a backup of the current cluster in every zone already.
+# nodes, and finds a backup of the current cluster in every zone already. It is
+# also what lifts the pause on the schedule: it installs each entry again by
+# the same name, enabled.
 
 - hosts: pgedge:backup
 

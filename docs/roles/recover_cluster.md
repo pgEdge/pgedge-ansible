@@ -33,6 +33,7 @@ files in order:
 | `reset_dcs` | every pgEdge node | Optional. Rebuild the zone's etcd cluster from nothing, for when the store itself is what is broken. |
 | `clear_dcs` | each zone's first node | Remove the zone's cluster from the Patroni configuration store, and confirm it is gone. Skipped when the store was reset. |
 | `wipe_data` | every pgEdge node | Erase and recreate the data directory. |
+| `pause_backups` | every pgEdge node and backup server | Disable the scheduled backup entries until `finalize_backrest` installs them again. |
 | `restore_leader` | `recovery_node` | Start Patroni so it restores the node from the repository, and wait for it to take the leader. |
 | `clean_spock` | `recovery_node` | Remove the replication metadata the restore brought back, and verify it is gone. |
 | `rebuild_zone` | each other zone's first node | Rebuild the zone's leader as an empty cluster. |
