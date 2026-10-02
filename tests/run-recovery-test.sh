@@ -69,6 +69,14 @@ DEPLOY_DIR="${DEPLOY_PLAYBOOK_DIR:-$PROJECT_DIR/sample-playbooks/${SCENARIO}}"
 RECOVER_DIR="$PROJECT_DIR/sample-playbooks/recover-cluster"
 KEY="$SCRIPT_DIR/.ssh/id_ed25519"
 
+# Under CI the deployment ran moments ago in the same job, so the leniency below
+# for a cluster a previous attempt left mid-recovery has nothing to forgive: a
+# cluster that cannot be seeded, or a deployment that staged no TLS, is the
+# deployment failing, and a recovery run on top of it would prove nothing.
+# GitHub Actions and act both set CI.
+IN_CI=false
+[ "${CI:-}" = "true" ] && IN_CI=true
+
 EXTRA_VARS=()
 if [ "$DCS" != "etcd3" ]; then
   EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/dcs-${DCS}.yml")
@@ -95,6 +103,7 @@ echo "==> Recovering ${SCENARIO} on ${OS} (dcs=${DCS}) from ${RECOVERY_NODE}"
 # cannot render is much cheaper to find out about here.
 echo "==> Step 0: Checking rendered templates..."
 python3 "$SCRIPT_DIR/render/check-patroni.py"
+python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
 
 # Build and install the collection, exactly as run-test.sh does.
 #
@@ -105,8 +114,12 @@ python3 "$SCRIPT_DIR/render/check-patroni.py"
 # while iterating on the recipe is silently ignored and the same failure repeats
 # from code that is no longer on disk. That cost two full cycles before anyone
 # noticed the task name in the error had already been renamed.
+#
+# Clean first, too: a dirty tree keeps one version string across edits, so the
+# tarball from the last build carries the same name as the one this tree would
+# produce, and only a rebuild guarantees it holds what is on disk.
 echo "==> Step 0b: Building and installing the collection from this tree..."
-( cd "$PROJECT_DIR" && make install )
+( cd "$PROJECT_DIR" && make clean install )
 
 echo "    Installed recover_cluster tasks now in use:"
 sed -n 's/^  - name: /      /p' \
@@ -133,6 +146,12 @@ if ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible pgedge \
      -m command -a "psql -d postgres -t -A -c 'SELECT 1'" >/dev/null 2>&1; then
   echo "    Cluster is up; seeding data that exists only in archived WAL."
   run "$SCRIPT_DIR/playbooks/seed-recovery.yml" "${EXTRA_VARS[@]}"
+elif $IN_CI; then
+  echo "ERROR: no working cluster to seed. Under CI the deployment ran just"
+  echo "       before this, so there is no earlier attempt to have left it"
+  echo "       mid-recovery, and without the marker rows the verification has"
+  echo "       nothing to find."
+  exit 1
 else
   echo "    No working cluster, so nothing to seed -- carrying on."
   echo "    A previous attempt left this cluster mid-recovery. The marker rows"
@@ -150,10 +169,36 @@ fi
 # staging directory it would mint a fresh self-signed certificate for those
 # zones, leaving the cluster with two. Reuse the one the deployment made, the
 # same way check-idempotence.sh reuses it for the pooler.
+#
+# All but the etcd certificate authority. That is handed to the recovery the
+# way a production inventory would hand it over -- etcd_ca_cert and etcd_ca_key
+# -- so this run exercises the inventory-supplied path rather than a staged
+# copy, which the deployment itself already covers. The staged copy an earlier
+# attempt left is removed first, or every attempt after the first would only
+# compare against it rather than write it.
 echo "==> Step 2: Reusing the deployment's TLS staging directory..."
 if [ -d "$DEPLOY_DIR/tls" ]; then
   mkdir -p "$RECOVER_DIR"
   cp -r "$DEPLOY_DIR/tls" "$RECOVER_DIR/"
+  rm -rf "$RECOVER_DIR/tls/etcd"
+  if [ -f "$DEPLOY_DIR/tls/etcd/ca.crt" ]; then
+    CA_VARS="$(mktemp)"
+    trap 'rm -f "$CA_VARS"' EXIT
+    python3 - "$DEPLOY_DIR/tls/etcd" "$CA_VARS" <<'PY'
+import json, pathlib, sys
+src = pathlib.Path(sys.argv[1])
+pathlib.Path(sys.argv[2]).write_text(json.dumps({
+    "etcd_ca_cert": (src / "ca.crt").read_text(),
+    "etcd_ca_key": (src / "ca.key").read_text(),
+}))
+PY
+    echo "    Supplying the etcd certificate authority as etcd_ca_cert/etcd_ca_key."
+    EXTRA_VARS+=(-e "@$CA_VARS")
+  fi
+elif $IN_CI; then
+  echo "ERROR: no TLS staging at $DEPLOY_DIR/tls. The deployment in this job"
+  echo "       should have left it there; check DEPLOY_PLAYBOOK_DIR."
+  exit 1
 else
   echo "    WARNING: no TLS staging at $DEPLOY_DIR/tls; rebuilt zones will get"
   echo "             a freshly generated certificate."

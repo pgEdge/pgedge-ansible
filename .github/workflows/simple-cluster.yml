@@ -49,11 +49,12 @@ jobs:
       # Offline, and the only tests that can observe a topology this matrix
       # does not deploy -- in particular a cluster with pgbouncer_enabled
       # unset, whose haproxy.cfg must stay what it was before pooling
-      # existed.
+      # existed, and a repository with backup_repo_cipher_type: none.
       - name: Check rendered templates
         run: |
           python3 tests/render/check-haproxy.py
           python3 tests/render/check-patroni.py
+          python3 tests/render/check-pgbackrest.py
 
       - name: Generate SSH keypair
         run: |
