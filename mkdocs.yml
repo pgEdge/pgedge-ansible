@@ -103,5 +103,8 @@ nav:
       - pgBouncer Issues: troubleshooting/pgbouncer.md
       - Spock Replication Issues: troubleshooting/spock.md
       - PgBackRest Issues: troubleshooting/backup.md
+  - Release Notes:
+      - Release Notes: release_notes.md
+      - Unreleased: release_notes/unreleased.md
   - Changelog: CHANGELOG.md
   - License: LICENSE.md
