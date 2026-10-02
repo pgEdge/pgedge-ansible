@@ -111,6 +111,13 @@ to write, so an unreadable repository is fatal here. Concluding "no backups
 here" from a repository that could not be read is how a good backup gets
 expired.
 
+Readable is judged from the stanza status `pgbackrest info` reports, not its
+exit code, which is 0 even when the repository host is unreachable or its
+cipher cannot be decrypted. Only status 0 (ok), 1 (no stanza yet) and 2 (no
+backups yet) count. Anything else stops the role, including status 3, the
+directories without info files that an interrupted `stanza-create` leaves
+behind.
+
 ## Artifacts
 
 This role generates and modifies the following files on inventory hosts:

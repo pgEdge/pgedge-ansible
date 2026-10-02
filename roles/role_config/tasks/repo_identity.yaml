@@ -26,7 +26,9 @@
 # a repository it cannot read is a check it can skip -- which it must be, since
 # an SSH repository is not reachable from a pgEdge node until the backup server
 # has authorized its key, and that happens later in the deployment. The late
-# check gates a decision to write, so an unreadable repository there is fatal:
+# check gates a decision to write, so an unreadable repository there is fatal --
+# and a half-made stanza counts as unreadable, since what it once held cannot be
+# known:
 # concluding "no backups here" from a repository that could not be read is how
 # a good backup gets expired.
 
@@ -35,6 +37,14 @@
     path: "{{ pg_data }}/global/pg_control"
   register: repo_identity_pg_control
   become: true
+
+# The exit status is not the answer to "could the repository be read". Info
+# exits 0 for an unreachable repository host, an unreadable path, a cipher it
+# cannot decrypt and a stanza-create that never finished, and says so only in
+# the stanza's status code: 99 for the errors, 3 for the half-made stanza. Codes
+# 0, 1 and 2 -- ok, no stanza yet, no backups yet -- are the only ones that
+# describe a repository this check actually looked inside. Treat anything else
+# as unread, or a repository it cannot read passes as one that is empty.
 
 - name: Ask the repository which cluster this stanza belongs to
   command:
@@ -46,18 +56,50 @@
   register: repo_identity_info
   changed_when: false
   check_mode: false
-  failed_when:
-  - repo_identity_info.rc != 0
-  - repo_identity_required | default(true) | bool
+  failed_when: false
   become: true
   become_user: postgres
 
 - name: Record what the repository reports for this stanza
   set_fact:
-    repo_identity_stanza: >-
+    repo_identity_report: >-
       {{ (repo_identity_info.stdout | from_json |
           selectattr('name', 'eq', backup_stanza) | first | default({}))
          if repo_identity_info.rc == 0 else {} }}
+
+- name: Ensure the repository could be read
+  assert:
+    that:
+    - repo_identity_report.status.code | default(-1) | int in [0, 1, 2]
+    fail_msg: >-
+      pgbackrest could not read stanza {{ backup_stanza }} from
+      {{ inventory_hostname }}:
+      {{ (repo_identity_report.repo | default([]) |
+          map(attribute='status.message') | join('; '))
+         or ((repo_identity_info.stderr | default('')) ~ ' ' ~
+             (repo_identity_info.stdout | default(''))) | trim }}
+      {% if repo_identity_report.status.code | default(-1) | int == 3 %}
+      The stanza's directories exist but its info files do not, which is
+      what an interrupted stanza-create leaves behind -- or what is left of
+      a stanza whose info files were deleted. Inspect the repository before
+      going further: if it holds nothing worth keeping, remove the stanza's
+      directories so that the next run creates it afresh.
+      {% else %}
+      A repository that cannot be read cannot be told apart from an empty
+      one, and treating it as empty is how a good backup gets expired. Fix
+      the access or the configuration before running this again.
+      {% endif %}
+  when: repo_identity_required | default(true) | bool
+
+# The early check skips a repository it could not read rather than refusing it,
+# and must not then read the error report as a stanza that names no cluster.
+
+- name: Keep the report only if the repository could be read
+  set_fact:
+    repo_identity_stanza: >-
+      {{ repo_identity_report
+         if repo_identity_report.status.code | default(-1) | int in [0, 1, 2]
+         else {} }}
 
 # PgBackRest keeps one db entry per history the stanza has held, and a
 # stanza-upgrade adds another rather than replacing it, so matching any of them

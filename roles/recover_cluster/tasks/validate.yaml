@@ -128,7 +128,11 @@
 # So ask the repository itself, here, while the cluster is still intact.
 #
 # failed_when is off so the assert below can say what went wrong rather than
-# leaving a raw pgbackrest exit status as the only explanation.
+# leaving a raw pgbackrest exit status as the only explanation. The exit status
+# is not enough on its own either: info exits 0 for an unreachable repository
+# host, an unreadable path or a cipher it cannot decrypt, reporting the failure
+# only as stanza status 99 (or 3, for an interrupted stanza-create). Codes 0, 1
+# and 2 are the ones that describe a repository info actually looked inside.
 
 - name: Ask the repository what it holds for the node being restored
   command:
@@ -146,12 +150,21 @@
   when: inventory_hostname == recovery_node
 
 - name: Ensure the repository the recovery restores from can be read
+  vars:
+    recovery_report: >-
+      {{ (recovery_repo_info.stdout | from_json |
+          selectattr('name', 'eq', backup_stanza) | first | default({}))
+         if recovery_repo_info.rc == 0 else {} }}
   assert:
     that:
-    - recovery_repo_info.rc == 0
+    - recovery_report.status.code | default(-1) | int in [0, 1, 2]
     fail_msg: >-
       pgbackrest could not read stanza {{ backup_stanza }} from
-      {{ recovery_node }}: {{ recovery_repo_info.stderr | default('') | trim }}
+      {{ recovery_node }}:
+      {{ (recovery_report.repo | default([]) |
+          map(attribute='status.message') | join('; '))
+         or ((recovery_repo_info.stderr | default('')) ~ ' ' ~
+             (recovery_repo_info.stdout | default(''))) | trim }}
       Nothing has been touched yet. A repository this node cannot read is a
       repository it cannot restore from, so fix the access or the
       configuration before running this again.

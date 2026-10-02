@@ -6,6 +6,13 @@
 # read, because a moment of SSH trouble or a mistyped S3 credential would then
 # expire a good backup. A repository that has never been written reports an
 # empty list rather than an error, so a genuine first run still passes.
+#
+# The exit status only covers a failure to run at all. An unreachable repository
+# host, an unreadable path or a cipher it cannot decrypt still exits 0, with the
+# stanza's status code at 99 and its backup list empty; an interrupted
+# stanza-create exits 0 with code 3. Only codes 0, 1 and 2 -- ok, no stanza yet,
+# no backups yet -- describe a repository info actually looked inside, so the
+# play refuses anything else rather than read it as empty.
 
 - name: Ask the repository what this stanza already holds
   command:
@@ -25,6 +32,27 @@
     backrest_stanza: >-
       {{ backrest_info.stdout | from_json |
          selectattr('name', 'eq', backup_stanza) | first | default({}) }}
+
+- name: Ensure the repository could be read
+  assert:
+    that:
+    - backrest_stanza.status.code | default(-1) | int in [0, 1, 2]
+    fail_msg: >-
+      pgbackrest could not read stanza {{ backup_stanza }} from
+      {{ inventory_hostname }}:
+      {{ backrest_stanza.repo | default([]) |
+         map(attribute='status.message') | join('; ') }}
+      {% if backrest_stanza.status.code | default(-1) | int == 3 %}
+      The stanza's directories exist but its info files do not, which is
+      what an interrupted stanza-create leaves behind -- or what is left of
+      a stanza whose info files were deleted. Inspect the repository before
+      going further: if it holds nothing worth keeping, remove the stanza's
+      directories so that the next run creates it afresh.
+      {% else %}
+      A repository that cannot be read cannot be told apart from an empty
+      one, and treating it as empty is how a good backup gets expired. Fix
+      the access or the configuration before running this again.
+      {% endif %}
 
 # A stanza that has been through stanza-upgrade holds backups of more than one
 # cluster: one db entry per system identifier it has described, and each backup
