@@ -123,6 +123,65 @@
   - inventory_hostname in (groups.pgedge | default([])) or
     inventory_hostname in (groups.backup | default([]))
 
+# An S3 repository is the object store and nothing else. A backup server exists
+# to hold an SSH repository and to drive it over SSH, and none of that is set up
+# in S3 mode -- no SSH keys are exchanged -- so a server in the zone would fail
+# partway through the deployment trying to reach nodes it was never given
+# access to. Refused here instead, while nothing has been changed.
+#
+# Asked of the pgEdge nodes, which are the hosts the repository type is set for:
+# a backup server given no backup_repo_type of its own would think itself in SSH
+# mode and see nothing wrong.
+
+- name: Ensure an S3 zone has no backup server
+  assert:
+    that:
+    - backups_in_zone | length == 0
+    fail_msg: >-
+      Zone {{ zone }} uses an S3 repository, but has backup servers:
+      {{ backups_in_zone | join(', ') }}. A backup server only serves an SSH
+      repository. Remove these hosts from the 'backup' group, or set
+      backup_repo_type to ssh.
+  when:
+  - backup_type == 's3'
+  - inventory_hostname in (groups.pgedge | default([]))
+
+# The S3 settings have defaults only where one is plausible. The credentials
+# have none, and a configuration that leaves them empty fails only when
+# finalize_backrest first writes to the repository -- the last step of the
+# deployment, long after Postgres was built expecting to archive there.
+
+- name: Ensure the S3 repository settings are complete
+  assert:
+    that:
+    - s3_problems | length == 0
+    fail_msg: >-
+      backup_repo_type is s3, so backup_repo_params must name the bucket, region
+      and endpoint, and supply access_key and secret_key -- from Ansible Vault,
+      beside the passwords. If set, uri_style must be host or path, storage_port
+      a number from 1 to 65535, and storage_verify_tls true or false.
+      Missing or invalid: {{ s3_problems | join(', ') }}.
+  vars:
+    s3_problems: >-
+      {{ ['access_key', 'secret_key', 'bucket', 'region', 'endpoint']
+         | reject('in', backup_params | dict2items | selectattr('value')
+                        | map(attribute='key') | list) | list
+         + (['uri_style'] if backup_params.uri_style not in ('', 'host', 'path')
+            else [])
+         + (['storage_port'] if port_given > ''
+              and not (port_given is match('^[0-9]+$')
+                       and port_given | int in range(1, 65536))
+            else [])
+         + (['storage_verify_tls'] if verify_given | lower not in
+              ('', 'true', 'false', 'yes', 'no', 'y', 'n', 'on', 'off',
+               '1', '0')
+            else []) }}
+    port_given: "{{ backup_params.storage_port | string }}"
+    verify_given: "{{ backup_params.storage_verify_tls | string }}"
+  when:
+  - backup_type == 's3'
+  - inventory_hostname in (groups.pgedge | default([]))
+
 # These roles simply won't work on anything but RHEL / Debian systems right
 # now. There may be workarounds, but for now it's best to fail early.
 

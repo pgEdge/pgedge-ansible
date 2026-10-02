@@ -1,7 +1,5 @@
 ---
 
-backup_repo_params: {}
-
 # Retention, which this role renders into pgbackrest.conf. The backup schedule
 # that used to sit beside these now belongs to finalize_backrest, which installs
 # the cron entries: a role's defaults are visible only to that role, so the

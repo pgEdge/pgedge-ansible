@@ -12,7 +12,9 @@ roles use these variables.
 - Options: `ssh`, `s3`
 - Description: This parameter specifies the PgBackRest repository type.
   Using `ssh` requires a dedicated backup server in the `backup` host group.
-  Using `s3` stores backups in AWS S3 or compatible object storage.
+  Using `s3` stores backups in AWS S3 or compatible object storage, and
+  needs no backup server: a zone that uses `s3` must not have a host in the
+  `backup` group, and `init_server` refuses one that does.
 
 In the following example, the inventory specifies SSH-based backups:
 
@@ -241,7 +243,9 @@ recurring jobs are left out.
 - Default: See below.
 - Description: This parameter provides configuration for S3 backup
   repositories. You must specify this parameter when you set `backup_repo_type`
-  to `s3`.
+  to `s3`. The dictionary is merged over the defaults below, so an inventory
+  names only the keys it changes. `init_server` refuses an S3 configuration
+  with an empty `access_key`, `secret_key`, `bucket`, `region` or `endpoint`.
 
 The `backup_repo_params` dictionary accepts the following keys with the
 defaults shown:
@@ -253,7 +257,28 @@ backup_repo_params:
   bucket: pgbackrest
   access_key: ''
   secret_key: ''
+  uri_style: ''
+  storage_ca_file: ''
+  storage_port: ''
+  storage_verify_tls: ''
 ```
+
+- `uri_style` sets PgBackRest's `repo1-s3-uri-style`: `host` addresses the
+  bucket as `bucket.endpoint`, and `path` as `endpoint/bucket`. Left empty, the
+  setting is omitted and PgBackRest uses `host`, which is what AWS S3 expects.
+  S3-compatible stores such as MinIO usually need `path`.
+- `storage_ca_file` sets PgBackRest's `repo1-storage-ca-file`, the certificate
+  authority that verifies the endpoint's TLS certificate. Left empty, the
+  setting is omitted and PgBackRest uses the system CA bundle. Set it when the
+  endpoint's certificate comes from a private authority. It is a path on the
+  pgEdge nodes, and the collection does not copy the file there.
+- `storage_port` sets PgBackRest's `repo1-storage-port`. Left empty, the setting
+  is omitted and PgBackRest connects on 443. MinIO listens on 9000 by default.
+- `storage_verify_tls` sets PgBackRest's `repo1-storage-verify-tls`, as `y` for
+  `true` and `n` for `false`. Left empty, the setting is omitted and PgBackRest
+  verifies the endpoint's certificate. Setting it to `false` accepts any
+  certificate at all, so reserve it for test environments and prefer
+  `storage_ca_file` for a privately signed certificate.
 
 In the following example, the inventory configures S3 backup storage with
 credentials from Ansible Vault:
@@ -265,6 +290,20 @@ backup_repo_params:
   bucket: my-pg-backups
   access_key: "{{ vault_aws_access_key }}"
   secret_key: "{{ vault_aws_secret_key }}"
+```
+
+In the following example, the inventory configures a MinIO server listening on
+its default port, whose certificate is signed by a private authority:
+
+```yaml
+backup_repo_params:
+  endpoint: minio.example.com
+  bucket: pg-backups
+  access_key: "{{ vault_minio_access_key }}"
+  secret_key: "{{ vault_minio_secret_key }}"
+  uri_style: path
+  storage_port: 9000
+  storage_ca_file: /etc/pki/tls/certs/minio-ca.crt
 ```
 
 ## patroni_replica_from_backup

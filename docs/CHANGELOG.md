@@ -38,6 +38,10 @@ in full.
 - New `recovery_reset_dcs` parameter rebuilds the configuration store during a
   recovery.
 - New render, recovery and backup checks in the test suite.
+- New `uri_style`, `storage_ca_file`, `storage_port` and `storage_verify_tls`
+  keys in `backup_repo_params` for S3-compatible stores such as MinIO.
+- `init_server` validates S3 repository settings and refuses a backup server in
+  an S3 zone.
 
 ### Changed
 

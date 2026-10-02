@@ -317,6 +317,26 @@ same play to the top:
 - New `backup_stanza` and `backup_repo_configured` variables in `role_config`,
   and `subscribe_target` moved there from `setup_pgedge`, so that the roles
   which now share them cannot drift apart.
+- New `uri_style`, `storage_ca_file`, `storage_port` and `storage_verify_tls`
+  keys in `backup_repo_params` set PgBackRest's `repo1-s3-uri-style`,
+  `repo1-storage-ca-file`, `repo1-storage-port` and `repo1-storage-verify-tls`,
+  which an S3-compatible store such as MinIO usually needs: path-style
+  addressing, a port of its own, and a certificate authority for an endpoint
+  whose certificate is privately signed -- or, in a test environment, no
+  certificate check at all. All four are empty by default and omitted from the
+  configuration when empty, so an AWS S3 repository renders exactly as before.
+  `backup_repo_params` and the merged `backup_params` moved from
+  `setup_backrest` to `role_config`, because `init_server` now validates them.
+- `init_server` refuses an S3 repository whose `backup_repo_params` leaves the
+  credentials, bucket, region or endpoint empty, or gives a `uri_style` other
+  than `host` or `path`, a `storage_port` outside 1 to 65535, or a
+  `storage_verify_tls` that is not a boolean. Empty credentials used to surface
+  only when `finalize_backrest` first wrote to the repository, at the very end
+  of the deployment.
+- `init_server` refuses a zone that uses an S3 repository and also has a host in
+  the `backup` group. A backup server only serves an SSH repository, and in S3
+  mode no SSH keys are exchanged, so the server failed partway through the
+  deployment trying to reach nodes it was never given access to.
 
 ### Changed
 

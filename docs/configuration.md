@@ -184,7 +184,17 @@ backup_repo_params:
   bucket: pgbackrest
   access_key: ''
   secret_key: ''
+  uri_style: ''
+  storage_ca_file: ''
+  storage_port: ''
+  storage_verify_tls: ''
 ```
+
+`uri_style` (`host` or `path`), `storage_ca_file` (a path on the pgEdge nodes),
+`storage_port` and `storage_verify_tls` (a boolean) are omitted from the
+configuration when empty, leaving PgBackRest's defaults. An S3-compatible store
+such as MinIO usually needs `uri_style: path` and its own `storage_port`. See
+[Backup Configuration](configuration/backup.md#backup_repo_params).
 
 ## Spock Configuration Parameters
 

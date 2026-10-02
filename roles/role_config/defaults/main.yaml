@@ -101,6 +101,12 @@ backup_password: secret
 
 backup_repo_type: ssh
 
+# The S3 repository's settings, merged over default_repo_params in this role's
+# vars, so an inventory names only the keys it changes. Here rather than in
+# setup_backrest, which renders them, because init_server validates them too.
+
+backup_repo_params: {}
+
 # How the backup repository is encrypted, and with what.
 #
 # The password has no default, and that is the point. It cannot be generated,

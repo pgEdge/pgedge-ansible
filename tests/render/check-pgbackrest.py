@@ -13,7 +13,11 @@ expression is read out of role_config's own vars here rather than restated, so
 this also pins the derivation the template depends on.
 
 Every host that renders the file is covered: a pgEdge node and a backup server
-for an SSH repository, and a pgEdge node for an S3 one.
+for an SSH repository, and a pgEdge node for an S3 one -- with
+role_config's S3 defaults, which must leave PgBackRest's own URI style and CA
+bundle, port and certificate checks alone, and set up the ways an S3-compatible
+store such as MinIO needs: path-style addressing on its own port with a private
+CA, and with certificate checks off for a test store.
 """
 
 import configparser
@@ -31,6 +35,37 @@ ROLE_VARS = REPO / "roles" / "role_config" / "vars" / "main.yaml"
 NODES = ["10.0.0.10", "10.0.0.11", "10.0.0.12"]
 BACKUP = ["10.0.0.18"]
 CIPHER = "TestCipher987"
+
+# What an inventory gives backup_repo_params for each S3 case. Laid over
+# role_config's default_repo_params the way the role's combine does, so a key
+# role_config adds without the template knowing it fails a StrictUndefined
+# render rather than passing unnoticed.
+S3_PARAMS = {
+    "s3": {"endpoint": "s3.example.com", "bucket": "b", "access_key": "k",
+           "secret_key": "s"},
+    "minio": {"endpoint": "minio.example.com", "bucket": "b",
+              "access_key": "k", "secret_key": "s", "uri_style": "path",
+              "storage_ca_file": "/etc/pki/minio-ca.crt",
+              "storage_port": 9000},
+    # A test store with a self-signed certificate. storage_verify_tls is a YAML
+    # boolean in the inventory, and false must still render, as n rather than
+    # nothing.
+    "minio-insecure": {"endpoint": "minio.example.com", "bucket": "b",
+                       "access_key": "k", "secret_key": "s",
+                       "uri_style": "path", "storage_verify_tls": False},
+}
+
+# What each S3_PARAMS case must render for the options that are omitted unless
+# set, keyed by option name. Anything not listed must be absent.
+S3_EXPECTED = {
+    "minio": {"repo1-s3-uri-style": "path",
+              "repo1-storage-ca-file": "/etc/pki/minio-ca.crt",
+              "repo1-storage-port": "9000"},
+    "minio-insecure": {"repo1-s3-uri-style": "path",
+                       "repo1-storage-verify-tls": "n"},
+}
+OPTIONAL_S3 = ("repo1-s3-uri-style", "repo1-storage-ca-file",
+               "repo1-storage-port", "repo1-storage-verify-tls")
 
 
 def env():
@@ -54,7 +89,14 @@ def encrypted(e, cipher_type):
     return e.from_string(expr).render(backup_repo_cipher_type=cipher_type)
 
 
-def context(e, cipher_type, backup_type, host):
+def repo_params(flavour):
+    """role_config's backup_params for one of the S3_PARAMS cases."""
+    defaults = yaml.safe_load(ROLE_VARS.read_text())["default_repo_params"]
+    return {**defaults, **S3_PARAMS.get(flavour, {})}
+
+
+def context(e, cipher_type, flavour, host):
+    backup_type = "ssh" if flavour == "ssh" else "s3"
     return dict(
         backup_stanza="pgedge-demo-1", inventory_hostname=host,
         groups={"pgedge": NODES, "backup": BACKUP},
@@ -68,11 +110,10 @@ def context(e, cipher_type, backup_type, host):
         backup_repo_cipher=CIPHER if cipher_type != "none" else "",
         backup_type=backup_type, backup_server=BACKUP[0],
         backup_repo_user="backrest",
-        backup_params={"region": "us-east-1", "endpoint": "s3.example.com",
-                       "bucket": "b", "access_key": "k", "secret_key": "s"})
+        backup_params=repo_params(flavour))
 
 
-def failed_checks(text, cipher_type):
+def failed_checks(text, cipher_type, flavour):
     ini = configparser.ConfigParser(interpolation=None)
     ini.read_string(text)
     g = ini["global"]
@@ -83,6 +124,10 @@ def failed_checks(text, cipher_type):
         "cipher password is the configured one":
             cipher_type == "none" or g.get("repo1-cipher-pass") == CIPHER,
     }
+    # Set exactly where the inventory set them, and absent otherwise.
+    for option in OPTIONAL_S3:
+        checks[option] = (g.get(option)
+                          == S3_EXPECTED.get(flavour, {}).get(option))
     return [name for name, ok in checks.items() if not ok]
 
 
@@ -92,14 +137,15 @@ def main():
     failures = []
 
     cases = [("ssh", NODES[0], "ssh node"), ("ssh", BACKUP[0], "ssh server"),
-             ("s3", NODES[0], "s3 node")]
+             ("s3", NODES[0], "s3 node"), ("minio", NODES[0], "minio node"),
+             ("minio-insecure", NODES[0], "insecure minio node")]
     for cipher_type in ("aes-256-cbc", "none"):
-        for backup_type, host, where in cases:
+        for flavour, host, where in cases:
             label = f"{cipher_type:<12} {where}"
             try:
-                text = template.render(**context(e, cipher_type, backup_type,
+                text = template.render(**context(e, cipher_type, flavour,
                                                  host))
-                bad = failed_checks(text, cipher_type)
+                bad = failed_checks(text, cipher_type, flavour)
             except Exception as exc:
                 bad = [f"{type(exc).__name__}: {exc}"]
             if bad:

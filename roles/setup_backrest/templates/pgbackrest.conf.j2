@@ -46,4 +46,16 @@ repo1-s3-endpoint={{ backup_params.endpoint }}
 repo1-s3-bucket={{ backup_params.bucket }}
 repo1-s3-key={{ backup_params.access_key }}
 repo1-s3-key-secret={{ backup_params.secret_key }}
+{%   if backup_params.uri_style > '' %}
+repo1-s3-uri-style={{ backup_params.uri_style }}
+{%   endif %}
+{%   if backup_params.storage_ca_file > '' %}
+repo1-storage-ca-file={{ backup_params.storage_ca_file }}
+{%   endif %}
+{%   if backup_params.storage_port | string > '' %}
+repo1-storage-port={{ backup_params.storage_port }}
+{%   endif %}
+{%   if backup_params.storage_verify_tls | string > '' %}
+repo1-storage-verify-tls={{ 'y' if backup_params.storage_verify_tls | bool else 'n' }}
+{%   endif %}
 {% endif %}
