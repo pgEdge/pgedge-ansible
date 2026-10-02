@@ -139,7 +139,14 @@ cluster, with no etcd members yet, is the only case where an authority is
 generated.
 
 The controller also stops when `tls/etcd/` holds `ca.crt` without `ca.key`, or
-a `ca.key` that is not the key of `ca.crt`. Copy both files together.
+a `ca.key` that is not the key of `ca.crt`. Copy both files together. A
+supplied `etcd_ca_key` that is not the key of `etcd_ca_cert` is refused the
+same way.
+
+Every one of these checks runs before a supplied authority is written to
+`tls/etcd/`, so one that is refused is not left staged for the next run to
+find. And because an unanswered member is not an agreeing one, the collection
+also stops when any pgEdge host cannot be reached to ask, naming the host.
 
 Supplying the authority from an Ansible Vault file lets any controller with
 the vault password manage the cluster. Automated or disposable environments
