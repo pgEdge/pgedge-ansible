@@ -109,6 +109,10 @@ repository that already has one.
 - `recovery_node` names the **first** pgEdge node of its zone as the inventory
   orders them. The collection treats a zone's first node as the one Patroni
   bootstraps and the one that carries the zone's Spock node.
+- No zone is in Patroni maintenance mode. A paused Patroni leaves Postgres
+  running when it stops, so the playbook refuses a paused cluster before it
+  stops anything, and refuses to erase a data directory that a postmaster
+  still holds once everything is stopped. Run `patronictl resume` first.
 - No application is writing to the cluster. The rebuilt zones are copied from
   the restored one, and a zone still taking writes during the copy has changes
   of its own that nothing will carry anywhere.

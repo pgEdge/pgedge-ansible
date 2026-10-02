@@ -56,6 +56,34 @@
       restored with pgbackrest directly.
   run_once: true
 
+# A paused Patroni leaves Postgres alone, and that includes leaving it running
+# when Patroni itself is stopped. quiesce would then stop Patroni, the
+# postmaster would carry on, and wipe_data would erase a data directory out
+# from under a live server. Pausing is a cluster-wide flag in the store, but
+# every member reports it, so each node asks its own Patroni. A node whose
+# Patroni does not answer is not running one to be paused; whatever Postgres it
+# may still have is caught by quiesce's own check once everything is stopped.
+
+- name: Ask this node's Patroni whether the cluster is in maintenance mode
+  uri:
+    url: "http://127.0.0.1:8008/patroni"
+    return_content: true
+  register: recovery_patroni_status
+  check_mode: false
+  failed_when: false
+
+- name: Ensure the cluster is not in maintenance mode
+  assert:
+    that:
+    - not (recovery_patroni_status.json.pause | default(false) | bool)
+    fail_msg: >-
+      Patroni on {{ inventory_hostname }} reports that zone {{ zone }} is
+      paused. A paused Patroni leaves Postgres running when it is stopped, so
+      this recovery would erase the data directory of a live server. Nothing
+      has been touched yet. Resume the cluster with patronictl resume, or stop
+      Postgres on every node in the zone yourself, before recovering.
+  when: recovery_patroni_status.status | default(-1) == 200
+
 # Asked of every zone rather than of the cluster, because the repository
 # settings can differ per zone and a zone with no repository is a zone this
 # playbook cannot rebuild replicas for or archive from afterwards.
