@@ -25,7 +25,8 @@ import re
 import sys
 
 import yaml
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import (Environment, FileSystemLoader, StrictUndefined,
+                    UndefinedError, select_autoescape)
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -49,10 +50,15 @@ def env():
     # entity. And Ansible's template module does not autoescape, so switching it
     # on here would render something Ansible never produces, which is the one
     # thing this script exists to rule out.
+    #
+    # Undefined variables are strict for the same reason: Ansible fails a
+    # template that reads one, where Jinja's default renders it as an empty
+    # string and lets a context missing a variable pass for a working render.
     e = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)),
                     autoescape=select_autoescape(enabled_extensions=(),
                                                  default_for_string=False,
                                                  default=False),
+                    undefined=StrictUndefined,
                     trim_blocks=True, keep_trailing_newline=True)
     for name in ("ipaddr", "ansible.utils.ipaddr"):
         e.filters[name] = lambda v, *a: "10.0.0.9"
@@ -166,9 +172,12 @@ def check_missing_facts(template):
     the failure is still detectable rather than silently producing HBA lines
     with no address in them.
     """
+    # Only an undefined variable is the failure this is looking for. Anything
+    # else -- a syntax error, a filter this script does not stub -- is the
+    # template broken some other way, and passing on it would hide that.
     try:
         template.render(**context("RedHat", True, True, False, set(PGEDGE)))
-    except Exception as exc:
+    except UndefinedError as exc:
         print("ok       missing proxy/backup facts are rejected "
               f"({type(exc).__name__})")
         return []
