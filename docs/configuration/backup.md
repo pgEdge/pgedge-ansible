@@ -214,6 +214,27 @@ Monday through Saturday at 2:00 AM:
 diff_backup_schedule: "0 2 * * 1-6"
 ```
 
+### Turning off scheduled backups
+
+To leave the scheduling to something else, set either schedule to an empty
+string. The collection installs a cron entry only for a schedule with exactly
+five fields, so an empty value installs no entry:
+
+```yaml
+full_backup_schedule: ""
+diff_backup_schedule: ""
+```
+
+This has no effect on the first full backup the deployment takes; only the
+recurring jobs are left out.
+
+!!! note "An existing entry is left in place"
+    An empty schedule tells the collection not to install an entry; it does
+    not remove one. A host deployed earlier with a schedule keeps its
+    `Full PgBackRest schedule` and `Differential PgBackRest schedule` entries
+    in the crontab of the user that runs PgBackRest, so remove them yourself
+    with `crontab -e`.
+
 ## backup_repo_params
 
 - Type: Dictionary

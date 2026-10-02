@@ -170,8 +170,8 @@ behavior:
 | backup_repo_cipher | (none - required) | Password PgBackRest encrypts the repository with. Required unless backup_repo_cipher_type is none. It has no default: a generated password would have to be identical on every run and also unguessable, and nothing can be both. |
 | full_backup_count | 1 | Number of full backups to retain in the repository. |
 | diff_backup_count | 6 | Number of differential backups to retain in the repository. |
-| full_backup_schedule | 10 0 * * 0 | Cron schedule for full backups. The default runs every Sunday at 00:10 UTC. |
-| diff_backup_schedule | 10 0 * * 1-6 | Cron schedule for differential backups. The default runs Monday through Saturday at 00:10 UTC. |
+| full_backup_schedule | 10 0 * * 0 | Cron schedule for full backups. The default runs every Sunday at 00:10 UTC. An empty string installs no entry. |
+| diff_backup_schedule | 10 0 * * 1-6 | Cron schedule for differential backups. The default runs Monday through Saturday at 00:10 UTC. An empty string installs no entry. |
 | backup_repo_params | (see below) | Dictionary of S3 repository parameters. Required when backup_repo_type is s3. |
 
 The `backup_repo_params` dictionary accepts the following keys with the

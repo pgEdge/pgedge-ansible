@@ -54,8 +54,8 @@ This role uses the following parameters from the inventory file:
 
 | Parameter | Use Case |
 |-----------|----------|
-| `full_backup_schedule` | Cron schedule for full backups. |
-| `diff_backup_schedule` | Cron schedule for differential backups. |
+| `full_backup_schedule` | Cron schedule for full backups; an empty string installs no entry. |
+| `diff_backup_schedule` | Cron schedule for differential backups; an empty string installs no entry. |
 | `backup_user` | Backup database user (default: `backrest`). |
 | `backup_password` | Password for the backup database user. |
 | `backup_repo_type` | Decides whether the stanza and the first backup are driven from a pgEdge node or from the backup server. |
