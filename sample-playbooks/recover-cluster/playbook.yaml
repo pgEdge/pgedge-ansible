@@ -169,8 +169,7 @@
 
 # With every zone holding the same data, the rest of the mesh is what an
 # ordinary deployment builds: setup_pgedge fills in every subscription that does
-# not exist yet, and finds the ones the step above already created. Then the
-# replicas, each rebuilding from its own zone's leader.
+# not exist yet, and finds the ones the step above already created.
 
 - hosts: pgedge
   any_errors_fatal: true
@@ -182,16 +181,45 @@
   - include_role:
       name: setup_pgedge
 
+# Every backup a rebuilt zone's stanza holds is of the cluster it replaced, so
+# each rebuilt zone takes a full backup of the one it holds now. The restored
+# zone takes one only after a point-in-time recovery, whose later backups sit on
+# the timeline the recovery abandoned. Before the replicas, so one built from
+# the repository is built from this backup.
+#
+# Its own play for the same reason as the stanza upgrade: an SSH repository is
+# driven from its backup server.
+
+- hosts: pgedge:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: recover_cluster
+      tasks_from: backup_zones
+
+# Then the replicas, each rebuilding from its own zone's leader.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
   - include_role:
       name: recover_cluster
       tasks_from: rebuild_replicas
 
-# Nothing above removes anything from the repository: the stanza upgrades add
-# to each rebuilt zone's history, and the rest only restores from it or
-# archives into it. Running finalize_backrest afterwards re-establishes the
-# backup schedule on the rebuilt nodes and takes a backup only if the repository
-# has none, so the recovery point the cluster was just restored from is left
-# where it is.
+# Nothing above discards a recovery point the cluster can still use. The
+# restored zone's backups are only expired by a new full backup after a
+# point-in-time recovery, when the newer ones are on the abandoned timeline; a
+# rebuilt zone's only describe the cluster it replaced. Running
+# finalize_backrest afterwards re-establishes the backup schedule on the rebuilt
+# nodes, and finds a backup of the current cluster in every zone already.
 
 - hosts: pgedge:backup
 

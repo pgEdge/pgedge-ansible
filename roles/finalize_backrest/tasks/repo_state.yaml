@@ -25,3 +25,19 @@
     backrest_stanza: >-
       {{ backrest_info.stdout | from_json |
          selectattr('name', 'eq', backup_stanza) | first | default({}) }}
+
+# A stanza that has been through stanza-upgrade holds backups of more than one
+# cluster: one db entry per system identifier it has described, and each backup
+# tagged with the entry it was taken from. Only backups of the newest entry are
+# backups of the cluster running now. The others belong to a cluster that was
+# replaced -- the old cluster of a zone a recovery rebuilt -- and restoring one
+# would bring that cluster back, not this one. So a stanza holding only those
+# has no recovery point for this cluster, however many backups it lists.
+
+- name: Record which of those backups belong to the cluster running now
+  set_fact:
+    backrest_current_backups: >-
+      {{ backrest_stanza.backup | default([]) |
+         selectattr('database.id', 'eq',
+           (backrest_stanza.db | default([]) | map(attribute='id') | list
+            + [0]) | max) | list }}

@@ -129,20 +129,50 @@
       configuration before running this again.
   when: inventory_hostname == recovery_node
 
-- name: Ensure the repository holds a backup to restore from
+# Counting backups is not enough. A zone a previous recovery rebuilt has a
+# stanza listing every backup of the cluster it replaced, recorded under an
+# older db entry by stanza-upgrade. PgBackRest will restore one of those
+# without complaint, and what comes back is that zone as it was before the last
+# recovery -- the divergence that recovery was run to undo. Only backups taken
+# under the stanza's newest db entry are of the cluster running there now.
+
+- name: Ensure the repository holds a backup of the cluster running now
   vars:
-    recovery_repo_backups: >-
+    recovery_stanza: >-
       {{ recovery_repo_info.stdout | from_json |
-         selectattr('name', 'eq', backup_stanza) |
-         map(attribute='backup') | first | default([]) }}
+         selectattr('name', 'eq', backup_stanza) | first | default({}) }}
+    recovery_repo_backups: "{{ recovery_stanza.backup | default([]) }}"
+    recovery_current_backups: >-
+      {{ recovery_repo_backups |
+         selectattr('database.id', 'eq',
+           (recovery_stanza.db | default([]) | map(attribute='id') | list
+            + [0]) | max) | list }}
   assert:
     that:
-    - recovery_repo_backups | length > 0
+    - recovery_current_backups | length > 0
+    - recovery_backup_set == '' or recovery_backup_set in
+        (recovery_current_backups | map(attribute='label') | list)
     fail_msg: >-
+      {% if recovery_repo_backups | length == 0 %}
       Stanza {{ backup_stanza }} on {{ recovery_node }} holds no backup, so
       there is nothing for this playbook to restore. It would erase every data
       directory in the cluster and then have nothing to put back. Take a backup
       first, or name a recovery_node whose zone has one.
+      {% elif recovery_current_backups | length == 0 %}
+      Stanza {{ backup_stanza }} on {{ recovery_node }} holds
+      {{ recovery_repo_backups | length }} backups, but every one belongs to
+      the cluster a previous recovery replaced in zone {{ recovery_zone }}.
+      Restoring one would bring back that zone as it was before that recovery,
+      not as it is now. Take a full backup of zone {{ recovery_zone }} first,
+      or name a recovery_node whose zone has a backup of its current cluster.
+      {% else %}
+      recovery_backup_set is {{ recovery_backup_set }}, which is not one of
+      the backups stanza {{ backup_stanza }} holds of the cluster running in
+      zone {{ recovery_zone }}:
+      {{ recovery_current_backups | map(attribute='label') | join(', ') }}.
+      A backup of the cluster a previous recovery replaced would bring that
+      cluster back rather than this one.
+      {% endif %}
   when: inventory_hostname == recovery_node
 
 - name: Ensure the point-in-time target is one PgBackRest accepts

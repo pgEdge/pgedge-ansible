@@ -13,6 +13,11 @@
 # installed alongside this task keep it current. There is nothing a full backup
 # taken here adds, and under the default retention there is a great deal it
 # takes away.
+#
+# "Carrying backups" means backups of the cluster running now. A zone that a
+# recovery rebuilt still lists every backup of the cluster it replaced, and
+# those are not a recovery point for this one: restoring one brings back the
+# old cluster. Retention expiring them is the point, not a loss.
 
 - name: Create the initial backup for this instance
   command:
@@ -23,4 +28,4 @@
     - "--type=full"
   become: true
   become_user: "{{ os_user }}"
-  when: backrest_stanza.backup | default([]) | length == 0
+  when: backrest_current_backups | length == 0

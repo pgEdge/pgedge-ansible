@@ -57,6 +57,21 @@ cluster can never discard the recovery point its repository was holding.
   as soon as each zone's leader is rebuilt, before the Spock refill, so the WAL
   that copy generates is archived as it goes, not kept in `pg_wal` until the
   end of the recovery.
+- The recovery playbook now takes a full backup of every rebuilt zone once it
+  has been refilled, before any replica is rebuilt, and of the restored zone
+  too when the recovery stopped at a point-in-time target. A rebuilt zone's
+  stanza otherwise held only backups of the cluster it replaced, so a second
+  incident there would restore that cluster, and a replica built with
+  `patroni_replica_from_backup` would be cloned from it and never stream. After
+  a point-in-time recovery the restored zone's later backups are on the
+  timeline the recovery abandoned. A recovery that replays the whole archive
+  leaves the restored zone's backups alone, so it can be run again with a
+  different target.
+- The recovery's validation and `finalize_backrest`'s first backup count only
+  backups taken under the stanza's newest db entry, the cluster running now.
+  A recovery refuses to start from a zone whose backups all belong to a
+  replaced cluster, or when `recovery_backup_set` names one of those, and
+  `finalize_backrest` treats such a stanza as having no backup.
 - The Ultra-HA end-to-end test now verifies the backup surface rather than
   printing it. It asserts that the running server's `archive_command` invokes
   pgBackRest rather than the template's `/bin/true` placeholder, that WAL

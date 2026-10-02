@@ -169,8 +169,14 @@ run "$RECOVER_DIR/playbook.yaml" \
   -v
 
 # Step 4: did the data come back, and is the cluster whole?
+#
+# The recovery's own arguments go to the verification too: whether it stopped
+# at a point-in-time target decides which zones had to take a new backup.
 echo "==> Step 4: Verifying the recovered cluster..."
-run "$SCRIPT_DIR/verify/verify-recovery.yml" "${EXTRA_VARS[@]}" -v
+run "$SCRIPT_DIR/verify/verify-recovery.yml" \
+  "${EXTRA_VARS[@]}" \
+  "${EXTRA_ARGS[@]}" \
+  -v
 
 echo ""
 echo "========================================="

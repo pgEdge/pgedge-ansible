@@ -42,11 +42,15 @@ The procedure runs in this order:
    in the next step fills its `pg_wal`.
 8. Subscribe each rebuilt zone to the restored one with structure and data
    synchronization, and wait for the copy to finish.
-9. Build the rest of the subscription mesh with `setup_pgedge`, then rebuild
-   every replica from its own zone's leader.
-10. Re-establish the backup schedule with `finalize_backrest`, which takes a backup
-    only if the repository has none — so the recovery point survives the
-    recovery.
+9. Build the rest of the subscription mesh with `setup_pgedge`.
+10. Take a full backup of every rebuilt zone, and of the restored zone too if
+    the recovery stopped at a point-in-time target. See
+    [What Happens to the Rebuilt Zones' Backups](#what-happens-to-the-rebuilt-zones-backups)
+    and [What Happens to the Restored Zone's Backups](#what-happens-to-the-restored-zones-backups).
+11. Rebuild every replica from its own zone's leader.
+12. Re-establish the backup schedule with `finalize_backrest`, which takes a
+    backup only if the repository has none of the cluster running now — so the
+    recovery point survives the recovery.
 
 ## Rebuilding onto Replacement Hardware
 
@@ -198,6 +202,13 @@ Two things are worth knowing:
   it and rebuilds both from the bootstrap it is about to perform. This applies
   only to the etcd cluster the collection deploys itself; an external store has
   to be reset by whoever runs it.
+- A point-in-time recovery stops being repeatable once it reaches its backup
+  step. That full backup expires, under the default retention, the backups and
+  WAL the target was reached from, so a second run to the same target has
+  nothing to restore. Nothing after that step needs a rerun anyway: the
+  cluster is recovered and backed up, and a replica that failed to rebuild
+  rejoins by applying `rebuild_replicas` on its own. Raise `full_backup_count`
+  before recovering if you want to keep the option of trying another target.
 
 ## Recovering a Single Node
 
@@ -234,9 +245,37 @@ through the recovery.
 
 Those earlier backups are historical from that point on. They describe a cluster
 that no longer exists, at a position the recovery deliberately moved away from,
-so restoring one would resurrect the divergence the recovery just undid. The
-existing retention settings expire them as new full backups accumulate; expire
-them sooner by hand if the repository space matters.
+so restoring one would resurrect the divergence the recovery just undid.
+PgBackRest will still restore one if asked, so the recovery takes a full backup
+of each rebuilt zone once it has been refilled, before any replica is built.
+Without it the zone has no recovery point of its own until the next scheduled
+full backup: a second recovery from that zone would bring back the old cluster,
+and a replica built with `patroni_replica_from_backup` would be cloned from the
+old cluster and never stream from its leader. Under the default retention, that
+backup expires the historical ones.
+
+A later recovery also refuses to start from a zone whose stanza holds only
+historical backups, or when `recovery_backup_set` names one. It counts only
+backups taken under the stanza's newest entry, the one `stanza-upgrade` added.
+A `time` target earlier than a rebuilt zone's first post-recovery backup can
+still lead PgBackRest to a historical backup, because it picks the newest
+backup that ends before the target; recover from the zone that was restored if
+the target is that far back.
+
+## What Happens to the Restored Zone's Backups
+
+The restored zone keeps its stanza history: it is the same cluster the backups
+came from. A recovery that replays the whole archive leaves those backups
+exactly as useful as they were, so it takes no new one there, and under the
+default retention that keeps the means to run the recovery again with a
+different target.
+
+A recovery that stops at a target is different. Promotion starts a new
+timeline, and every backup taken after the target belongs to the timeline the
+recovery abandoned. A later restore that takes the latest backup would land on
+that timeline rather than on the cluster running now. So after a point-in-time
+recovery the restored zone takes a full backup as well, which under the
+default retention also expires the backups from before the target.
 
 ## What a Recovery Leaves Behind
 
@@ -260,7 +299,9 @@ restored from.
 
 `finalize_backrest` asks the repository what it holds rather than inferring it from
 where the role sits in the playbook. It creates the stanza only when the stanza
-does not exist, and takes a full backup only when the stanza has none. It also
+does not exist, and takes a full backup only when the stanza has none of the
+cluster running now — backups recorded under an older entry by
+`stanza-upgrade` describe a cluster that was replaced, and do not count. It also
 compares the cluster's system identifier against the one the stanza describes,
 and stops if they disagree — which is what happens when an inventory names a
 repository belonging to a different cluster, or when a data directory was

@@ -38,6 +38,7 @@ files in order:
 | `rebuild_zone` | each other zone's first node | Rebuild the zone's leader as an empty cluster. |
 | `upgrade_stanza` | each rebuilt zone's repository host | Record the zone's new cluster in its stanza so it can archive before the refill fills `pg_wal`. |
 | `rehydrate` | each other zone's first node | Copy the restored zone's schema and data, and wait for the copy. |
+| `backup_zones` | each rebuilt zone's repository host, and the restored zone's after a point-in-time recovery | Take a full backup of the cluster the zone now holds, before any replica is built from the repository. |
 | `rebuild_replicas` | every non-leader node | Rebuild each replica from its own zone's leader. |
 
 Each task file decides for itself which hosts it concerns. None of those
