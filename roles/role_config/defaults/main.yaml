@@ -147,7 +147,8 @@ recovery_node: ""
 # repository holds, which is what a recovery from a lost cluster wants. Set them
 # to undo something instead: recovery_target_type takes one of PgBackRest's
 # --type values -- time, xid, lsn, name, or immediate -- and recovery_target
-# takes the value it applies to, except for immediate, which takes none.
+# takes the value it applies to. Immediate, like an empty type, takes none,
+# and a recovery refuses a target set beside either.
 #
 # recovery_backup_set names a specific backup to restore, as PgBackRest's
 # --set does and as `pgbackrest info` labels them. Leave it empty to take the

@@ -175,16 +175,24 @@
       {% endif %}
   when: inventory_hostname == recovery_node
 
+# The target has to agree with the type in both directions. PgBackRest refuses
+# --target unless --type is one that stops at a value, so a target left over
+# beside an immediate or empty type fails restore_leader just as surely as a
+# missing one does, and only once every data directory is gone.
+
 - name: Ensure the point-in-time target is one PgBackRest accepts
   assert:
     that:
     - recovery_target_type in ('', 'time', 'xid', 'lsn', 'name', 'immediate')
     - recovery_target_type in ('', 'immediate') or recovery_target > ''
+    - recovery_target_type not in ('', 'immediate') or recovery_target == ''
     fail_msg: >-
-      recovery_target_type is "{{ recovery_target_type }}". It must be empty,
-      to restore everything the repository holds, or one of time, xid, lsn,
-      name or immediate. Every type but immediate also needs recovery_target
-      set to the value it stops at.
+      recovery_target_type is "{{ recovery_target_type }}" and recovery_target
+      is "{{ recovery_target }}". The type must be empty, to restore everything
+      the repository holds, or one of time, xid, lsn, name or immediate. Time,
+      xid, lsn and name need recovery_target set to the value they stop at;
+      immediate and an empty type stop at no value, and PgBackRest refuses a
+      recovery_target beside them.
   run_once: true
 
 # A time target has to carry a time of day; PgBackRest refuses a bare date when

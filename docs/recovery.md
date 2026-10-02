@@ -163,7 +163,7 @@ could reach rather than failing.
 | `recovery_confirm` | `false` | Must be `true` for the playbook to run at all. |
 | `recovery_node` | (none) | The pgEdge node to restore from its repository, spelled as the inventory spells it. Must be the first node of its zone. |
 | `recovery_target_type` | (none) | PgBackRest `--type`: `time`, `xid`, `lsn`, `name` or `immediate`. Unset restores everything the repository holds. |
-| `recovery_target` | (none) | The value the target type stops at. Required for every type except `immediate`. |
+| `recovery_target` | (none) | The value the target type stops at. Required for `time`, `xid`, `lsn` and `name`; must be unset for `immediate` or no type. |
 | `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the latest backup that can reach the target. |
 | `recovery_stall_minutes` | `15` | Give up only after the restore has made no progress for this long. A restore that keeps moving is left alone, up to `recovery_max_hours`. |
 | `recovery_poll_seconds` | `30` | How often to look. |
