@@ -92,6 +92,7 @@ trap cleanup EXIT
 echo "==> Step 0: Checking rendered templates..."
 python3 "$SCRIPT_DIR/render/check-haproxy.py"
 python3 "$SCRIPT_DIR/render/check-patroni.py"
+python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
 
 # Step 1: Generate SSH keypair and copy to Docker build context
 echo "==> Step 1: Ensuring SSH keypair exists..."
@@ -155,7 +156,7 @@ fi
 # Step 5: Build and install Ansible collection
 echo "==> Step 5: Building and installing Ansible collection..."
 cd "$PROJECT_DIR"
-make install
+make clean install
 
 # Step 6: Install Galaxy dependencies
 echo "==> Step 6: Installing Galaxy dependencies..."

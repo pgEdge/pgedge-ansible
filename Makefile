@@ -25,7 +25,11 @@ TARGET := $(DIR)/pgedge-platform-$(VERSION).tar.gz
 
 build: $(TARGET)
 
-$(TARGET): $(shell find $(DIR)/roles -name '*.yaml')
+# Every file the collection ships, not only its task files: a template, a
+# script, or a meta file edited on its own changes the collection just as much.
+# A dirty tree keeps the same version string across edits, so the tarball's name
+# alone never forces a rebuild.
+$(TARGET): $(shell find $(DIR)/roles $(DIR)/meta -type f) $(DIR)/galaxy.template.yml
 	sed -E 's/version:.*/version: "$(VERSION)"/g' $(DIR)/galaxy.template.yml > $(DIR)/galaxy.yml
 	ansible-galaxy collection build --force $(DIR)
 
