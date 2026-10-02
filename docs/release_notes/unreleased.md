@@ -341,7 +341,9 @@ same play to the top:
 - `setup_postgres` on Debian now drops a cluster whose configuration directory
   outlived its data directory before creating it again. A recovery erases the
   data directory of every zone it rebuilds, and `pg_createcluster` refused to
-  recreate a cluster whose configuration was still in `/etc/postgresql`.
+  recreate a cluster whose configuration was still in `/etc/postgresql`. This
+  includes a cluster named `main`, which was previously never created by the
+  role and so was left without a cluster once a recovery erased it.
 - `recover_cluster`'s quiesce step now acts only on systemd units that exist, so
   a recovery can be run against replacement hardware where the deployment
   stopped before creating them. On RHEL the Postgres unit file is written by
