@@ -153,50 +153,48 @@ pgedge:
 ## Usage Examples
 
 In the following example, the playbook configures SSH-based backups to a
-dedicated backup server:
+dedicated backup server. With an SSH repository the backup server creates the
+stanza and takes the backups, so `finalize_backrest` must reach it as well as
+the pgEdge nodes:
 
 ```yaml
 - hosts: pgedge
   collections:
     - pgedge.platform
-  vars:
-    backup_repo_type: ssh
   roles:
     - setup_backrest
-    - finalize_backrest
 
 - hosts: backup
   collections:
     - pgedge.platform
-  vars:
-    backup_repo_path: /backups/pgedge
   roles:
     - install_backrest
     - setup_backrest
-```
 
-In the following example, the playbook configures custom retention policies
-and backup schedules. Retention is rendered into `pgbackrest.conf` by this role;
-the schedules are installed by [`finalize_backrest`](finalize_backrest.md), so both roles
-need the variables:
-
-```yaml
-- hosts: pgedge
+- hosts: pgedge:backup
   collections:
     - pgedge.platform
+  roles:
+    - finalize_backrest
+```
+
+Set `backup_repo_type: ssh` and `backup_repo_path` in the inventory on `all`,
+so both plays render the same repository.
+
+In the following example, the inventory sets custom retention policies and
+backup schedules. Retention is rendered into `pgbackrest.conf` by this role and
+the schedules are installed by [`finalize_backrest`](finalize_backrest.md),
+which runs on the backup server for an SSH repository. Play variables would
+reach only the hosts of the play that sets them, so set these on `all`:
+
+```yaml
+all:
   vars:
     full_backup_count: 2
     diff_backup_count: 14
     full_backup_schedule: "0 2 * * 0"
     diff_backup_schedule: "0 2 * * 1-6"
-  roles:
-    - setup_backrest
-    - finalize_backrest
 ```
-
-Retention is rendered into `pgbackrest.conf` by this role and the schedule is
-installed by `finalize_backrest`, but both read the values from the inventory,
-so setting them there reaches whichever role wants them.
 
 ## Artifacts
 

@@ -2,7 +2,7 @@
 
 The `install_backrest` role installs PgBackRest, a modern backup and restore
 solution for Postgres. The role also installs the cron service so the
-`setup_backrest` role can schedule automated backups.
+`finalize_backrest` role can schedule automated backups.
 
 The role performs the following tasks on inventory hosts:
 
@@ -69,7 +69,10 @@ The PgBackRest package installs:
 ## Usage Examples
 
 In the following example, the playbook installs PgBackRest as part of a
-complete pgEdge deployment with backup configuration:
+complete pgEdge deployment with backup configuration. `setup_backrest` writes
+configuration only, so it runs before `setup_postgres`; `finalize_backrest`
+needs a running cluster, so it runs last, on the pgEdge nodes and the backup
+server together:
 
 ```yaml
 - hosts: pgedge
@@ -80,8 +83,24 @@ complete pgEdge deployment with backup configuration:
     - install_repos
     - install_pgedge
     - install_backrest
-    - setup_postgres
     - setup_backrest
+    - setup_postgres
+    - setup_pgedge
+
+- hosts: backup
+  collections:
+    - pgedge.platform
+  roles:
+    - init_server
+    - install_repos
+    - install_backrest
+    - setup_backrest
+
+- hosts: pgedge:backup
+  collections:
+    - pgedge.platform
+  roles:
+    - finalize_backrest
 ```
 
 ## Artifacts

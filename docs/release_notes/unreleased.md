@@ -265,8 +265,9 @@ same play to the top:
   waiter follows PgBackRest's restore log, `pg_control`'s timestamp and the size
   of the data directory, and gives up only when none has moved for
   `recovery_stall_minutes` (default 15). A restore that keeps moving is left
-  alone however long it takes, and one that has wedged is reported in minutes
-  rather than after a timeout drains. It runs under `async`, so a restore that
+  alone up to `recovery_max_hours` (default 24), a hard ceiling that stops it
+  even while it is progressing, and one that has wedged is reported in minutes
+  rather than after that ceiling drains. It runs under `async`, so a restore that
   outlasts an SSH connection is not lost with it.
 - New `etcd_ca_cert` and `etcd_ca_key` supply the certificate authority that
   signs etcd's certificates and every node's Patroni client certificate from
