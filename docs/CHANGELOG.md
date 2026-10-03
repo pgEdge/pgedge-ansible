@@ -24,9 +24,13 @@ in full.
 
 ### Added
 
-- New `recover_cluster` role and `sample-playbooks/recover-cluster/` playbook
-  rebuild an HA cluster from a pgBackRest repository, optionally to a point in
-  time. See [Recovering a Cluster from Backup](recovery.md).
+- New `wipe_cluster` and `recover_postgres` roles, and the
+  `sample-playbooks/wipe-cluster/` and `sample-playbooks/ultra-ha-recover/`
+  playbooks, rebuild an HA cluster from its pgBackRest repositories, optionally
+  to a point in time, and commit the result once it is right. See
+  [Recovering a Cluster from Backup](recovery.md).
+- New `pgedge_seed_zone` parameter has `setup_pgedge` fill empty zones from one
+  that holds the cluster's data.
 - New `finalize_backrest` role creates the backup user, stanza, first backup and
   cron schedule at the end of a deployment.
 - A repository identity check stops a deployment that would build an empty
@@ -35,8 +39,6 @@ in full.
   pgBackRest delta restore.
 - New `etcd_ca_cert` and `etcd_ca_key` parameters supply the etcd certificate
   authority from Ansible Vault.
-- New `recovery_reset_dcs` parameter rebuilds the configuration store during a
-  recovery.
 - New render, recovery and backup checks in the test suite.
 - New `uri_style`, `storage_ca_file`, `storage_port` and `storage_verify_tls`
   keys in `backup_repo_params` for S3-compatible stores such as MinIO.
@@ -45,7 +47,8 @@ in full.
 
 ### Changed
 
-- The first backup is taken only when the repository holds none.
+- The first backup is taken only when the repository holds none that can
+  restore the cluster.
 - `setup_backrest` writes files only and runs before `setup_postgres`.
 - An HA cluster's archive and restore commands come from the Patroni
   configuration template.
@@ -58,7 +61,7 @@ in full.
 ### Fixed
 
 - `backup_repo_cipher_type: none` produces a configuration PgBackRest accepts.
-- A recovery stops when it cannot read the configuration store, instead of
+- A wipe stops when it cannot read an external configuration store, instead of
   treating the store as empty.
 - `backup_repo_user` and `backup_repo_path` no longer become `root` and
   `/home/root` when facts are gathered under `become`.

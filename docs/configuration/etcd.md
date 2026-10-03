@@ -182,8 +182,9 @@ cp /path/to/playbook/tls/etcd/ca.crt /path/to/playbook/tls/etcd/ca.key .
 ```
 
 If that controller is gone, the authority cannot be recovered, and the
-cluster's configuration store must be rebuilt under a new one. See
-`recovery_reset_dcs` in [Recovering a Cluster from Backup](../recovery.md).
+cluster's configuration store must be rebuilt under a new one: the
+[`wipe_cluster`](../roles/wipe_cluster.md) role erases the collection's etcd,
+and a deployment or a [recovery](../recovery.md) then builds it again.
 
 ### Step 2: Store it in the vault
 
@@ -257,5 +258,5 @@ tls/etcd/ca.crt.
 ```
 
 Replacing the authority of a running cluster means rebuilding its configuration
-store. See `recovery_reset_dcs` in
-[Recovering a Cluster from Backup](../recovery.md).
+store, which [`wipe_cluster`](../roles/wipe_cluster.md) followed by a
+deployment or a [recovery](../recovery.md) does.

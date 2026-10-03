@@ -11,8 +11,10 @@ cluster can never discard the recovery point its repository was holding.
 
 Its main features are:
 
-- A `recover_cluster` role and recovery playbook that rebuild an HA cluster
-  from its pgBackRest repository, optionally to a point in time. See
+- A recovery playbook that rebuilds an HA cluster from its pgBackRest
+  repositories, optionally to a point in time: the Ultra-HA deployment with a
+  new `recover_postgres` role in place of `setup_postgres`, preceded by a new
+  `wipe_cluster` role and followed, once the result is right, by a commit. See
   [Recovering a Cluster from Backup](../recovery.md).
 - A new `finalize_backrest` role that creates the stanza, the first backup and
   the backup schedule at the end of a deployment, and takes that first backup
@@ -189,23 +191,34 @@ same play to the top:
 
 ### Added
 
-- New `recover_cluster` role and `sample-playbooks/recover-cluster/` playbook
-  rebuild an existing HA cluster from a pgBackRest repository, optionally to a
-  point in time. One zone is restored from its repository and every other zone
-  is rebuilt empty and refilled across Spock from the restored one, because each
-  zone's stanza describes an independent physical cluster restored to an
-  independent moment, and zones restored separately have no common position to
-  replicate forward from. See
-  [Recovering a Cluster from Backup](../recovery.md).
+- New `wipe_cluster` role and `sample-playbooks/wipe-cluster/` playbook tear a
+  cluster down for a redeployment or a recovery. They stop Postgres, Patroni,
+  pgBouncer and the collection's etcd, remove the cluster from any other
+  configuration store with `patronictl`, remove the backup schedule, and erase
+  the components' configuration and data. No repository is touched, and the
+  wipe is refused unless `wipe_confirm` is set and some zone's repository holds
+  a backup of the cluster in it.
+- New `recover_postgres` role builds the cluster's Postgres from a backup, in
+  place of `setup_postgres`. It applies `setup_postgres` to every node, restores
+  `recovery_node` from its zone's repository and promotes it outside Patroni,
+  strips the restored node's stale Spock metadata, and upgrades each zone's
+  stanza to describe the cluster now in it. One zone is restored and every other
+  zone copies it across Spock, because each zone's stanza restores to its own
+  moment, and zones restored separately have no common position to replicate
+  forward from.
+- New `sample-playbooks/ultra-ha-recover/` holds the recovery playbook, which is
+  the Ultra-HA deployment playbook with `recover_postgres` in place of
+  `setup_postgres`, and `commit-restore.yaml`, which applies
+  `finalize_backrest` once the recovered cluster is the one to keep. The
+  recovery takes no backups and leaves the schedule off, so it can be repeated
+  to another target or from another zone with every backup still in place.
 - New `recovery_node`, `recovery_target_type`, `recovery_target`,
-  `recovery_backup_set` and `recovery_confirm` parameters drive a recovery.
-  All are empty or false by default, so an ordinary deployment renders exactly
-  the configuration it did before.
-- `setup_patroni` now renders a pgBackRest bootstrap method for the node
-  `recovery_node` names, so Patroni restores that node from the repository
-  rather than initializing an empty one. Patroni consults the `bootstrap`
-  section only when it is genuinely bootstrapping a cluster, so the addition is
-  inert on a running cluster.
+  `recovery_target_timeline` and `recovery_backup_set` parameters drive a
+  recovery. Only `recover_postgres` reads them.
+- New `pgedge_seed_zone` parameter for `setup_pgedge` names a zone that already
+  holds the cluster's data. Every other zone copies it with
+  `synchronize_structure` and `synchronize_data` before the rest of the mesh is
+  built. The recovery playbook sets it to the restored zone.
 - New `patroni_replica_from_backup` parameter makes Patroni rebuild a replica
   with a pgBackRest delta restore instead of a fresh `pg_basebackup` from its
   zone's leader, falling back to `pg_basebackup` if the restore fails. Off by
@@ -224,30 +237,22 @@ same play to the top:
   repository. It skips a repository it cannot reach, since an SSH repository is
   not reachable from a pgEdge node that early; the late check, which gates a
   decision to write, treats an unreadable repository as fatal.
-- The recovery playbook now runs `pgbackrest stanza-upgrade` on every rebuilt
-  zone. Those zones come back with a system identifier their stanza has never
-  seen, so PgBackRest would refuse to archive there and the zone would finish
-  the recovery unable to back itself up. The upgrade records the new cluster as
-  another entry in the stanza's history and leaves the earlier backups in
-  place, where retention expires them as new full backups accumulate. It runs
-  as soon as each zone's leader is rebuilt, before the Spock refill, so the WAL
-  that copy generates is archived as it goes, not kept in `pg_wal` until the
-  end of the recovery.
-- The recovery playbook now takes a full backup of every rebuilt zone once it
-  has been refilled, before any replica is rebuilt, and of the restored zone
-  too when the recovery stopped at a point-in-time target. A rebuilt zone's
-  stanza otherwise held only backups of the cluster it replaced, so a second
-  incident there would restore that cluster, and a replica built with
-  `patroni_replica_from_backup` would be cloned from it and never stream. After
-  a point-in-time recovery the restored zone's later backups are on the
-  timeline the recovery abandoned. A recovery that replays the whole archive
-  leaves the restored zone's backups alone, so it can be run again with a
-  different target.
-- The recovery's validation and `finalize_backrest`'s first backup count only
-  backups taken under the stanza's newest db entry, the cluster running now.
-  A recovery refuses to start from a zone whose backups all belong to a
-  replaced cluster, or when `recovery_backup_set` names one of those, and
-  `finalize_backrest` treats such a stanza as having no backup.
+- `recover_postgres` runs `pgbackrest stanza-upgrade` on every zone whose
+  stanza does not describe the cluster now in it. A rebuilt zone comes back with
+  a system identifier its stanza has never seen, so PgBackRest would refuse to
+  archive there, and `pg_wal` would keep every segment through the Spock copy.
+  The upgrade only adds an entry to the stanza's history: every earlier backup
+  stays in place and restorable, which is what lets a recovery be retried from
+  that zone before it is committed.
+- `finalize_backrest` takes a full backup when the stanza's newest backup of
+  the cluster cannot restore it: after a point-in-time recovery the newest
+  backups can lie on the timeline the recovery abandoned, past the point the
+  cluster branched away. It reads the cluster's timeline history from the
+  zone's first pgEdge node. A failover branches after every backup, so it never
+  causes one.
+- `finalize_backrest` counts only backups of the cluster running now, matched by
+  system identifier, so a stanza that holds only backups of a cluster a recovery
+  replaced is treated as having none.
 - The Ultra-HA end-to-end test now verifies the backup surface rather than
   printing it. It asserts that the running server's `archive_command` invokes
   pgBackRest rather than the template's `/bin/true` placeholder, that WAL
@@ -258,17 +263,14 @@ same play to the top:
   destructive behaviour this release removes: a second full backup expires its
   predecessor under the default retention, so a repository rewritten that way
   still holds one backup and only its label changes.
-- The recovery waits for the restore by watching whether it is still making
-  progress rather than by counting attempts. How long a restore takes is a
-  property of the database -- a full backup read out of the repository plus
-  every WAL segment since -- so any fixed budget is wrong for some cluster. The
-  waiter follows PgBackRest's restore log, `pg_control`'s timestamp and the size
-  of the data directory, and gives up only when none has moved for
-  `recovery_stall_minutes` (default 15). A restore that keeps moving is left
-  alone up to `recovery_max_hours` (default 24), a hard ceiling that stops it
-  even while it is progressing, and one that has wedged is reported in minutes
-  rather than after that ceiling drains. It runs under `async`, so a restore that
-  outlasts an SSH connection is not lost with it.
+- The recovery waits for the restored node's replay by watching whether it is
+  still making progress rather than by counting attempts. How long a replay
+  takes is a property of the database, so any fixed budget is wrong for some
+  cluster. The wait follows the node's log and `pg_control`'s timestamp, and
+  gives up only when neither has moved for `recovery_stall_minutes` (default
+  15), or at once if Postgres stops. `recovery_max_hours` (default 24) is a hard
+  ceiling. The restore and the wait run under `async`, so neither is lost with
+  an SSH connection.
 - New `etcd_ca_cert` and `etcd_ca_key` supply the certificate authority that
   signs etcd's certificates and every node's Patroni client certificate from
   Ansible Vault. Previously the authority existed only on the controller that
@@ -287,36 +289,25 @@ same play to the top:
   authority for that node, and every node's Patroni client certificate was then
   reissued against an authority the running etcd did not trust. Every play that
   signs certificates now reads the authority each existing etcd member trusts
-  and stops unless the controller holds that one. A recovery makes the same
-  check before it erases anything, unless `recovery_reset_dcs` is rebuilding
-  the store.
-- New `recovery_reset_dcs` rebuilds the distributed configuration store from
-  nothing rather than removing the cluster from it, for when the store itself is
-  what is broken -- etcd that has lost quorum, or keys a half-finished recovery
-  left behind. It reissues each node's Patroni client certificate so the store
-  and the nodes agree on a certificate authority. Applies only to the etcd
-  cluster the collection deploys; an external store is reset by whoever runs it.
+  and stops unless the controller holds that one.
 - New `tests/render/check-patroni.py` renders the Patroni template offline
-  across every combination of the recovery switches, and asserts that a
-  template rendered without facts for the proxy and backup hosts fails rather
-  than emitting HBA rules with no addresses in them. The recovery playbook
-  re-renders that template on the restored node partway through, after the
-  cluster has been erased, so a template that cannot render there is expensive
-  to discover live. Run by both workflows and both local harnesses.
-- New `tests/run-recovery-test.sh`, `tests/playbooks/seed-recovery.yml` and
-  `tests/verify/verify-recovery.yml` exercise a recovery against a cluster the
-  end-to-end harness has already deployed. The seed writes rows *after* the
-  deployment's backup, so they exist only in archived WAL: a recovery has to
-  replay the archive to return them to the restored zone and carry them across
-  Spock to the zones rebuilt empty. Every other check passes on an empty
-  cluster, so this is what separates a restore from a rebuild. The verification
-  also asserts the replication mesh was rebuilt to exactly the expected size --
-  too many node entries or origins means metadata from before the recovery
-  survived -- that every replica came back, and that each zone can archive
-  again, which is what proves `stanza-upgrade` took on the rebuilt zones.
+  across every combination of the backup switches, and asserts that a template
+  rendered without facts for the proxy and backup hosts fails rather than
+  emitting HBA rules with no addresses in them. Run by both workflows and both
+  local harnesses.
+- New `tests/run-recovery-test.sh`, `tests/playbooks/seed-recovery.yml`,
+  `tests/verify/verify-recovery.yml` and `tests/verify/verify-commit.yml`
+  exercise a recovery against a cluster the end-to-end harness has already
+  deployed: wipe, recover, verify, commit, verify. The seed writes rows *after*
+  the deployment's backup, so they exist only in archived WAL: a recovery has
+  to replay the archive to return them to the restored zone and carry them
+  across Spock to the zones rebuilt empty. The verification also asserts the
+  replication mesh was rebuilt to exactly the expected size, that every replica
+  came back, that writes made afterwards reach every zone, that each zone can
+  archive again, and that the recovery took no backup. After the commit it
+  asserts every zone has a backup of the cluster it runs and its schedule back.
 - New `backup_stanza` and `backup_repo_configured` variables in `role_config`,
-  and `subscribe_target` moved there from `setup_pgedge`, so that the roles
-  which now share them cannot drift apart.
+  so that the roles which now share them cannot drift apart.
 - New `uri_style`, `storage_ca_file`, `storage_port` and `storage_verify_tls`
   keys in `backup_repo_params` set PgBackRest's `repo1-s3-uri-style`,
   `repo1-storage-ca-file`, `repo1-storage-port` and `repo1-storage-verify-tls`,
@@ -356,29 +347,23 @@ same play to the top:
   holds a cluster before initializing a data directory. A non-HA cluster's
   `archive_command` and `restore_command` moved to `finalize_backrest`, which runs
   when Postgres is up to be reloaded.
-- The recovery playbook refuses, before erasing anything, a rebuilt zone whose
-  SSH repository is named only by `backup_host`. `stanza-upgrade` has to run on
-  the repository host, and a host outside the inventory would never be
-  upgraded, so the zone could not archive and would fail `finalize_backrest`'s
-  identity check at the end. Adding the server to the `backup` group lets the
+- The recovery refuses, before building anything, a rebuilt zone whose SSH
+  repository is named only by `backup_host`. `stanza-upgrade` has to run on the
+  repository host, and a host outside the inventory would never be upgraded, so
+  the zone could not archive. Adding the server to the `backup` group lets the
   recovery upgrade it.
 - `setup_postgres` on Debian now drops a cluster whose configuration directory
-  outlived its data directory before creating it again. A recovery erases the
-  data directory of every zone it rebuilds, and `pg_createcluster` refused to
-  recreate a cluster whose configuration was still in `/etc/postgresql`. This
-  includes a cluster named `main`, which was previously never created by the
-  role and so was left without a cluster once a recovery erased it.
-- `recover_cluster`'s quiesce step now acts only on systemd units that exist, so
-  a recovery can be run against replacement hardware where the deployment
-  stopped before creating them. On RHEL the Postgres unit file is written by
-  `setup_postgres`, and asking systemd to stop a unit it does not have is an
-  error rather than a no-op.
+  outlived its data directory before creating it again, since
+  `pg_createcluster` refused to recreate a cluster whose configuration was
+  still in `/etc/postgresql`. This includes a cluster named `main`, which was
+  previously never created by the role and so was left without a cluster once
+  its data directory was erased.
 - `archive_command` and `restore_command` for an HA cluster now come from
   `setup_patroni`'s configuration template rather than being patched into the
   Patroni configuration store by `setup_backrest`. A value held only in the
-  store is lost when the cluster is removed from the store and bootstrapped
-  again, which is what a recovery does: a recovered cluster came back with
-  `archive_command` reverted to `/bin/true` and silently stopped archiving.
+  store is lost when the store is rebuilt, which is what a recovery does: a
+  recovered cluster came back with `archive_command` reverted to `/bin/true`
+  and silently stopped archiving.
   The patch in `setup_backrest`'s `config_postgres_ha.yaml` has been replaced
   by a check in `finalize_backrest`. Patroni applies the template only when it
   bootstraps a cluster, so an HA cluster deployed without a backup server and
@@ -418,13 +403,11 @@ same play to the top:
   arrangement that permits key rotation, since PgBackRest cannot rotate its own
   cipher. The password line is now emitted only where something is encrypting,
   and `init_server` rejects a password set where nothing is.
-- `recover_cluster` no longer treats a configuration store it cannot read as a
-  store with no cluster in it. The check that runs before any data directory is
-  erased folded a failed `patronictl` into an empty member list, so an etcd that
-  had stopped answering would pass it -- and the recovery would erase the whole
-  cluster and then leave Patroni waiting forever for a leader whose key was
-  still sitting there. An unreadable store now stops the recovery with nothing
-  erased, and names `recovery_reset_dcs` as the way past it.
+- `wipe_cluster` does not treat an external configuration store it cannot read
+  as a store with no cluster in it. `patronictl` prints a JSON list when it
+  reached the store and nothing that parses when it did not, so an unreadable
+  store stops the wipe before anything is erased, rather than leaving Patroni
+  waiting forever for a leader whose key is still there.
 - `backup_repo_user` and `backup_repo_path` no longer derive from
   `ansible_user_id`. That is a fact, and a fact records which account the setup
   module ran as, so a play that gathers facts with `become` records `root` --

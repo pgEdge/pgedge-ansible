@@ -2,7 +2,7 @@
 
 The pgEdge Ansible Collection uses PgBackRest for backup management. The
 following parameters control how backup functionality behaves. The
-`install_backrest`, `setup_backrest`, `finalize_backrest` and `recover_cluster`
+`install_backrest`, `setup_backrest`, `finalize_backrest` and `recover_postgres`
 roles use these variables.
 
 ## backup_repo_type
@@ -329,36 +329,37 @@ patroni_replica_from_backup: true
 
 ## Recovery Parameters
 
-The following parameters apply only to the recovery playbook described in
-[Recovering a Cluster from Backup](../recovery.md). They are all empty or false
-by default, and an ordinary deployment behaves as though they did not exist.
+The following parameters apply only to the
+[`recover_postgres`](../roles/recover_postgres.md) role, which the recovery
+playbook described in [Recovering a Cluster from Backup](../recovery.md) uses.
+They are all empty by default, and an ordinary deployment never reads them.
 
 Pass them on the `ansible-playbook` command line rather than writing them into
 an inventory, where they would sit waiting for the next unrelated run.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `recovery_confirm` | `false` | Must be `true` for the recovery playbook to run. The playbook erases every data directory in the cluster. |
 | `recovery_node` | (none) | The pgEdge node to restore from its repository, spelled as the inventory spells it. Must be the first node of its zone. |
 | `recovery_target_type` | (none) | PgBackRest `--type`: `time`, `xid`, `lsn`, `name` or `immediate`. Unset restores everything the repository holds. |
 | `recovery_target` | (none) | The value the target type stops at. Required for `time`, `xid`, `lsn` and `name`; must be unset for `immediate` or no type. |
-| `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the latest backup that can reach the target. |
-| `recovery_stall_minutes` | `15` | Give up only after the restore has made no progress for this long. Progress is what this watches; `recovery_max_hours` is the hard ceiling either way. |
+| `recovery_target_timeline` | (none) | PgBackRest `--target-timeline`. Unset follows the newest timeline. |
+| `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the newest backup that can reach the target. |
+| `recovery_stall_minutes` | `15` | Give up only after the restored node has made no progress for this long. |
 | `recovery_poll_seconds` | `30` | How often to look. |
-| `recovery_max_hours` | `24` | Hard ceiling on each wait (the restore, each zone's Spock copy, each replica). The task is killed at this point even while it is still making progress, so raise it for a restore or copy expected to take longer. |
-| `recovery_reset_dcs` | `false` | Rebuild the distributed configuration store from nothing rather than removing the cluster from it. |
+| `recovery_max_hours` | `24` | Hard ceiling on the restore, the replay, and each zone's Spock copy. |
 
-In the following example, the command restores a cluster to a point in time:
+In the following example, the command restores a wiped cluster to a point in
+time:
 
 ```bash
 ansible-playbook -i inventory.yaml playbook.yaml \
   -e recovery_node=192.168.6.10 \
-  -e recovery_confirm=true \
   -e recovery_target_type=time \
   -e "recovery_target='2026-09-15 14:30:00+00'"
 ```
 
-!!! warning "Recovery destroys data"
-    A recovery stops Patroni on every pgEdge node, erases every data directory
-    in the cluster, and rebuilds the cluster from the repository of a single
-    zone. Anything written after the recovery point is gone, in every zone.
+!!! note "Recovery never removes a backup"
+    The recovery takes no backup and leaves the schedule off, so it can be
+    repeated until the result is right. Committing it with
+    `commit-restore.yaml` takes the backups it did not, and under the default
+    retention expires the ones it came from.

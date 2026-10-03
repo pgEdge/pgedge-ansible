@@ -192,7 +192,7 @@
 
   tasks:
   # Waited for, not sampled. A replica rebuilds by cloning its zone's leader,
-  # and in a recovery that leader holds the whole rehydrated dataset rather than
+  # and in a recovery that leader holds the whole refilled dataset rather than
   # the nearly-empty one a fresh deployment starts from, so the clone takes real
   # time. A single reading taken the moment the playbook finishes catches the
   # zone mid-build and calls it broken.
