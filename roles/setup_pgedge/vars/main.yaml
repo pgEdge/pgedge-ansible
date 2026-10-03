@@ -10,3 +10,23 @@
 zone_list: >
     {{ groups['pgedge'] | map('extract', hostvars) |
        map(attribute='zone', default='') | unique }}
+
+# Where this zone connects to reach the seed zone, chosen the same way as every
+# other subscription target in this role: the seed zone's proxy_node, then its
+# first HAProxy, then its first pgEdge node.
+
+seed_first_node: >-
+  {{ groups['pgedge'] | map('extract', hostvars) |
+     selectattr('zone', 'eq', pgedge_seed_zone | int) |
+     map(attribute='inventory_hostname') | list | first | default('') }}
+
+seed_proxies: >-
+  {{ groups['haproxy'] | default([]) | map('extract', hostvars) |
+     selectattr('zone', 'eq', pgedge_seed_zone | int) |
+     map(attribute='inventory_hostname') | list }}
+
+seed_conn_target: >-
+  {{ hostvars[seed_first_node].proxy_node | default('')
+       if seed_first_node and hostvars[seed_first_node].proxy_node | default('')
+     else seed_proxies | first if seed_proxies
+     else seed_first_node }}

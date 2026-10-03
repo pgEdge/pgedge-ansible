@@ -78,6 +78,8 @@ This role uses the following parameters from the inventory file:
 | `pgedge_password` | Password for the pgEdge user account. |
 | `proxy_node` | Specific proxy hostname for HA deployments. |
 | `proxy_port` | Proxy port for HA deployments (default: 5432). |
+| `pgedge_seed_zone` | Zone the other zones copy their data from (HA only). |
+| `pgedge_seed_max_hours` | Longest the copy from the seed zone may take (default: 24). |
 
 See the [Configuration Reference](../configuration.md) for descriptions and
 defaults.
@@ -113,6 +115,19 @@ allowing HAProxy to run on a pgEdge node rather than a dedicated host.
 After creating subscriptions, the role waits for initial synchronization
 using the `spock.sub_wait_for_sync()` function. For large databases, this
 can take considerable time.
+
+### Seeding From One Zone
+
+Every subscription the role creates normally copies nothing, because every
+zone starts empty. When one zone already holds the cluster's data and the
+others are empty, set `pgedge_seed_zone` to that zone. Each other zone then
+subscribes to the seed zone with `synchronize_structure` and
+`synchronize_data`, and waits for the copy to finish, before the role creates
+any other subscription. The recovery playbook uses this to refill the zones it
+rebuilds from the zone it restored.
+
+The copy runs once. A later run finds the subscription and leaves it alone, so
+the setting does no harm if it stays in place.
 
 !!! warning "Subscription Names"
     Subscription names follow the format `sub_n{{ zone }}_n{{ remote_zone }}`.

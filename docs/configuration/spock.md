@@ -29,3 +29,21 @@ pgedge:
   vars:
     exception_behaviour: transdiscard
 ```
+
+## pgedge_seed_zone
+
+- Type: Integer
+- Default: none
+- Description: In an HA cluster, this parameter names a zone that already
+  holds the cluster's data while every other zone is empty. The empty zones
+  copy the seed zone's schema and data before the rest of the subscriptions
+  are created. The recovery playbook sets it to the zone it restores; an
+  ordinary deployment leaves it unset.
+
+## pgedge_seed_max_hours
+
+- Type: Integer
+- Default: `24`
+- Description: This parameter limits how long the copy from
+  `pgedge_seed_zone` may take, in hours. It is a backstop, not an estimate:
+  the copy takes as long as the database is large.

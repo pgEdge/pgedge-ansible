@@ -1,1 +1,13 @@
 ---
+
+# The zone that already holds the cluster's data, when the other zones are
+# empty and have to copy it before they replicate with anything. Empty in an
+# ordinary deployment, where every zone starts empty and nothing is copied. The
+# recovery playbook sets it to the zone it restored. HA clusters only.
+
+pgedge_seed_zone: ""
+
+# How long the copy from the seed zone may take. A backstop rather than an
+# estimate: the copy takes as long as the database is large.
+
+pgedge_seed_max_hours: 24

@@ -44,6 +44,68 @@
   become: true
   become_user: postgres
 
+# When one zone already holds the cluster's data and the others are empty --
+# the zone a recovery restored, or an existing cluster gaining a zone -- the
+# empty zones copy that seed zone before the rest of the mesh exists. This is
+# the one subscription in the collection that copies anything. Every other
+# subscription is created between zones that already hold the same data, and
+# only streams forward from the moment it exists.
+#
+# The copy has to finish before any other subscription is created, and it does:
+# under the linear strategy every host finishes this wait before any host moves
+# on to the mesh below, which then finds this subscription and skips it. The
+# seed zone's own hosts skip both tasks.
+
+- name: Copy the seed zone's schema and data into this zone
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: |
+      DO $$
+      BEGIN
+        PERFORM FROM spock.subscription WHERE sub_name = %(sub_name)s;
+        IF NOT FOUND THEN
+          PERFORM spock.sub_create(
+            subscription_name := %(sub_name)s,
+            provider_dsn := %(dsn)s,
+            synchronize_structure := true,
+            synchronize_data := true
+          );
+        END IF;
+      END; $$ LANGUAGE plpgsql;
+    named_args:
+      sub_name: "sub_n{{ zone }}_n{{ pgedge_seed_zone }}"
+      dsn: "host={{ seed_conn_target }} user={{ pgedge_user }} dbname={{ item }} port={{ proxy_port }}"
+  loop: "{{ db_names }}"
+  become: true
+  become_user: postgres
+  when:
+  - pgedge_seed_zone | string > ''
+  - zone | string != pgedge_seed_zone | string
+
+# The copy is likely the longest step of whatever playbook asked for it, so the
+# wait runs under async: one SSH session held open for the whole copy is one a
+# dropped connection would fail.
+
+- name: Wait for this zone to finish copying the seed zone
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT spock.sub_wait_for_sync(subscription_name := %(sub_name)s)
+    named_args:
+      sub_name: "sub_n{{ zone }}_n{{ pgedge_seed_zone }}"
+  loop: "{{ db_names }}"
+  async: "{{ pgedge_seed_max_hours | int * 3600 }}"
+  poll: 30
+  become: true
+  become_user: postgres
+  when:
+  - pgedge_seed_zone | string > ''
+  - zone | string != pgedge_seed_zone | string
+
 # Loop through every _other_ zone than our own and subscribe in this order:
 #
 # - The user-specified proxy_node for the host, if present.
