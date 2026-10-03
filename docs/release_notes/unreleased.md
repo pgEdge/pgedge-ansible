@@ -305,7 +305,7 @@ same play to the top:
   replication mesh was rebuilt to exactly the expected size, that every replica
   came back, that writes made afterwards reach every zone, that each zone can
   archive again, and that the recovery took no backup. After the commit it
-  asserts every zone has a backup of the cluster it runs and its schedule back.
+  asserts every zone has a backup of the cluster it runs.
 - New `backup_stanza` and `backup_repo_configured` variables in `role_config`,
   so that the roles which now share them cannot drift apart.
 - New `uri_style`, `storage_ca_file`, `storage_port` and `storage_verify_tls`
