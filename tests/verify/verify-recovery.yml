@@ -200,7 +200,7 @@
   - name: Wait for every node in the zone to come back
     become_user: postgres
     command: >
-      patronictl -c {{ patroni_cfg }} list 17-demo -f json
+      patronictl -c {{ patroni_cfg }} list -f json
     register: patroni_list
     changed_when: false
     failed_when: false
