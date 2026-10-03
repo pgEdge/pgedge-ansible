@@ -1,0 +1,36 @@
+---
+
+# Build the cluster's Postgres from a backup rather than from nothing. This
+# stands where setup_postgres stands in a deployment, and the roles after it --
+# setup_etcd, setup_patroni, setup_pgedge -- treat what it leaves exactly as
+# they treat a new cluster.
+#
+# Every node is built by setup_postgres first, as a deployment would build it.
+# recovery_node is then replaced by a restore from its zone's repository, and
+# every other zone stays empty, to be filled from the restored one by
+# setup_pgedge with pgedge_seed_zone. Each zone's stanza is brought up to date
+# with the cluster now in it, so the zone can archive from the moment Patroni
+# starts it.
+#
+# Nothing here takes a backup. A recovery may be followed by another, to a
+# different target or from a different zone, and every backup the repositories
+# hold stays usable until finalize_backrest commits to the result.
+
+- include_tasks: validate.yaml
+
+- name: Build this node's Postgres as a deployment would
+  include_role:
+    name: setup_postgres
+  vars:
+    backup_repo_reuse: true
+
+- include_tasks: restore.yaml
+  when: inventory_hostname == recovery_node
+
+- include_tasks: clean_spock.yaml
+  when: inventory_hostname == recovery_node
+
+- include_tasks: stanza.yaml
+  when:
+  - inventory_hostname == first_node_in_zone
+  - backup_repo_configured | bool

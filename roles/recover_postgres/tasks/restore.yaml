@@ -1,0 +1,145 @@
+---
+
+# Replace the cluster setup_postgres just built on this node with the one in the
+# repository, and bring it up as a primary, outside Patroni. setup_patroni then
+# takes it over exactly as it takes over the cluster setup_postgres leaves in a
+# deployment.
+#
+# The empty cluster is not wasted effort. On Debian it is what leaves the
+# configuration in /etc/postgresql that the repository never held, and on every
+# platform it leaves the node configured the way the rest of the collection
+# expects.
+
+- name: Stop the empty cluster setup_postgres started
+  service:
+    name: "{{ pg_service_name }}"
+    state: stopped
+  become: true
+
+# Under async so a restore that outlasts an SSH connection is not lost with it.
+# PgBackRest times out a repository that stops answering on its own; the async
+# limit is the backstop.
+
+- name: Restore this node from its zone's repository
+  command:
+    argv: "{{ ['pgbackrest'] + recovery_restore_args }}"
+  async: "{{ recovery_max_hours | int * 3600 }}"
+  poll: "{{ recovery_poll_seconds }}"
+  become: true
+  become_user: postgres
+
+- name: Start the restored node so it replays WAL to the target
+  command:
+    argv:
+    - "{{ pg_path }}/bin/pg_ctl"
+    - start
+    - -D
+    - "{{ pg_data }}"
+    - -W
+    - -l
+    - "{{ recovery_log }}"
+    - -o
+    - "{{ recovery_postgres_options }}"
+  become: true
+  become_user: postgres
+
+# Wait for the end of recovery, without pretending to know how long it takes. A
+# fixed number of attempts is wrong for some cluster: replay covers every WAL
+# segment since the backup, which is a property of the database. What can be
+# judged is whether it is still getting anywhere. Postgres logs every segment it
+# restores from the archive, and pg_control's timestamp moves at every
+# restartpoint, so the wait gives up only when neither has moved for
+# recovery_stall_minutes -- or at once, if Postgres stops.
+
+- name: Wait for the restored node to finish recovery and promote
+  shell:
+    cmd: |
+      set -u
+      bin={{ pg_path }}/bin
+      data={{ pg_data }}
+      log={{ recovery_log }}
+      stall=$(( {{ recovery_stall_minutes }} * 60 ))
+      last=""
+      last_moved=$(date +%s)
+      while :; do
+        if ! "$bin/pg_ctl" status -D "$data" >/dev/null 2>&1; then
+          echo "Postgres stopped during recovery. The end of $log:" >&2
+          tail -n 20 "$log" >&2
+          exit 1
+        fi
+        state=$("$bin/psql" -h /var/run/postgresql -p {{ pg_port }} -d postgres \
+                -Atc 'SELECT pg_is_in_recovery()' 2>/dev/null || true)
+        if [ "$state" = "f" ]; then
+          echo "recovery finished and the node is promoted"
+          exit 0
+        fi
+        now=$(date +%s)
+        current="$(stat -c %s "$log" 2>/dev/null || echo 0):$(stat -c %Y "$data/global/pg_control" 2>/dev/null || echo 0)"
+        if [ "$current" != "$last" ]; then
+          last=$current
+          last_moved=$now
+        elif [ $(( now - last_moved )) -ge "$stall" ]; then
+          echo "No progress for {{ recovery_stall_minutes }} minutes." \
+               "Postgres is still running on $data. The end of $log:" >&2
+          tail -n 20 "$log" >&2
+          exit 1
+        fi
+        sleep {{ recovery_poll_seconds }}
+      done
+  register: recovery_wait
+  async: "{{ recovery_max_hours | int * 3600 }}"
+  poll: "{{ recovery_poll_seconds }}"
+  changed_when: false
+  become: true
+  become_user: postgres
+
+# PgBackRest writes the recovery settings into postgresql.auto.conf, and they
+# stay there after promotion. A replica copies that file from its leader, and
+# postgresql.auto.conf outranks the configuration Patroni writes, so a replica
+# would stop replaying at this recovery's target. Each is reset on its own:
+# ALTER SYSTEM cannot run inside a transaction.
+
+- name: Clear the restore's recovery settings
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: "ALTER SYSTEM RESET {{ item }}"
+    autocommit: true
+  loop:
+  - restore_command
+  - recovery_target
+  - recovery_target_time
+  - recovery_target_xid
+  - recovery_target_lsn
+  - recovery_target_name
+  - recovery_target_action
+  - recovery_target_timeline
+  - recovery_target_inclusive
+  become: true
+  become_user: postgres
+
+# PgBackRest stops at the last point it can reach when a target falls beyond
+# the archive rather than failing, so report where the cluster actually is.
+
+- name: Read the point the restored cluster came back to
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT timeline_id, redo_lsn::text AS redo_lsn
+        FROM pg_control_checkpoint()
+  register: recovered_point
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- name: Show the point the cluster was recovered to
+  debug:
+    msg: >-
+      {{ inventory_hostname }} was restored from stanza {{ backup_stanza }}
+      {{ ('backup ' ~ recovery_restore_set) if recovery_restore_set > '' }}
+      onto timeline {{ point.timeline_id }} at {{ point.redo_lsn }}.
+  vars:
+    point: "{{ recovered_point.query_result | first }}"

@@ -115,4 +115,5 @@ The roles in this collection fall into five categories.
 | Role | Description |
 |------|-------------|
 | [`recover_cluster`](roles/recover_cluster.md) | Rebuilds an existing cluster from its PgBackRest repository. Applied by its own playbook, not as part of a deployment. |
+| [`recover_postgres`](roles/recover_postgres.md) | Builds the cluster's Postgres from a backup, in place of `setup_postgres`. |
 | [`wipe_cluster`](roles/wipe_cluster.md) | Tears down every cluster component except the backups, ahead of a redeployment or a recovery. |

@@ -1,1 +1,8 @@
 ---
+
+# Build a new cluster even where the backup repository already describes one.
+# Off for a deployment, where an empty data directory beside a repository full
+# of backups means a restore was meant. recover_postgres turns it on, because it
+# builds clusters there on purpose and brings their stanzas up to date itself.
+
+backup_repo_reuse: false

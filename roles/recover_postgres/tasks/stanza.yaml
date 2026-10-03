@@ -1,0 +1,115 @@
+---
+
+# Make this zone's stanza describe the cluster now in it, so the zone can archive
+# from the moment Patroni starts it. Until then every archive-push is refused
+# and pg_wal keeps every segment -- through the whole copy setup_pgedge makes
+# into a rebuilt zone, which can be enough to fill the disk.
+#
+# A rebuilt zone's stanza describes the cluster it replaced, so it is upgraded.
+# The restored zone's normally describes the cluster it was restored to, and is
+# left alone; it is upgraded too when it does not, as after restoring a zone an
+# earlier recovery rebuilt. stanza-upgrade only adds to the stanza's history:
+# every backup and every WAL segment it held is still there, and still
+# restorable, should this recovery be tried again some other way. A stanza that
+# does not exist yet is created.
+#
+# Asked from this node, through its own pgbackrest.conf, which reaches the
+# repository however the zone is configured. With an SSH repository the change
+# itself has to be made on the repository host.
+
+- name: Read the system identifier of this zone's cluster
+  command:
+    argv:
+    - "{{ pg_path }}/bin/pg_controldata"
+    - "-D"
+    - "{{ pg_data }}"
+  register: recovery_control_data
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: postgres
+
+- name: Ask the repository which cluster this zone's stanza describes
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - "--output=json"
+    - info
+  register: recovery_zone_info
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  become: true
+  become_user: postgres
+
+- block:
+  - name: Ensure the repository could be read
+    assert:
+      that:
+      - stanza.status.code | default(-1) | int in [0, 1, 2]
+      fail_msg: >-
+        pgbackrest could not read stanza {{ backup_stanza }} from
+        {{ inventory_hostname }}:
+        {{ (stanza.repo | default([]) | map(attribute='status.message') |
+            join('; ')) or (recovery_zone_info.stderr | default('') | trim) }}
+        The zone's cluster is built, but cannot archive until its stanza
+        describes it. Fix the access, then run this again after wipe_cluster.
+
+  - name: Decide what this zone's stanza needs
+    set_fact:
+      recovery_stanza_command: >-
+        {{ 'stanza-create' if stanza.status.code | int == 1
+           else '' if newest_db['system-id'] | default('') | string == system_id
+           else 'stanza-upgrade' }}
+
+  vars:
+    stanza: >-
+      {{ (recovery_zone_info.stdout | from_json |
+          selectattr('name', 'eq', backup_stanza) | first | default({}))
+         if recovery_zone_info.rc == 0 else {} }}
+    newest_db: >-
+      {{ stanza.db | default([]) | sort(attribute='id') | last | default({}) }}
+    system_id: >-
+      {{ recovery_control_data.stdout_lines |
+         select('search', 'Database system identifier') | first |
+         split(':') | last | trim }}
+
+- name: Bring this zone's stanza up to date from this node
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - "{{ recovery_stanza_command }}"
+  become: true
+  become_user: postgres
+  when:
+  - recovery_stanza_command > ''
+  - backup_type != 'ssh'
+
+- name: Ensure this zone's repository host can be reached
+  assert:
+    that:
+    - backups_in_zone | length > 0
+    fail_msg: >-
+      Stanza {{ backup_stanza }} needs {{ recovery_stanza_command }}, which
+      has to run on the repository host, and zone {{ zone }} names that host
+      only by backup_host ({{ backup_host }}), outside the inventory. Run
+      pgbackrest --stanza={{ backup_stanza }} {{ recovery_stanza_command }}
+      there, or add it to the 'backup' group with zone {{ zone }}.
+  when:
+  - recovery_stanza_command > ''
+  - backup_type == 'ssh'
+
+- name: Bring this zone's stanza up to date from its backup server
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - "{{ recovery_stanza_command }}"
+  delegate_to: "{{ backups_in_zone | first }}"
+  become: true
+  become_user: "{{ backup_repo_user }}"
+  when:
+  - recovery_stanza_command > ''
+  - backup_type == 'ssh'

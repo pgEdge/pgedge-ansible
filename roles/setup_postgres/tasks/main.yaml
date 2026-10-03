@@ -16,9 +16,9 @@
 # cluster looks healthy. Refusing here costs nothing; the alternative is a whole
 # deployment that has to be thrown away.
 #
-# Skipped during a recovery, which is the one time an empty data directory
-# beside a full repository is exactly what was intended: the zones that are not
-# restored are rebuilt empty on purpose and refilled across Spock.
+# Skipped when backup_repo_reuse says the caller means it: recover_postgres
+# builds every zone's cluster this way, restores one of them, and upgrades
+# each stanza to describe what it built.
 #
 # In an HA zone only the first node is asked. Replicas are never initialized
 # here; Patroni clones them from the leader, so a new or wiped replica has an
@@ -32,7 +32,7 @@
     repo_identity_required: false
   when:
   - backup_repo_configured | bool
-  - recovery_node == ''
+  - not backup_repo_reuse | bool
   - not is_ha_cluster or inventory_hostname == first_node_in_zone
 
 - name: Ensure RHEL pgedge Postgres service is set up
