@@ -43,8 +43,8 @@ on:
       recover:
         description: >-
           Also rebuild the cluster from its backup repository and verify the
-          data came back. Roughly doubles the run: it erases every data
-          directory and restores one zone, refilling the rest across Spock.
+          data came back. Roughly doubles the run: it wipes the cluster,
+          restores one zone, refills the rest across Spock, and commits.
         type: boolean
         required: false
         default: false
@@ -183,7 +183,7 @@ jobs:
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
 
-      # Last, because it destroys the cluster the steps above just verified.
+      # Last, because it wipes the cluster the steps above just verified.
       # The deployment is what produces the backups this restores from, so the
       # two belong in one job against one set of containers rather than a job
       # that would have to build a cluster of its own to have anything to
@@ -192,7 +192,7 @@ jobs:
       # DEPLOY_PLAYBOOK_DIR points at the directory this workflow deployed
       # from: setup_postgres stages its certificates from a path resolved
       # against the playbook's own location, and the recovery reuses them when
-      # it rebuilds the zones it did not restore.
+      # recover_postgres applies setup_postgres to every node.
       - name: Recover the cluster from its backup repository
         if: ${{ inputs.recover }}
         env:

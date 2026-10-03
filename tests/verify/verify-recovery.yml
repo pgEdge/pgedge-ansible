@@ -13,8 +13,8 @@
   vars:
     pg_port: 5432
     marker_rows: 25
-    # Passed through from the recovery's own arguments by run-recovery-test.sh.
-    recovery_target_type: ""
+    # When the wipe started, in epoch seconds, from run-recovery-test.sh.
+    recovery_started: 0
     zone_count: >-
       {{ groups['pgedge'] | map('extract', hostvars) |
       map(attribute='zone') | unique | list | length }}
@@ -104,9 +104,9 @@
         origin acknowledges changes it never applied.
     when: node_is_primary.stdout | trim == 't'
 
-  # A rebuilt zone carries a system identifier its stanza never saw, so the
-  # recovery ran stanza-upgrade on it. If that did not take, archiving is
-  # refused and the zone finishes the recovery unable to back itself up.
+  # A rebuilt zone carries a system identifier its stanza never saw, so
+  # recover_postgres ran stanza-upgrade on it. If that did not take, archiving
+  # is refused and pg_wal keeps every segment until the disk fills.
 
   - name: Read the archiver's history
     become_user: postgres
@@ -136,25 +136,18 @@
         WAL archiving on zone {{ zone }} is {{ fields[1] }} after the recovery.
         A zone rebuilt from an empty data directory carries a system identifier
         its stanza has never seen, and PgBackRest refuses to archive until
-        stanza-upgrade records it. Check that the recovery's upgrade_stanza step
-        ran for this zone.
+        stanza-upgrade records it. Check recover_postgres's stanza step for
+        this zone.
     when: node_is_primary.stdout | trim == 't'
 
-  # Archiving again is not the same as having a recovery point. A rebuilt
-  # zone's stanza still lists every backup of the cluster it replaced, so the
-  # recovery takes a full backup there, and that is what a second incident in
-  # this zone would restore. The newest backup has to belong to the stanza's
-  # newest db entry, the one stanza-upgrade recorded for the cluster running
-  # now; the restored zone passes because its cluster never changed.
+  # The recovery takes no backups, so that it can be tried again to another
+  # target or from another zone with every backup still in place. Anything
+  # finished since the wipe began was taken by the recovery -- or by a
+  # schedule the wipe should have removed -- and under the default retention
+  # it has already expired the backup the recovery restored from.
   #
-  # After a point-in-time recovery the restored zone has to have taken one as
-  # well, because its earlier backups past the target are on the timeline the
-  # recovery abandoned. So under a target, the newest backup in every zone must
-  # also be on the timeline that zone is running on.
-
   # Named, because the repository may hold more than this zone's stanza: every
-  # zone shares an S3 bucket, and an unnamed info lists all of them, in an order
-  # that has nothing to do with which zone is asking.
+  # zone shares an S3 bucket, and an unnamed info lists all of them.
 
   - name: Ask the repository what it holds for this zone
     become_user: postgres
@@ -163,40 +156,23 @@
     changed_when: false
     when: node_is_primary.stdout | trim == 't'
 
-  - name: Read the timeline this zone is running on
-    become_user: postgres
-    command: >
-      psql -d postgres -t -A -c
-      "SELECT timeline_id FROM pg_control_checkpoint()"
-    register: timeline
-    changed_when: false
-    when: node_is_primary.stdout | trim == 't'
-
-  - name: Assert the zone has a backup of the cluster it holds now
+  - name: Assert the recovery took no backup
     vars:
       stanza: "{{ repo_info.stdout | from_json | first }}"
-      current_db: >-
-        {{ (stanza.db | default([]) | map(attribute='id') | list + [0]) | max }}
-      newest: "{{ stanza.backup | default([]) | last | default({}, true) }}"
-      newest_tli: "{{ (newest.archive.start | default('0' * 24))[:8] }}"
+      taken: >-
+        {{ stanza.backup | default([]) |
+           selectattr('timestamp.stop', 'ge', recovery_started | int) |
+           map(attribute='label') | list }}
     assert:
-      that:
-      - newest.database.id | default(-1) | int == current_db | int
-      - recovery_target_type == '' or
-        newest_tli | int(base=16) == timeline.stdout | trim | int
+      that: taken | length == 0
       fail_msg: >-
-        Zone {{ zone }}'s newest backup, {{ newest.label | default('none') }},
-        is from db entry {{ newest.database.id | default('none') }} on timeline
-        {{ newest_tli | int(base=16) }}, but stanza {{ stanza.name }} now
-        describes db entry {{ current_db }} and the zone runs on timeline
-        {{ timeline.stdout | trim }}. A backup from an older db entry is of the
-        cluster a recovery replaced; one from an older timeline after a
-        point-in-time recovery is on the timeline the recovery abandoned.
-        Either way the recovery's backup_zones step did not leave this zone a
-        recovery point.
+        Stanza {{ stanza.name }} holds backups finished after the wipe began:
+        {{ taken | join(', ') }}. The recovery must leave the repositories as
+        it found them until commit-restore.yaml runs; a backup taken before
+        then expires the one the recovery restored from.
       success_msg: >-
-        Zone {{ zone }}'s newest backup, {{ newest.label }}, is of the cluster
-        running there now.
+        Zone {{ zone }}'s repository holds only the backups it had before the
+        recovery.
     when: node_is_primary.stdout | trim == 't'
 
 # Every replica should have rebuilt from its own zone's leader.

@@ -1,0 +1,117 @@
+---
+# Verify the backups commit-restore.yaml leaves after a recovery.
+#
+# Archiving again is not the same as having a recovery point. A rebuilt zone's
+# stanza still lists every backup of the cluster it replaced, so committing has
+# to take a full backup there, and that is what a second incident in this zone
+# would restore. The newest backup has to be of the cluster running now, as the
+# stanza's newest db entry describes it.
+#
+# After a point-in-time recovery the restored zone has to have taken one as
+# well, because its backups past the target are on the timeline the recovery
+# abandoned. So under a target, the newest backup in every zone must also be on
+# the timeline that zone is running on.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    # Passed through from the recovery's own arguments by run-recovery-test.sh.
+    recovery_target_type: ""
+
+  tasks:
+  - name: Determine whether this node is its zone's primary
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c "SELECT NOT pg_is_in_recovery()"
+    register: node_is_primary
+    changed_when: false
+
+  # Named, because the repository may hold more than this zone's stanza: every
+  # zone shares an S3 bucket, and an unnamed info lists all of them, in an order
+  # that has nothing to do with which zone is asking.
+
+  - name: Ask the repository what it holds for this zone
+    become_user: postgres
+    command: pgbackrest --output=json --stanza=pgedge-demo-{{ zone }} info
+    register: repo_info
+    changed_when: false
+    when: node_is_primary.stdout | trim == 't'
+
+  - name: Read the timeline this zone is running on
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT timeline_id FROM pg_control_checkpoint()"
+    register: timeline
+    changed_when: false
+    when: node_is_primary.stdout | trim == 't'
+
+  - name: Assert the zone has a backup of the cluster it holds now
+    vars:
+      stanza: "{{ repo_info.stdout | from_json | first }}"
+      newest_db: "{{ stanza.db | default([]) | sort(attribute='id') | last }}"
+      current_ids: >-
+        {{ stanza.db | default([]) |
+           selectattr('system-id', 'eq', newest_db['system-id']) |
+           map(attribute='id') | list }}
+      newest: "{{ stanza.backup | default([]) | last | default({}, true) }}"
+      newest_tli: "{{ (newest.archive.start | default('0' * 24))[:8] }}"
+    assert:
+      that:
+      - newest.database.id | default(-1) in current_ids
+      - recovery_target_type == '' or
+        newest_tli | int(base=16) == timeline.stdout | trim | int
+      fail_msg: >-
+        Zone {{ zone }}'s newest backup, {{ newest.label | default('none') }},
+        is from db entry {{ newest.database.id | default('none') }} on timeline
+        {{ newest_tli | int(base=16) }}, but stanza {{ stanza.name }} describes
+        this cluster as db entries {{ current_ids }} and the zone runs on
+        timeline {{ timeline.stdout | trim }}. A backup from another db entry is
+        of the cluster a recovery replaced; one from an older timeline after a
+        point-in-time recovery is on the timeline the recovery abandoned.
+        Either way finalize_backrest did not leave this zone a recovery point.
+      success_msg: >-
+        Zone {{ zone }}'s newest backup, {{ newest.label }}, is of the cluster
+        running there now.
+    when: node_is_primary.stdout | trim == 't'
+
+  # The wipe removed the schedule, and committing is what puts it back.
+
+  - name: Read the backup schedule
+    become_user: postgres
+    command: crontab -l
+    register: schedule
+    changed_when: false
+    failed_when: false
+    when:
+    - node_is_primary.stdout | trim == 't'
+    - backup_repo_type | default('ssh') == 's3'
+
+  - name: Assert the backup schedule is back
+    assert:
+      that: "'Full PgBackRest schedule' in schedule.stdout"
+      fail_msg: >-
+        postgres's crontab on {{ inventory_hostname }} has no backup schedule
+        after the commit: {{ schedule.stdout_lines }}.
+    when:
+    - node_is_primary.stdout | trim == 't'
+    - backup_repo_type | default('ssh') == 's3'
+
+- hosts: backup
+  become: true
+
+  tasks:
+  - name: Read the backup schedule
+    command: crontab -l
+    become_user: "{{ ansible_user | default('root') }}"
+    register: schedule
+    changed_when: false
+    failed_when: false
+
+  - name: Assert the backup schedule is back
+    assert:
+      that: "'Full PgBackRest schedule' in schedule.stdout"
+      fail_msg: >-
+        The crontab on {{ inventory_hostname }} has no backup schedule after
+        the commit: {{ schedule.stdout_lines }}.

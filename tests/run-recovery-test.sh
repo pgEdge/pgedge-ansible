@@ -1,25 +1,23 @@
 #!/bin/bash
-# Exercise the recovery role against a cluster that is already deployed and
-# running (checklist: recovery coverage).
+# Exercise a recovery against a cluster that is already deployed and running
+# (checklist: recovery coverage).
 #
 #   tests/run-test.sh ultra-ha rocky9 --keep     # deploy, leave containers up
-#   tests/run-recovery-test.sh ultra-ha rocky9   # seed, recover, verify
+#   tests/run-recovery-test.sh ultra-ha rocky9   # seed, wipe, recover, commit
 #
-# Split from run-test.sh on purpose. Recovery destroys every data directory in
-# the cluster, so it runs last and separately, and keeping it a second command
-# means a failed recovery leaves the wreckage in place to look at rather than
-# taking the deployment down with it.
+# Split from run-test.sh on purpose. Recovery starts by wiping the cluster, so
+# it runs last and separately, and keeping it a second command means a failed
+# recovery leaves the wreckage in place to look at rather than taking the
+# deployment down with it.
 #
-# Run this as many times as it takes. The recovery erases and rebuilds from the
-# repository whatever state the previous attempt left, so a failed attempt is
-# not something to clean up before the next one -- it is the starting state the
-# next one expects. The deployment is the expensive half and it is not repeated:
-# one run-test.sh gives you a cluster with backups, and every attempt after that
-# restores from those same backups.
+# Run this as many times as it takes. Each attempt wipes whatever state the
+# previous one left and rebuilds from the repository, so a failed attempt is
+# not something to clean up before the next one. The deployment is the
+# expensive half and it is not repeated: one run-test.sh gives you a cluster
+# with backups, and every attempt after that restores from those same backups.
 #
-# Only the HA scenario can be recovered. A cluster without Patroni has no
-# bootstrap method to restore through and must be restored with pgbackrest
-# directly.
+# Only the HA scenario can be recovered. A cluster without Patroni must be
+# restored with pgbackrest directly.
 
 set -euo pipefail
 
@@ -74,7 +72,8 @@ INVENTORY="$SCRIPT_DIR/inventories/${SCENARIO}.yml"
 # a local run (sample-playbooks/<scenario>/) and CI (tests/playbooks/). The
 # workflow sets DEPLOY_PLAYBOOK_DIR accordingly.
 DEPLOY_DIR="${DEPLOY_PLAYBOOK_DIR:-$PROJECT_DIR/sample-playbooks/${SCENARIO}}"
-RECOVER_DIR="$PROJECT_DIR/sample-playbooks/recover-cluster"
+RECOVER_DIR="$PROJECT_DIR/sample-playbooks/${SCENARIO}-recover"
+WIPE_PLAYBOOK="$PROJECT_DIR/sample-playbooks/wipe-cluster/playbook.yaml"
 KEY="$SCRIPT_DIR/.ssh/id_ed25519"
 
 # Under CI the deployment ran moments ago in the same job, so the leniency below
@@ -116,9 +115,8 @@ fi
 echo "==> Recovering ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP})" \
   "from ${RECOVERY_NODE}"
 
-# Offline, and first: the Patroni template is re-rendered on the restored node
-# partway through a recovery, after the cluster has been erased. A template that
-# cannot render is much cheaper to find out about here.
+# Offline, and first: the templates are rendered after the cluster has been
+# wiped, and one that cannot render is much cheaper to find out about here.
 echo "==> Step 0: Checking rendered templates..."
 python3 "$SCRIPT_DIR/render/check-patroni.py"
 python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
@@ -139,9 +137,9 @@ python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
 echo "==> Step 0b: Building and installing the collection from this tree..."
 ( cd "$PROJECT_DIR" && make clean install )
 
-echo "    Installed recover_cluster tasks now in use:"
-sed -n 's/^  - name: /      /p' \
-  ~/.ansible/collections/ansible_collections/pgedge/platform/roles/recover_cluster/tasks/clean_spock.yaml \
+echo "    Installed recover_postgres tasks now in use:"
+sed -n 's/^- name: /      /p' \
+  ~/.ansible/collections/ansible_collections/pgedge/platform/roles/recover_postgres/tasks/restore.yaml \
   2>/dev/null | head -4 || true
 
 run() {
@@ -154,8 +152,8 @@ run() {
 # The marker rows need writing exactly once. From then on they live in archived
 # WAL, so every later attempt restores them again, and re-seeding would add
 # nothing. It also could not: a cluster left mid-recovery by a failed attempt
-# has no working zone to write them to, and needs none, because the repository
-# already holds everything the next attempt reads.
+# may have no working zone to write them to, and needs none, because the
+# repository already holds everything the next attempt reads.
 #
 # So seed when there is a cluster to seed, and otherwise carry straight on.
 echo "==> Step 1: Checking whether there is a cluster to seed..."
@@ -172,18 +170,18 @@ elif $IN_CI; then
   exit 1
 else
   echo "    No working cluster, so nothing to seed -- carrying on."
-  echo "    A previous attempt left this cluster mid-recovery. The marker rows"
-  echo "    are already in archived WAL from when it was seeded, and that is"
-  echo "    what this attempt restores; seeding is a one-time step, not a"
-  echo "    per-attempt one."
+  echo "    A previous attempt left this cluster wiped or partly recovered. The"
+  echo "    marker rows are already in archived WAL from when it was seeded, and"
+  echo "    that is what this attempt restores; seeding is a one-time step, not"
+  echo "    a per-attempt one."
   echo "    If this is the first attempt against a freshly deployed cluster,"
   echo "    then that deployment is not running and is worth looking at before"
   echo "    going further."
 fi
 
 # Step 2: setup_postgres stages its TLS material from a directory Ansible
-# resolves against the playbook's own location, and the recovery rebuilds the
-# zones that were not restored by applying that role. Without the deployment's
+# resolves against the playbook's own location, and recover_postgres applies
+# that role to every node. Without the deployment's
 # staging directory it would mint a fresh self-signed certificate for those
 # zones, leaving the cluster with two. Reuse the one the deployment made, the
 # same way check-idempotence.sh reuses it for the pooler.
@@ -222,21 +220,42 @@ else
   echo "             a freshly generated certificate."
 fi
 
-# Step 3: the recovery itself.
-echo "==> Step 3: Running the recovery playbook..."
+# Step 3: tear the cluster down. Every backup is left where it is; this is what
+# an operator runs first, whether the hosts are being reused or a previous
+# attempt went wrong. The moment is noted so the verification can tell any
+# backup taken from here on, which the recovery must not take.
+echo "==> Step 3: Wiping the cluster..."
+RECOVERY_STARTED="$(date +%s)"
+run "$WIPE_PLAYBOOK" \
+  -e wipe_confirm=true \
+  "${EXTRA_VARS[@]}"
+
+# Step 4: the recovery itself.
+echo "==> Step 4: Running the recovery playbook..."
 run "$RECOVER_DIR/playbook.yaml" \
   -e recovery_node="$RECOVERY_NODE" \
-  -e recovery_confirm=true \
   "${EXTRA_VARS[@]}" \
   "${EXTRA_ARGS[@]}" \
   -v
 
-# Step 4: did the data come back, and is the cluster whole?
-#
-# The recovery's own arguments go to the verification too: whether it stopped
-# at a point-in-time target decides which zones had to take a new backup.
-echo "==> Step 4: Verifying the recovered cluster..."
+# Step 5: did the data come back, is the cluster whole, and did the recovery
+# leave every backup it could have restored from?
+echo "==> Step 5: Verifying the recovered cluster..."
 run "$SCRIPT_DIR/verify/verify-recovery.yml" \
+  -e recovery_started="$RECOVERY_STARTED" \
+  "${EXTRA_VARS[@]}" \
+  "${EXTRA_ARGS[@]}" \
+  -v
+
+# Step 6: commit to it, which takes the backups the recovery did not.
+#
+# The recovery's own arguments go to the verification: whether it stopped at a
+# point-in-time target decides whether the restored zone had to take one.
+echo "==> Step 6: Committing the recovery..."
+run "$RECOVER_DIR/commit-restore.yaml" "${EXTRA_VARS[@]}"
+
+echo "==> Step 7: Verifying the committed backups..."
+run "$SCRIPT_DIR/verify/verify-commit.yml" \
   "${EXTRA_VARS[@]}" \
   "${EXTRA_ARGS[@]}" \
   -v
