@@ -107,7 +107,9 @@
     - pgbackrest
     - "--stanza={{ backup_stanza }}"
     - "{{ recovery_stanza_command }}"
-  delegate_to: "{{ backups_in_zone | first }}"
+  # Ansible resolves delegate_to before it reads when, so the fallback keeps a
+  # zone with no backup server -- an S3 zone, which skips this -- from failing.
+  delegate_to: "{{ (backups_in_zone + [inventory_hostname]) | first }}"
   become: true
   become_user: "{{ backup_repo_user }}"
   when:
