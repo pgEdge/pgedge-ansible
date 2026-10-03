@@ -8,8 +8,8 @@ a backup repository.
 The role performs the following tasks on inventory hosts:
 
 - Refuse to start unless `wipe_confirm` is `true`.
-- Refuse to wipe a zone whose cluster exists but whose repository holds no
-  backup of it, unless `wipe_without_backup` is `true`.
+- Refuse to wipe a cluster when no zone's repository holds a backup of the
+  cluster in that zone, unless `wipe_without_backup` is `true`.
 - Remove the scheduled backups from the pgEdge nodes and the backup servers.
 - Stop and disable Patroni, Postgres and pgBouncer, and stop any postmaster
   that is still running on the data directory.
@@ -59,7 +59,7 @@ This role uses the following parameters:
 | Parameter | Use Case |
 |-----------|----------|
 | `wipe_confirm` | Must be `true` for the role to do anything (default: `false`). |
-| `wipe_without_backup` | Wipe zones whose repository holds no backup of their cluster (default: `false`). |
+| `wipe_without_backup` | Wipe the cluster even when no zone's repository holds a backup of it (default: `false`). |
 | `patroni_dcs` | Decides whether the store is the collection's etcd or an external one. |
 
 ## How It Works
@@ -71,6 +71,16 @@ as a deployment that failed partway or freshly provisioned replacements. Each
 step finishes on every host before the next begins: every Patroni is stopped
 before the store is cleared, and the store is cleared before anything is
 erased.
+
+### The Backup Check
+
+Once the cluster is wiped, its data survives only in the backup repositories.
+Every zone holds the same data, replicated across Spock, so a backup in any
+one zone is enough. The role asks each zone's repository whether it holds a
+backup of the cluster in that zone, matched by system identifier, and refuses
+only when none does. That is also what lets a recovery be retried: until it is
+committed, the zones it rebuilt have no backups of their own, but the zone it
+restored still has the backups it came from.
 
 ### The Configuration Store
 
@@ -97,5 +107,5 @@ installs the schedule again when it runs.
 ## Idempotency
 
 This role is safe to re-run. A second run finds nothing running and nothing to
-erase, and the backup check passes because a wiped zone has no cluster to
+erase, and the backup check passes because a wiped cluster has nothing to
 lose.

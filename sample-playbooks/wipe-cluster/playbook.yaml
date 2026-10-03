@@ -4,8 +4,7 @@
 # pgEdge node, removes the cluster from any other configuration store, and
 # erases their configuration and data. It also removes the scheduled backups.
 # It never touches a backup repository: what it erases survives only in the
-# backups, so it refuses to wipe a running zone whose repository holds no
-# backup of it.
+# backups, so it refuses to wipe a cluster that no zone holds a backup of.
 #
 # Run it with the inventory the cluster was deployed with:
 #

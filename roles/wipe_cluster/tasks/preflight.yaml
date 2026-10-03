@@ -12,18 +12,22 @@
       do.
   run_once: true
 
-# A zone's data survives a wipe only in its repository, so refuse to wipe a zone
-# whose repository holds no backup of the cluster that is there now. Only a zone
-# that has a cluster is asked: hosts that never got one have nothing to lose.
+# Once wiped, the cluster's data survives only in the backup repositories, so
+# refuse to wipe a cluster none of whose zones holds a backup of what is in it.
+# One zone is enough: every zone holds the same data, replicated across Spock.
+# That is also what lets a recovery be retried. Until it is committed, the
+# zones it rebuilt have no backup of their own, but the zone it restored has
+# the backups it was restored from.
 #
-# Asked from the zone's first node, through its own pgbackrest.conf, which
-# reaches the repository however the zone is configured. info exits 0 even for
-# a repository it could not read, so the stanza's status code is what says it
-# looked inside: 0, 1 and 2 are the codes that mean it did.
+# Each zone is asked from its first node, through its own pgbackrest.conf,
+# which reaches the repository however the zone is configured. info exits 0
+# even for a repository it could not read, so the stanza's status code is what
+# says it looked inside: 0, 1 and 2 are the codes that mean it did. A backup
+# counts only if it was taken of the cluster in the zone now: a stanza a
+# recovery upgraded also lists backups of the cluster it replaced, under an
+# older db entry, and those cannot bring this one back.
 #
-# A backup counts only if it was taken of this cluster. A stanza a recovery
-# upgraded also lists the backups of the cluster it replaced, under an older db
-# entry, and those cannot bring this one back.
+# Hosts that never got a cluster have nothing to lose and are not asked.
 
 - block:
   - name: Check whether this zone's first node holds a cluster
@@ -62,47 +66,56 @@
     - wipe_pg_control.stat.exists
     - backup_repo_configured | bool
 
-  - name: Ensure the repository holds a backup of the cluster being wiped
+  - name: Record whether this zone's repository holds a backup of its cluster
+    set_fact:
+      wipe_zone_state: >-
+        {{ 'empty' if not wipe_pg_control.stat.exists
+           else 'backed up' if wipe_backups | length > 0
+           else 'unreadable' if backup_repo_configured | bool
+                                and wipe_stanza.status.code | default(-1) | int
+                                    not in [0, 1, 2]
+           else 'not backed up' }}
     vars:
       wipe_stanza: >-
         {{ (wipe_repo_info.stdout | from_json |
             selectattr('name', 'eq', backup_stanza) | first | default({}))
            if wipe_repo_info.rc | default(1) == 0 else {} }}
       wipe_system_id: >-
-        {{ wipe_control_data.stdout_lines |
-           select('search', 'Database system identifier') | first |
-           split(':') | last | trim }}
+        {{ (wipe_control_data.stdout_lines | default([]) |
+            select('search', 'Database system identifier') | first |
+            default(':')).split(':') | last | trim }}
       wipe_db_ids: >-
         {{ wipe_stanza.db | default([]) |
-           selectattr('system-id', 'eq', wipe_system_id | int) |
+           selectattr('system-id', 'eq', wipe_system_id | int(-1)) |
            map(attribute='id') | list }}
       wipe_backups: >-
         {{ wipe_stanza.backup | default([]) |
            selectattr('database.id', 'in', wipe_db_ids) | list }}
-    assert:
-      that:
-      - backup_repo_configured | bool
-      - wipe_stanza.status.code | default(-1) | int in [0, 1, 2]
-      - wipe_backups | length > 0
-      fail_msg: >-
-        {% if not backup_repo_configured | bool %}
-        Zone {{ zone }} has no backup repository configured,
-        {% elif wipe_stanza.status.code | default(-1) | int not in [0, 1, 2] %}
-        pgbackrest could not read stanza {{ backup_stanza }} from
-        {{ inventory_hostname }}
-        ({{ (wipe_stanza.repo | default([]) |
-             map(attribute='status.message') | join('; '))
-            or (wipe_repo_info.stderr | default('') | trim) }}),
-        {% else %}
-        Stanza {{ backup_stanza }} holds no backup of the cluster running in
-        zone {{ zone }} (system identifier {{ wipe_system_id }}),
-        {% endif %}
-        so wiping the zone would lose its data for good. Nothing has been
-        touched. Take a backup first, or re-run with
-        -e wipe_without_backup=true if the data is not worth keeping.
-    when: wipe_pg_control.stat.exists
 
   when:
   - inventory_hostname in groups.pgedge
   - inventory_hostname == first_node_in_zone
-  - not wipe_without_backup | bool
+
+- name: Ensure some zone's repository holds a backup of the cluster
+  assert:
+    that: >-
+      'backed up' in zone_states.values() or
+      zone_states.values() | reject('eq', 'empty') | list | length == 0
+    fail_msg: >-
+      No zone's backup repository holds a backup of the cluster running in it,
+      so wiping the cluster would lose its data for good. Nothing has been
+      touched. What each zone reports:
+      {{ zone_states | dict2items | map(attribute='key') |
+         zip(zone_states.values()) | map('join', ': ') | join(', ') }}.
+      Take a backup first, or re-run with -e wipe_without_backup=true if the
+      data is not worth keeping.
+  vars:
+    zone_states: >-
+      {{ dict(groups.pgedge | map('extract', hostvars) |
+              selectattr('wipe_zone_state', 'defined') |
+              map(attribute='zone') | map('string') |
+              zip(groups.pgedge | map('extract', hostvars) |
+                  selectattr('wipe_zone_state', 'defined') |
+                  map(attribute='wipe_zone_state'))) }}
+  run_once: true
+  when: not wipe_without_backup | bool
