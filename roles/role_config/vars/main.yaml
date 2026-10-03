@@ -39,20 +39,6 @@ pooled_nodes_in_zone: "{{ nodes_in_zone if cluster_is_pooled | bool else [] }}"
 
 first_node_in_zone: "{{ nodes_in_zone | first }}"
 
-# Where other zones reach this one to subscribe to it:
-# - Any proxy the node names for itself.
-# - Otherwise the first HAProxy member in this zone.
-# - Otherwise the zone's first node, so a cluster with no proxies still has a
-#   subscription target.
-#
-# Shared rather than owned by setup_pgedge, because a recovery subscribes to the
-# restored zone the same way and the two must agree on the endpoint.
-
-subscribe_target: >-
-  {{ proxy_node if proxy_node > ''
-     else proxies_in_zone | first if proxies_in_zone
-     else first_node_in_zone }}
-
 spock_exception_behaviour: >-
   {{ exception_behaviour if exception_behaviour in (
        'discard', 'transdiscard', 'sub_disable'
@@ -134,50 +120,8 @@ backup_repo_encrypted: "{{ backup_repo_cipher_type != 'none' }}"
 backup_repo_configured: >-
   {{ backup_type == 's3' or backup_host > '' or backups_in_zone | length > 0 }}
 
-# Whether this node's Patroni configuration carries a PgBackRest bootstrap
-# method. Exactly one node in a recovery does, and every other node keeps the
-# bootstrap it always had, because the other zones are meant to come back empty
-# and be refilled through Spock rather than restored from repositories of their
-# own. Each zone's repository is an independent physical cluster restored to an
-# independent moment, and a cluster whose zones were each restored separately
-# has no common point to replicate forward from.
-#
-# recovery_node is empty in every ordinary deployment, so this is false
-# everywhere and the section renders as it always did.
-
-restore_on_bootstrap: >-
-  {{ backup_repo_configured | bool and recovery_node == inventory_hostname }}
-
 replica_from_backup: >-
   {{ patroni_replica_from_backup | bool and backup_repo_configured | bool }}
-
-# The restore PgBackRest performs when Patroni bootstraps from the repository.
-# Built as a list and joined so that an unset option contributes nothing rather
-# than an empty argument: Patroni splits this command with shlex, which is also
-# why a target value is quoted -- a timestamp contains a space, and an unquoted
-# one would reach pgbackrest as two arguments.
-#
-# --delta lets the restore write into a data directory that already has content.
-# The recovery wipes it first, so this costs nothing on the path it is written
-# for, and saves a manual restore from failing on a directory Patroni created.
-#
-# --target-action=promote leaves Postgres promoted at the target rather than
-# paused waiting for someone to notice, which is what lets Patroni take the
-# recovered cluster over as its leader. An immediate target needs it as much
-# as any other: Postgres treats reaching consistency as reaching a recovery
-# target, and PgBackRest's default action there is pause, which leaves Patroni
-# waiting for an end of recovery that never comes.
-
-recovery_restore_args: >-
-  {{ ['--stanza=' + backup_stanza, '--delta'] +
-     (['--set=' + recovery_backup_set] if recovery_backup_set > '' else []) +
-     (['--type=' + recovery_target_type] if recovery_target_type > '' else []) +
-     (['--target="' + recovery_target + '"'] if recovery_target > '' else []) +
-     (['--target-action=promote']
-      if recovery_target_type > '' else []) +
-     ['restore'] }}
-
-recovery_restore_command: "pgbackrest {{ recovery_restore_args | join(' ') }}"
 
 pg_service_name: >-
   {{ 

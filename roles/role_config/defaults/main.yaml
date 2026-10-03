@@ -137,33 +137,6 @@ backup_repo_cipher_type: aes-256-cbc
 backup_repo_user: "{{ connection_user }}"
 backup_repo_path: "/home/{{ connection_user }}"
 
-# The pgEdge node a cluster recovery restores from the backup repository, named
-# by its inventory hostname. Empty in every ordinary deployment, and the
-# recovery playbook is the only thing that sets it: it is what tells the Patroni
-# template to render a pgBackRest bootstrap method on one node and leave every
-# other node bootstrapping the way it always has. See docs/recovery.md.
-#
-# It lives here rather than in recover_cluster's defaults because setup_patroni
-# reads it too, and a role default is invisible to any role but its own.
-
-recovery_node: ""
-
-# Which point in the repository's history a recovery restores to. Left unset,
-# PgBackRest restores the latest backup and replays every WAL segment the
-# repository holds, which is what a recovery from a lost cluster wants. Set them
-# to undo something instead: recovery_target_type takes one of PgBackRest's
-# --type values -- time, xid, lsn, name, or immediate -- and recovery_target
-# takes the value it applies to. Immediate, like an empty type, takes none,
-# and a recovery refuses a target set beside either.
-#
-# recovery_backup_set names a specific backup to restore, as PgBackRest's
-# --set does and as `pgbackrest info` labels them. Leave it empty to take the
-# latest backup that can reach the target.
-
-recovery_target_type: ""
-recovery_target: ""
-recovery_backup_set: ""
-
 # Whether Patroni rebuilds a replica from the backup repository instead of
 # streaming a fresh pg_basebackup from the zone's leader. Off by default, so an
 # existing cluster renders the replica configuration it already had. Turning it

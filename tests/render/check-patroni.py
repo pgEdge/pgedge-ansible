@@ -3,8 +3,7 @@
 
 Two things this catches that a live run catches late or not at all.
 
-The recovery switches: bootstrap.method becomes a PgBackRest restore for the one
-node a recovery names, the archive commands appear only where a repository is
+The backup switches: the archive commands appear only where a repository is
 configured, and replica creation gains a pgbackrest method only when asked for.
 Each combination has to produce valid YAML, and a live run exercises one.
 
@@ -12,8 +11,8 @@ And the facts the template reads out of hostvars. Its HBA rules are built from
 the addresses of the zone's proxies and the cluster's backup servers, which are
 facts -- they exist only for hosts some play has gathered them on. A playbook
 whose plays are all 'pgedge' renders this template against a proxy no play has
-touched, and fails on the restored node after the cluster has been erased. The
-last case below is that playbook, and it is expected to fail.
+touched, and fails partway through the deployment. The last case below is that
+playbook, and it is expected to fail.
 
 Ansible's template module turns trim_blocks on, unlike a bare Jinja2
 Environment, so a '{%- if %}' that renders cleanly here would not there.
@@ -81,7 +80,7 @@ def hostvars_for(hosts_with_facts):
     return hv
 
 
-def context(os_family, restore, backups, replica, hosts_with_facts):
+def context(os_family, backups, replica, hosts_with_facts):
     zone = 1
     in_zone = [h for h in PGEDGE if ZONE_OF[h] == zone]
     return dict(
@@ -91,11 +90,8 @@ def context(os_family, restore, backups, replica, hosts_with_facts):
         patroni_scope="17-demo", patroni_namespace="/db/",
         ansible_hostname="n1", inventory_hostname=PGEDGE[0],
         ansible_os_family=os_family,
-        restore_on_bootstrap=restore, backup_repo_configured=backups,
+        backup_repo_configured=backups,
         replica_from_backup=replica, backup_stanza="pgedge-demo-1",
-        recovery_restore_command=(
-            'pgbackrest --stanza=pgedge-demo-1 --delta --type=time '
-            '--target="2026-09-15 14:30:00+00" --target-action=promote restore'),
         synchronous_mode="false", synchronous_mode_strict="false",
         pg_port=5432, pg_data="/var/lib/pgsql/17/data",
         pg_config_dir="/var/lib/pgsql/17/data", pg_path="/usr/pgsql-17",
@@ -111,13 +107,15 @@ def context(os_family, restore, backups, replica, hosts_with_facts):
         backup_user="backrest", db_password="p", replication_password="p")
 
 
-def failed_checks(doc, restore, backups, replica):
+def failed_checks(doc, backups, replica):
     """The switches each combination has to have produced, and what failed."""
     params = doc["bootstrap"].get("dcs", {}).get("postgresql", {}).get(
         "parameters", {})
     checks = {
+        # A recovery restores outside Patroni and hands it a running cluster,
+        # so no node ever bootstraps from the repository.
         "bootstrap method":
-            (doc["bootstrap"].get("method") == "pgbackrest") == restore,
+            doc["bootstrap"].get("method") != "pgbackrest",
         "archive_command":
             ("pgbackrest" in params["archive_command"]) == backups,
         "restore_command present":
@@ -141,22 +139,19 @@ def check_switches(template):
     everyone = set(PGEDGE + HAPROXY + BACKUP)
     failures = []
 
-    for os_family, restore, backups, replica in itertools.product(
-            ["RedHat", "Debian"], [False, True], [False, True], [False, True]):
-        if restore and not backups:
-            continue  # restore_on_bootstrap already requires a repository
-        label = (f"{os_family} restore={int(restore)} backups={int(backups)} "
-                 f"replica={int(replica)}")
+    for os_family, backups, replica in itertools.product(
+            ["RedHat", "Debian"], [False, True], [False, True]):
+        label = f"{os_family} backups={int(backups)} replica={int(replica)}"
         try:
             doc = yaml.safe_load(
-                template.render(**context(os_family, restore, backups,
-                                          replica, everyone)))
+                template.render(**context(os_family, backups, replica,
+                                          everyone)))
         except Exception as exc:
             failures.append(f"{label}: {type(exc).__name__}: {exc}")
             print(f"FAIL     {label}")
             continue
 
-        bad = failed_checks(doc, restore, backups, replica)
+        bad = failed_checks(doc, backups, replica)
         if bad:
             failures.append(f"{label}: {', '.join(bad)}")
             print(f"FAIL     {label}: {', '.join(bad)}")
@@ -176,7 +171,7 @@ def check_missing_facts(template):
     # else -- a syntax error, a filter this script does not stub -- is the
     # template broken some other way, and passing on it would hide that.
     try:
-        template.render(**context("RedHat", True, True, False, set(PGEDGE)))
+        template.render(**context("RedHat", True, False, set(PGEDGE)))
     except UndefinedError as exc:
         print("ok       missing proxy/backup facts are rejected "
               f"({type(exc).__name__})")

@@ -173,8 +173,8 @@
       advancing. Either this inventory names a repository belonging to another
       cluster -- give it its own cluster_name or zone -- or the data directory
       was rebuilt and should have been restored instead. A cluster rebuilt
-      deliberately during a recovery is upgraded into its stanza by the
-      recovery playbook; see the recovery documentation.
+      deliberately during a recovery is upgraded into its stanza by
+      recover_postgres; see the recovery documentation.
   vars:
     # No backslash classes here on purpose. The pattern passes through YAML and
     # then Jinja string parsing, and inside a folded scalar Jinja leaves a

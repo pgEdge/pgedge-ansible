@@ -3,7 +3,17 @@
 - include_tasks: tls.yaml
   when: patroni_dcs.type in ('etcd', 'etcd3')
 
-- include_tasks: config.yaml
+- name: Create configuration file for Patroni node
+  template:
+    src: templates/patroni.yml.j2
+    dest: "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    mode: 0600
+    owner: postgres
+    group: postgres
+  become: true
+  # The file holds the superuser and replication passwords, and --diff would
+  # print both.
+  diff: false
 
 - name: Ensure the Postgres service is disabled in favor of Patroni
   systemd_service:

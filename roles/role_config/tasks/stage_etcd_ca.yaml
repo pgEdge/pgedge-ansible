@@ -62,8 +62,8 @@
       authority than its etcd trusts would leave no node able to reach the
       configuration store. If the supplied authority is the correct one, remove
       the staged copy and run again; if the cluster genuinely needs a new
-      authority, that is a rebuild of the store -- see recovery_reset_dcs in the
-      recovery documentation.
+      authority, that is a rebuild of the store: wipe_cluster erases the
+      collection's etcd, and a deployment or recovery then builds it again.
   delegate_to: localhost
   run_once: true
   when:
@@ -213,8 +213,8 @@
       {% if trusted_cas | length > 1 -%}
       The etcd members of this cluster do not agree on a certificate authority,
       so there is no single one to sign new certificates with. Some zone's store
-      was rebuilt under a different authority than the rest; recover with
-      recovery_reset_dcs, which rebuilds every zone under one.
+      was rebuilt under a different authority than the rest. wipe_cluster
+      followed by a deployment or recovery rebuilds every zone under one.
       {%- elif controller_ca | length == 0 -%}
       This cluster's etcd already trusts a certificate authority, and this
       controller does not hold it: etcd_ca_cert is unset and there is no

@@ -66,9 +66,11 @@ opt-in per cluster, so both are gated on `pgbouncer_enabled`; a cluster that
 does not pool omits them and is otherwise unchanged. See
 [Pooling Configuration](configuration/pooling.md).
 
-[`recover_cluster`](roles/recover_cluster.md) is not part of this sequence. It
-rebuilds an existing cluster from its backup repository and is applied by its own
-playbook. See [Recovering a Cluster from Backup](recovery.md).
+[`wipe_cluster`](roles/wipe_cluster.md) is not part of this sequence: it tears
+a cluster down so the sequence can run again. A recovery runs the same sequence
+with [`recover_postgres`](roles/recover_postgres.md) in place of
+`setup_postgres` and stops short of `finalize_backrest` until the result is
+committed. See [Recovering a Cluster from Backup](recovery.md).
 
 ## Role Categories
 
@@ -114,6 +116,5 @@ The roles in this collection fall into five categories.
 
 | Role | Description |
 |------|-------------|
-| [`recover_cluster`](roles/recover_cluster.md) | Rebuilds an existing cluster from its PgBackRest repository. Applied by its own playbook, not as part of a deployment. |
 | [`recover_postgres`](roles/recover_postgres.md) | Builds the cluster's Postgres from a backup, in place of `setup_postgres`. |
 | [`wipe_cluster`](roles/wipe_cluster.md) | Tears down every cluster component except the backups, ahead of a redeployment or a recovery. |
