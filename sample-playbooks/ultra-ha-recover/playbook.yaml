@@ -1,0 +1,105 @@
+# This playbook rebuilds an Ultra-HA cluster from its backup repositories. It is
+# the Ultra-HA deployment playbook with recover_postgres in place of
+# setup_postgres, and it deploys onto hosts that hold no cluster: freshly
+# provisioned ones, or ones the wipe-cluster playbook has torn down.
+#
+# One zone, the zone of recovery_node, is restored from its repository. Every
+# other zone is built empty and copies the restored one across Spock, because
+# zones restored from their own repositories would come back to independent
+# moments with nothing in common to replicate forward from.
+#
+# Run it with the node to restore, which must be the first node of its zone:
+#
+#   ansible-playbook playbook.yaml -i inventory.yaml \
+#     -e recovery_node=192.168.6.10
+#
+# Add a point-in-time target to restore to a moment rather than to the end of
+# the archive, keeping the inner quotes, because Ansible splits a key=value
+# argument at its spaces:
+#
+#     -e recovery_target_type=time \
+#     -e "recovery_target='2026-09-15 14:30:00+00'"
+#
+# Nothing here takes a backup or restores the backup schedule, so the recovery
+# can be repeated -- to another target, or from another zone -- until it is
+# right. Then run commit-restore.yaml beside this file, which does both. To
+# commit in the same run, add finalize_backrest to the end of this playbook as
+# the deployment playbook has it.
+#
+# Read docs/recovery.md before running it.
+#
+# CHECK the README for how these roles work
+---
+
+- hosts: all
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+
+# The backup servers come first, unlike a deployment: the restore reads from
+# them, and a rebuilt zone's stanza is upgraded on them.
+
+- hosts: backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_repos
+  - install_backrest
+  - setup_backrest
+
+# As in a deployment, except that recover_postgres builds Postgres from the
+# repository. setup_backrest has to precede it, since the restore reads the
+# repository through pgbackrest.conf.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_repos
+  - install_pgedge
+  - role: install_etcd
+    when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
+  - install_patroni
+  - install_backrest
+  - role: install_pgbouncer
+    when: pgbouncer_enabled | bool
+  - setup_backrest
+  - recover_postgres
+  - role: setup_etcd
+    when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
+  - setup_patroni
+  - role: setup_pgbouncer
+    when: pgbouncer_enabled | bool
+
+- hosts: haproxy
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - setup_haproxy
+
+# Wire the zones together, after the empty zones have copied the restored one.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    pgedge_seed_zone: "{{ hostvars[recovery_node].zone }}"
+
+  roles:
+  - setup_pgedge
