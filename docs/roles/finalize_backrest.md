@@ -84,6 +84,19 @@ recovery point it was holding. Because the decision is made from the
 repository's contents rather than from where the role sits in a playbook, the
 role is safe to apply at any point after the cluster is up.
 
+Two kinds of backup in the stanza do not count. Backups of a cluster the stanza
+described before a `stanza-upgrade` restore that cluster, not this one. And
+after a point-in-time recovery, the newest backups can lie on the timeline the
+recovery abandoned, past the point where the cluster branched away from it;
+PgBackRest restores the newest backup by default, and Postgres cannot follow
+the cluster's timeline from there. The role reads the cluster's timeline
+history from the zone's first pgEdge node, and takes a full backup when the
+newest backup ended after the cluster left its timeline. A failover never
+causes one, because it branches after every existing backup.
+
+This is what makes the role the step that commits a recovery: see
+[Recovering a Cluster from Backup](../recovery.md).
+
 In SSH mode the stanza and the first backup are driven from the dedicated backup
 server, which is where the repository lives. In S3 mode there is no server, so
 the zone's first pgEdge node drives them instead.
@@ -99,7 +112,7 @@ healthy. The role stops instead.
 
 An empty repository has no identity to compare, so a genuine first deployment
 passes. A cluster rebuilt deliberately during a recovery matches too, because
-the recovery playbook records it in the stanza's history with
+`recover_postgres` records it in the stanza's history with
 `pgbackrest stanza-upgrade` first.
 
 `setup_postgres` asks the same question earlier, before it initializes a data

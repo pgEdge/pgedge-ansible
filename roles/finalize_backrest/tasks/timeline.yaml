@@ -1,0 +1,51 @@
+---
+
+# Read the cluster's timeline and the history that led to it from the zone's
+# first pgEdge node, which is where this runs unless this is the zone's backup
+# server. Any member will do: a replica follows its leader's timeline and holds
+# the same history files.
+
+- name: Read this cluster's timeline and its history
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT timeline_id,
+             CASE WHEN timeline_id > 1
+                  THEN pg_read_file('pg_wal/' || lpad(to_hex(timeline_id), 8, '0')
+                                    || '.history')
+                  ELSE '' END AS history
+        FROM pg_control_checkpoint()
+  register: backrest_timeline
+  changed_when: false
+  check_mode: false
+  delegate_to: "{{ first_node_in_zone }}"
+  become: true
+  become_user: postgres
+
+# The newest backup's timeline is the first eight hex digits of the WAL segment
+# it started in. A history line reads "parent<TAB>switchpoint<TAB>reason", and
+# the line naming that timeline as parent says where the cluster left it.
+# LSNs are compared as numbers: the high and low halves of X/Y in hex.
+
+- name: Record whether the newest backup can restore this cluster
+  set_fact:
+    backrest_newest_restorable: >-
+      {{ backup_tli | int == current_tli | int or
+         (switch_lsn | length > 0 and
+          stop_lsn.split('/')[0] | int(base=16) * 4294967296 +
+          stop_lsn.split('/')[1] | int(base=16) <=
+          switch_lsn.split('/')[0] | int(base=16) * 4294967296 +
+          switch_lsn.split('/')[1] | int(base=16)) }}
+  vars:
+    newest: >-
+      {{ backrest_current_backups | sort(attribute='timestamp.stop') | last }}
+    backup_tli: "{{ newest.archive.start[:8] | int(base=16) }}"
+    current_tli: "{{ (backrest_timeline.query_result | first).timeline_id }}"
+    stop_lsn: "{{ newest.lsn.stop }}"
+    switch_lsn: >-
+      {{ (backrest_timeline.query_result | first).history | default('') |
+         split('\n') | map('trim') | reject('match', '^(#|$)') |
+         map('split') | selectattr('0', 'eq', backup_tli | string) |
+         map(attribute='1') | first | default('') }}

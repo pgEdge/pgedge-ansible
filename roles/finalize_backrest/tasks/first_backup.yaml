@@ -18,6 +18,11 @@
 # recovery rebuilt still lists every backup of the cluster it replaced, and
 # those are not a recovery point for this one: restoring one brings back the
 # old cluster. Retention expiring them is the point, not a loss.
+#
+# Nor does a newest backup that lies on a timeline this cluster abandoned, as
+# after a point-in-time recovery: repo_state checks it against the cluster's
+# timeline history. The backups this replaces are ones this cluster can no
+# longer be restored from by default.
 
 - name: Create the initial backup for this instance
   command:
@@ -28,4 +33,6 @@
     - "--type=full"
   become: true
   become_user: "{{ os_user }}"
-  when: backrest_current_backups | length == 0
+  when: >-
+    backrest_current_backups | length == 0 or
+    not backrest_newest_restorable | default(true) | bool
