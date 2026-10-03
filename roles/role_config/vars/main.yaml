@@ -270,6 +270,15 @@ patroni_config_file: >-
     else 'patroni.yml'
   }}
 
+# Whether Patroni's store is the etcd this collection hosts on the pgEdge nodes:
+# an etcd type with no parameters of its own, which the template fills in with
+# the local member below. Any other store -- an external etcd, Consul -- is
+# somebody else's, and is only ever asked to forget this cluster.
+
+patroni_dcs_managed: >-
+  {{ patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3') and
+     patroni_dcs.parameters is not defined }}
+
 # Set default Patroni DCS values here since many of them depend on inventory
 # settings. The template will substitute user dcs values if provided.
 

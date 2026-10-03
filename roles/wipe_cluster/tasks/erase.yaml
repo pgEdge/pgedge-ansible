@@ -1,0 +1,51 @@
+---
+
+# Erase what the setup roles configured and the data Postgres held, so that the
+# next deployment or recovery finds every component unconfigured and builds it
+# again. What an install role put in place stays, and so does pgbackrest.conf:
+# it names the repositories, and nothing here touches those.
+
+# Empty the data directory rather than remove it. pg_data is often a mount
+# point, and removing a mount point fails after its contents are gone. The
+# directory itself stays with its owner and permissions, as setup_postgres
+# would create it. A symlinked pg_wal loses its link, not its target.
+
+- name: Find the contents of the Postgres data directory
+  find:
+    paths: "{{ pg_data }}"
+    file_type: any
+    hidden: true
+  register: wipe_pg_data
+  become: true
+
+- name: Erase the contents of the Postgres data directory
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ wipe_pg_data.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  become: true
+
+# On RHEL the configuration lives in the data directory and is already gone. On
+# Debian it is a directory of its own, which setup_postgres would otherwise find
+# without data and have to drop itself.
+
+- name: Erase the cluster's configuration
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ ([pg_config_dir] if pg_config_dir != pg_data else []) +
+       [patroni_config_dir ~ '/' ~ patroni_config_file, patroni_tls_dir] +
+       wipe_pgbouncer_files +
+       ([etcd_config_dir ~ '/etcd.yaml', etcd_tls_dir]
+        if patroni_dcs_managed | bool else []) }}
+  register: wipe_config
+  become: true
+
+- name: Make systemd forget the units whose configuration was erased
+  systemd:
+    daemon_reload: true
+  become: true
+  when: wipe_config.changed

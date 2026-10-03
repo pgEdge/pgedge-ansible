@@ -1,0 +1,31 @@
+---
+
+# Remove the scheduled backups first, so none starts against a cluster that is
+# going away. They would only fail while the cluster is down, and once a
+# recovery brings it back, a full backup taken before the operator commits to
+# the result would expire the backup the recovery restored from -- along with
+# any chance of trying a different target. finalize_backrest installs the
+# schedule again when it runs.
+#
+# The entries are where finalize_backrest puts them: in postgres's crontab on a
+# pgEdge node, and in the repository owner's on a backup server. Each user is
+# asked only if it exists, since a fresh host may not have one yet.
+
+- name: Check which users could hold a backup schedule on this host
+  command:
+    argv: [id, -u, "{{ item }}"]
+  loop: "{{ wipe_cron_users }}"
+  register: wipe_cron_user_check
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Remove the scheduled backups
+  cron:
+    name: "{{ item.1 }}"
+    state: absent
+  loop: >-
+    {{ wipe_cron_user_check.results | selectattr('rc', 'eq', 0) |
+       map(attribute='item') | product(wipe_cron_entries) | list }}
+  become: true
+  become_user: "{{ item.0 }}"

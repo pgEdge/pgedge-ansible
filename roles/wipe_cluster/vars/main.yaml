@@ -1,0 +1,25 @@
+---
+
+patronictl_cmd: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
+
+# The cron entries finalize_backrest installs, by the names it installs them
+# under.
+
+wipe_cron_entries:
+- Full PgBackRest schedule
+- Differential PgBackRest schedule
+
+wipe_cron_users: >-
+  {{ (['postgres'] if inventory_hostname in groups.pgedge else []) +
+     ([backup_repo_user] if inventory_hostname in groups.backup | default([])
+      else []) }}
+
+# Every file setup_pgbouncer writes. The package's own files stay.
+
+wipe_pgbouncer_files:
+- /etc/pgbouncer/pgbouncer.ini
+- /etc/pgbouncer/userlist.txt
+- "{{ pgbouncer_hba_file }}"
+- "{{ pgbouncer_tls_cert_file }}"
+- "{{ pgbouncer_tls_key_file }}"
+- /etc/systemd/system/pgbouncer.service.d

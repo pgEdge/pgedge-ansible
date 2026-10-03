@@ -1,0 +1,64 @@
+---
+
+# Stop and disable everything that serves the cluster. Disabled as well as
+# stopped, so that a reboot partway through does not bring back a node into a
+# cluster that is being taken apart. Each is acted on only if systemd has a unit
+# for it: asking systemd to stop one that does not exist is an error.
+#
+# Patroni goes first, which stops the Postgres it manages, and leaves the store
+# running for the step after this one.
+
+- name: Populate service facts to see which units exist on this node
+  service_facts:
+
+- name: Stop and disable the cluster's services
+  systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+  - "{{ patroni_service_name }}"
+  - "{{ pg_service_name }}"
+  - pgbouncer
+  when: item + '.service' in ansible_facts.services
+  become: true
+
+# Neither unit is the last word on whether Postgres is still running. A Patroni
+# in maintenance mode leaves Postgres running when it stops, and a postmaster
+# can be started by hand. The data directory is about to be erased either way,
+# so whatever still holds it is stopped without ceremony. pg_ctl status exits 0
+# only when a live postmaster holds the directory.
+
+- name: Check whether this node has a data directory to look at
+  stat:
+    path: "{{ pg_data }}/global/pg_control"
+  register: wipe_data_dir
+  become: true
+
+- name: Check whether a postmaster still holds the data directory
+  command:
+    argv:
+    - "{{ pg_path }}/bin/pg_ctl"
+    - status
+    - -D
+    - "{{ pg_data }}"
+  register: wipe_postmaster
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  become: true
+  become_user: postgres
+  when: wipe_data_dir.stat.exists
+
+- name: Stop the postmaster that is still running
+  command:
+    argv:
+    - "{{ pg_path }}/bin/pg_ctl"
+    - stop
+    - -m
+    - immediate
+    - -D
+    - "{{ pg_data }}"
+  become: true
+  become_user: postgres
+  when: wipe_postmaster.rc | default(1) == 0

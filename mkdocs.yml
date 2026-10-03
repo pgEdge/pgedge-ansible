@@ -91,6 +91,7 @@ nav:
       - setup_backrest: roles/setup_backrest.md
       - finalize_backrest: roles/finalize_backrest.md
       - recover_cluster: roles/recover_cluster.md
+      - wipe_cluster: roles/wipe_cluster.md
   - Troubleshooting:
       - Troubleshooting: troubleshooting.md
       - Installation Issues: troubleshooting/installation.md
