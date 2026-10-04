@@ -130,7 +130,10 @@ documentation set one `backup_repo_cipher` for the whole cluster. That is fine
 for a new cluster, because nothing requires the zones to differ. It is wrong for
 an upgraded multi-zone cluster. A single value matches at most one zone's
 repository. The playbook rewrites `pgbackrest.conf` on every other zone with the
-wrong password, and archiving fails on those zones' primaries.
+wrong password. `setup_backrest` now notices when the new file cannot read a
+stanza that the current file can, and stops before writing it, so archiving on
+those zones' primaries keeps working, but the playbook cannot go further until
+each zone has its own password.
 
 Recover the password of each zone, store each one in Ansible Vault, and select
 it by zone. Keep the setting under `all` so that the backup servers resolve the
@@ -340,6 +343,13 @@ same play to the top:
 
 ### Changed
 
+- `setup_backrest` no longer replaces a `pgbackrest.conf` that can read the
+  stanza with one that cannot. A wrong `backup_repo_cipher` or object-store key
+  used to be written straight over a working file, which broke archiving on the
+  live primaries at once while the run carried on through `setup_patroni` and
+  `setup_pgedge`. The new file is now rendered beside the old one and both are
+  asked to read the stanza first. The previous file is also kept as a backup
+  each time it changes, with the same owner and mode.
 - The initial backup is now taken only when the repository reports that the
   stanza holds none, rather than on every run. `full_backup_count` defaults to
   `1`, so a full backup taken against a repository that already had one expired

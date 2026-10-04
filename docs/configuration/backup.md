@@ -165,7 +165,9 @@ ansible localhost -m debug \
 The seed is the literal string `pgedge`, the cluster name, a hyphen, and the
 zone — so `pgedge` + `demo` + `-` + `1` for a cluster named `demo` in zone 1.
 Each zone has its own repository and therefore its own password. Put the
-results in Ansible Vault and set `backup_repo_cipher` from there.
+results in Ansible Vault and set `backup_repo_cipher` from there. A run that
+gives a zone the wrong password stops in `setup_backrest`, before it replaces a
+`pgbackrest.conf` that can still read that zone's repository.
 
 !!! danger "Treat those values as compromised"
     A password anyone could derive is not a secret. Recovering it is how you

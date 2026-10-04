@@ -118,6 +118,40 @@ Client configuration is gated on a repository being configured at all, not on a
 backup server being named. An S3 repository names no server, which is the point
 of it.
 
+### Replacing an Existing Configuration
+
+When `pgbackrest.conf` already exists and the new configuration differs from
+it, the role renders the new file beside the current one first and asks each
+of them to read the stanza with `pgbackrest info`. If the current file can read
+the stanza and the new one cannot, the role stops before replacing anything.
+Writing that file would break archiving on a running primary at once, and the
+repository checks that would notice run much later in the deployment.
+
+The usual causes are a `backup_repo_cipher` that does not match the zone's
+repository — an upgraded multi-zone cluster needs each zone's own value — or a
+wrong object-store key in `backup_repo_params`. Correct the inventory and run
+the playbook again; the current file is left as it was.
+
+The comparison passes in every other case:
+
+- A new node has no current file to protect.
+- A current file that cannot read the repository either, such as an SSH
+  repository whose backup server has not yet authorized the node, has nothing
+  to protect.
+- A stanza that does not exist yet reads the same through both files.
+- An unchanged configuration is not compared at all.
+
+A deliberate move to a repository the node cannot reach yet is refused too.
+Remove `/etc/pgbackrest/pgbackrest.conf` and run the playbook again to allow it.
+
+The comparison cannot see a change it has no way to test. On an SSH client the
+repository host decrypts the repository with its own configuration, so a wrong
+cipher is caught on the backup server, not on the pgEdge node. Each time the
+role replaces `pgbackrest.conf`, it keeps the previous file beside it as
+`pgbackrest.conf.<pid>.<date>~` with the same owner and mode, so a change can
+be undone by copying the old file back. The copies hold the old secrets; remove
+them after rotating a key that leaked.
+
 ### Server Configuration (Backup Nodes)
 
 When the role runs on dedicated backup hosts, it performs the following steps:
@@ -203,6 +237,7 @@ This role generates and modifies the following files on inventory hosts:
 | File | New / Modified | Explanation |
 |------|----------------|-------------|
 | `/etc/pgbackrest/pgbackrest.conf` | New | PgBackRest configuration file with stanza settings, repository configuration, and encryption parameters. |
+| `/etc/pgbackrest/pgbackrest.conf.<pid>.<date>~` | New | The previous `pgbackrest.conf`, kept each time the role replaces it. |
 | `~postgres/.ssh/known_hosts` | Modified | SSH host keys for backup server communication in SSH mode. |
 | `~postgres/.pgpass` | Modified | Backup user credentials for automated authentication. |
 
