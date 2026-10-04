@@ -1,9 +1,10 @@
 ---
 
-# Read the cluster's timeline and the history that led to it from the zone's
-# first pgEdge node, which is where this runs unless this is the zone's backup
-# server. Any member will do: a replica follows its leader's timeline and holds
-# the same history files.
+# Read the cluster's timeline and the history that led to it. On a pgEdge node
+# that is the node this runs on, the zone's primary. A backup server has no
+# Postgres of its own and asks the zone's first pgEdge node; any member will do
+# there, since a replica follows its leader's timeline and holds the same
+# history files.
 
 - name: Read this cluster's timeline and its history
   community.postgresql.postgresql_query:
@@ -20,7 +21,9 @@
   register: backrest_timeline
   changed_when: false
   check_mode: false
-  delegate_to: "{{ first_node_in_zone }}"
+  delegate_to: >-
+    {{ inventory_hostname if inventory_hostname in groups.pgedge
+       else first_node_in_zone }}
   become: true
   become_user: postgres
 

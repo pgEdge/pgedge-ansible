@@ -1,5 +1,23 @@
 ---
 
+# Everything below that writes to the cluster or to an S3 repository runs on one
+# node per zone, and that node has to be the one running the primary. In S3 mode
+# a node's pgbackrest.conf names only its own Postgres, so stanza-create and
+# backup fail on a replica with "unable to find primary cluster", and creating
+# the backup user fails there because a replica is read-only. A non-HA zone's
+# first node is its primary. An HA zone's primary is wherever Patroni last put
+# it, which after a failover is not the first node, so it is asked for first.
+
+- name: Find this zone's Patroni leader
+  include_tasks: find_leader.yaml
+  when: is_ha_cluster
+
+- name: Choose the node that writes for this zone
+  set_fact:
+    zone_primary: >-
+      {{ hostvars[first_node_in_zone].zone_leader.stdout | trim
+         if is_ha_cluster | bool else first_node_in_zone }}
+
 - name: Ensure the backup user exists and can reach this cluster
   include_tasks: add_backup_user.yaml
 
@@ -13,7 +31,7 @@
     os_user: postgres
   when:
   - backup_type != 'ssh'
-  - inventory_hostname == first_node_in_zone
+  - inventory_hostname == zone_primary
 
 - name: Ensure the stanza exists
   include_tasks: stanza_create.yaml
@@ -21,7 +39,7 @@
     os_user: postgres
   when:
   - backup_type != 'ssh'
-  - inventory_hostname == first_node_in_zone
+  - inventory_hostname == zone_primary
 
 # Bind Postgres to PgBackRest through the archive and restore commands. They
 # are set after the stanza exists so that the first archive attempt has
@@ -51,7 +69,7 @@
     os_user: postgres
   when:
   - backup_type != 'ssh'
-  - inventory_hostname == first_node_in_zone
+  - inventory_hostname == zone_primary
 
 # If the bootstrap backup succeeds, it's safe to set up automated backups.
 # Standby servers will simply fail to execute the cron jobs.

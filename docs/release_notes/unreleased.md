@@ -247,7 +247,9 @@ same play to the top:
 - New `finalize_backrest` role initializes the backup repository and the backup
   schedule: the backup database user, the stanza, the first backup and the cron
   entries. It is applied at the end of a deployment, where a running cluster
-  exists for it to act on.
+  exists for it to act on. The backup user, and in S3 mode the stanza and the
+  first backup, come from each zone's current Patroni leader, so the role works
+  on an HA cluster that has failed over away from its first node.
 - `role_config` gained a `repo_identity` task file that compares a node's
   cluster against the one its stanza describes, and refuses when they disagree.
   `setup_postgres` asks it before initializing a data directory and
@@ -269,8 +271,8 @@ same play to the top:
   the cluster cannot restore it: after a point-in-time recovery the newest
   backups can lie on the timeline the recovery abandoned, past the point the
   cluster branched away. It reads the cluster's timeline history from the
-  zone's first pgEdge node. A failover branches after every backup, so it never
-  causes one.
+  zone's primary (from its first pgEdge node when a backup server asks). A
+  failover branches after every backup, so it never causes one.
 - `finalize_backrest` counts only backups of the cluster running now, matched by
   system identifier, so a stanza that holds only backups of a cluster a recovery
   replaced is treated as having none.
