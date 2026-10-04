@@ -94,8 +94,23 @@ store is the etcd the collection hosts on the pgEdge nodes. It holds nothing
 but this cluster, so the role stops etcd and erases its data, and `setup_etcd`
 builds it again from nothing. Any other store is shared with whatever else
 uses it, so the role only removes each zone's cluster from it with
-`patronictl remove`, and stops if the store cannot be read or still lists the
-cluster afterwards.
+`patronictl remove`, once per zone from the zone's first node.
+
+The role removes the cluster whenever it can read the store, whether or not the
+store lists any members. Members are held on a lease that expires shortly
+after Patroni stops, but the keys that record the cluster as initialized are
+not, and a rebuilt zone that meets them is refused by Patroni. Afterwards the
+role checks that `patronictl list` reports the cluster as `uninitialized`, and
+stops if it does not or if the store cannot be read.
+
+`patronictl` finds the store through Patroni's configuration file. On a node
+that has none, such as a freshly provisioned host or one where a deployment
+failed early, the role writes a temporary configuration holding
+`patroni_scope`, `patroni_namespace` and `patroni_dcs` from the inventory, and
+removes it afterwards. Any file those settings name, such as a TLS
+certificate, must already exist on the node. `patronictl` itself must be
+installed: the role stops before erasing anything on a node without it, so
+apply `install_patroni` to such a node before wiping it.
 
 ### Scheduled Backups
 

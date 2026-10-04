@@ -63,6 +63,9 @@ in full.
 - `backup_repo_cipher_type: none` produces a configuration PgBackRest accepts.
 - A wipe stops when it cannot read an external configuration store, instead of
   treating the store as empty.
+- A wipe removes the cluster from an external configuration store even after
+  its members have expired, and also from fresh hosts with no Patroni
+  configuration.
 - `backup_repo_user` and `backup_repo_path` no longer become `root` and
   `/home/root` when facts are gathered under `become`.
 - S3 repositories get a client configuration.

@@ -8,8 +8,9 @@ cluster's own or freshly provisioned replacements.
 
 A recovery has three steps, each a playbook:
 
-1. **Wipe** the cluster with `sample-playbooks/wipe-cluster/playbook.yaml`,
-   unless the hosts are new and hold no cluster.
+1. **Wipe** the cluster with `sample-playbooks/wipe-cluster/playbook.yaml`.
+   New hosts hold no cluster, but an external configuration store may still
+   hold the old one; see [Wiping the Cluster](#wiping-the-cluster).
 2. **Recover** it with `sample-playbooks/ultra-ha-recover/playbook.yaml`. This
    step can be repeated, to another target or from another zone, until the
    result is right.
@@ -82,9 +83,24 @@ ansible-playbook -i inventory.yaml ../wipe-cluster/playbook.yaml \
 ```
 
 It refuses to wipe a cluster that no zone's repository holds a backup of.
-Freshly provisioned hosts need no wipe, but a backup server that outlived the
-cluster still runs the old backup schedule, so wiping is worth doing anyway: on
-hosts with nothing to stop or erase, it only removes that schedule.
+
+Wipe freshly provisioned hosts too. On hosts with nothing to stop or erase, the
+wipe still does two things a recovery depends on:
+
+- It removes the old backup schedule from a backup server that outlived the
+  cluster.
+- It removes each zone's cluster from a configuration store the collection
+  does not host, such as an external etcd or Consul. That store outlives the
+  hosts, and Patroni refuses to bootstrap a zone the store still records as
+  initialized. A new host has no Patroni configuration, so the wipe reaches the
+  store with the `patroni_dcs` settings from the inventory. It needs
+  `patronictl` on each zone's first node, so apply the `install_repos` and
+  `install_patroni` roles to fresh hosts first, along with whatever files
+  those settings name, such as TLS certificates. Otherwise, remove the cluster
+  yourself with `patronictl remove`.
+
+The collection's own etcd lives on the pgEdge nodes, so new hosts start with an
+empty one and need nothing removed.
 
 ## Running a Recovery
 

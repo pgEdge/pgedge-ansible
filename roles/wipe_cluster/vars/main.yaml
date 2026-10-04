@@ -1,6 +1,11 @@
 ---
 
-patronictl_cmd: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
+# patronictl reads Patroni's own configuration where it is still in place, and
+# otherwise the temporary one clear_dcs.yaml writes from the inventory.
+
+patronictl_cmd: >-
+  patronictl -c {{ wipe_temp_config.path |
+                   default(patroni_config_dir + '/' + patroni_config_file) }}
 
 # The cron entries finalize_backrest installs, by the names it installs them
 # under.

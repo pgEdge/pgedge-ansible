@@ -13,7 +13,9 @@
 #
 # Every step looks for its component first, so the role runs cleanly against
 # hosts that never got as far as having one -- a deployment that failed
-# partway, or freshly provisioned replacements.
+# partway, or freshly provisioned replacements. A configuration store the
+# collection does not host is the exception: it outlives the hosts, so even a
+# fresh zone's first node is asked to clear it, and needs patronictl to do so.
 #
 # Each task file finishes on every host before the next one starts, which is
 # what puts every Patroni out of the way before the store is cleared, and the

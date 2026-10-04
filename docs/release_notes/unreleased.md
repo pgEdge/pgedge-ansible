@@ -404,10 +404,19 @@ same play to the top:
   cipher. The password line is now emitted only where something is encrypting,
   and `init_server` rejects a password set where nothing is.
 - `wipe_cluster` does not treat an external configuration store it cannot read
-  as a store with no cluster in it. `patronictl` prints a JSON list when it
-  reached the store and nothing that parses when it did not, so an unreadable
-  store stops the wipe before anything is erased, rather than leaving Patroni
-  waiting forever for a leader whose key is still there.
+  as a store with no cluster in it. An unreadable store stops the wipe before
+  anything is erased, rather than leaving Patroni waiting forever for a leader
+  whose key is still there.
+- `wipe_cluster` removes a zone's cluster from an external configuration store
+  even when the store lists no members, and then checks that `patronictl`
+  reports the cluster as `uninitialized`. Members expire within Patroni's `ttl`
+  of Patroni stopping, but the keys recording the cluster as initialized do
+  not, so a wipe run after Patroni had been down for longer skipped the removal
+  and passed its own check. The rebuilt zones then met the old system
+  identifier and Patroni refused to start them. A node with no Patroni
+  configuration, such as a freshly provisioned host, now reaches the store with
+  a temporary configuration built from the inventory's `patroni_dcs` settings,
+  instead of being skipped.
 - `backup_repo_user` and `backup_repo_path` no longer derive from
   `ansible_user_id`. That is a fact, and a fact records which account the setup
   module ran as, so a play that gathers facts with `become` records `root` --
