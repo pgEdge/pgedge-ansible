@@ -25,7 +25,9 @@ The role performs the following tasks on inventory hosts:
   template. This role also checks the Patroni configuration store and adds
   them there if they are missing, because a cluster that was bootstrapped
   without a repository keeps the `/bin/true` placeholder in the store. It then
-  waits until the leader's Postgres is using the new `archive_command`.
+  waits until the leader's Postgres is using the new `archive_command`, and
+  stops with an error if Patroni does not report exactly one leader among the
+  zone's nodes.
 - Take an initial full backup when the stanza holds no backups.
 - Create cron entries for scheduled full and differential backups.
 

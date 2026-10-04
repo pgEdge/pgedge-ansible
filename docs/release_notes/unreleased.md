@@ -483,4 +483,8 @@ same play to the top:
   being named, and an S3 repository names none, so S3 clusters were left with no
   `pgbackrest.conf`, no archive command and no backups, with nothing reporting
   it. The gate is now whether a repository is configured at all.
-
+- `setup_patroni` finds the primary when Postgres listens on a port other than
+  5432. `patronictl` then shows each member's host as `host:port`, and the wait
+  for the primary compared that with the bare inventory name, so it never saw
+  the primary come up and failed after its retries. The port is now stripped
+  before the comparison.
