@@ -181,6 +181,15 @@ The data directory is `/var/lib/postgresql/{{ pg_version }}/main` and the
 configuration directory is `/etc/postgresql/{{ pg_version }}/main`. The
 service name is `postgresql@{{ pg_version }}-main`.
 
+The role creates a cluster named by `cluster_name` with its data in `pg_data`
+and its configuration in `/etc/postgresql/{{ pg_version }}/{{ cluster_name }}`.
+When that configuration directory still holds `postgresql.conf` or
+`pg_hba.conf` but `pg_data` holds no cluster, the role stops the cluster the
+files describe and removes them before creating the new one. That covers a
+cluster whose data was erased, and `cluster_name: main` with a `pg_data` other
+than the default: the package's `main` cluster is stopped and its configuration
+replaced, but its data directory is left in place.
+
 On RHEL-based systems, the role runs `postgresql-{{ pg_version }}-setup initdb`
 to create the data directory at `/var/lib/pgsql/{{ pg_version }}/data`. The
 service name is `postgresql-{{ pg_version }}`.

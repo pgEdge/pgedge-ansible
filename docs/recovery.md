@@ -102,6 +102,16 @@ wipe still does two things a recovery depends on:
 The collection's own etcd lives on the pgEdge nodes, so new hosts start with an
 empty one and need nothing removed.
 
+A fresh Debian host also needs the wipe when `cluster_name` is `main` and
+`pg_data` is the default `/var/lib/postgresql/<version>/main`. The Postgres
+package creates and starts a `main` cluster there when it is installed, and the
+recovery refuses any node whose data directory already holds a cluster. The
+wipe stops and erases that cluster like any other. It holds nothing, but no
+repository has a backup of it either, so if every zone is on such hosts the
+wipe refuses until you add `-e wipe_without_backup=true`. The default
+`cluster_name` is `demo`, and a `main` with its own `pg_data` leaves the
+package's directory alone, so neither needs this.
+
 ## Running a Recovery
 
 Use the playbook in `sample-playbooks/ultra-ha-recover/` with the inventory the

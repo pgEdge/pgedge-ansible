@@ -352,12 +352,15 @@ same play to the top:
   repository host, and a host outside the inventory would never be upgraded, so
   the zone could not archive. Adding the server to the `backup` group lets the
   recovery upgrade it.
-- `setup_postgres` on Debian now drops a cluster whose configuration directory
-  outlived its data directory before creating it again, since
-  `pg_createcluster` refused to recreate a cluster whose configuration was
-  still in `/etc/postgresql`. This includes a cluster named `main`, which was
-  previously never created by the role and so was left without a cluster once
-  its data directory was erased.
+- `setup_postgres` on Debian now removes the configuration files of a cluster
+  whose configuration directory outlived its data directory before creating it
+  again, since `pg_createcluster` refused to recreate a cluster whose
+  configuration was still in `/etc/postgresql`. This includes a cluster named
+  `main`, which was previously never created by the role and so was left
+  without a cluster once its data directory was erased. It also lets
+  `cluster_name: main` with a `pg_data` of its own replace the package's `main`
+  cluster on a fresh install: the role stops that cluster and replaces its
+  configuration, and leaves its data directory where it is.
 - `archive_command` and `restore_command` for an HA cluster now come from
   `setup_patroni`'s configuration template rather than being patched into the
   Patroni configuration store by `setup_backrest`. A value held only in the

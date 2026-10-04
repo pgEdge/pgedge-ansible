@@ -36,7 +36,10 @@ This role requires the following roles for normal operation:
 
 Apply this role where a deployment applies `setup_postgres`, on hosts that
 hold no cluster: freshly provisioned hosts, or hosts that
-[`wipe_cluster`](wipe_cluster.md) has torn down. Set `pgedge_seed_zone` for
+[`wipe_cluster`](wipe_cluster.md) has torn down. On Debian with
+`cluster_name: main` and the default `pg_data`, a fresh host already holds the
+cluster the Postgres package created, and the role refuses it; run
+`wipe_cluster` on such hosts first. Set `pgedge_seed_zone` for
 `setup_pgedge` to the restored zone, so the other zones copy it:
 
 ```yaml
