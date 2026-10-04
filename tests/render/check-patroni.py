@@ -17,6 +17,13 @@ playbook, and it is expected to fail.
 It also renders the script Debian replicas restore through, which has to
 create the configuration directory a restore leaves out.
 
+What the template sees as replica_from_backup is not set here. It is derived
+from the inventory's patroni_replica_from_backup and backup_repo_configured by
+role_config's own expression, read out of role_config's vars, so asking for
+replicas from a backup where no repository exists renders as Ansible would
+render it -- without the pgbackrest method -- and this also pins that
+derivation.
+
 Ansible's template module turns trim_blocks on, unlike a bare Jinja2
 Environment, so a '{%- if %}' that renders cleanly here would not there.
 """
@@ -34,6 +41,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO / "roles" / "setup_patroni" / "templates"
+ROLE_VARS = REPO / "roles" / "role_config" / "vars" / "main.yaml"
 
 # The ultra-ha inventory's shape: two zones of three pgEdge nodes, a proxy and a
 # backup server each. The proxy and backup hosts are the point -- an inventory
@@ -95,7 +103,16 @@ def hostvars_for(hosts_with_facts):
     return hv
 
 
-def context(os_family, backups, replica, hosts_with_facts):
+def replica_from_backup(e, requested, backups):
+    """role_config's replica_from_backup, evaluated as Ansible would."""
+    expr = yaml.safe_load(ROLE_VARS.read_text())["replica_from_backup"]
+    return e.from_string(expr).render(patroni_replica_from_backup=requested,
+                                      backup_repo_configured=backups)
+
+
+def context(e, os_family, backups, replica, hosts_with_facts):
+    """The template's variables. 'replica' is the inventory's
+    patroni_replica_from_backup; what the template sees is derived from it."""
     zone = 1
     in_zone = [h for h in PGEDGE if ZONE_OF[h] == zone]
     return dict(
@@ -106,7 +123,8 @@ def context(os_family, backups, replica, hosts_with_facts):
         ansible_hostname="n1", inventory_hostname=PGEDGE[0],
         ansible_os_family=os_family,
         backup_repo_configured=backups,
-        replica_from_backup=replica, backup_stanza="pgedge-demo-1",
+        replica_from_backup=replica_from_backup(e, replica, backups),
+        backup_stanza="pgedge-demo-1",
         synchronous_mode="false", synchronous_mode_strict="false",
         pg_port=5432, pg_data="/var/lib/pgsql/17/data",
         pg_config_dir="/var/lib/pgsql/17/data", pg_path="/usr/pgsql-17",
@@ -142,7 +160,11 @@ def debian_config_dir_guaranteed(pg):
 
 
 def failed_checks(doc, os_family, backups, replica):
-    """The switches each combination has to have produced, and what failed."""
+    """The switches each combination has to have produced, and what failed.
+
+    'replica' is only a request: a replica cannot restore from a repository
+    that does not exist, so the pgbackrest method appears only with both.
+    """
     params = doc["bootstrap"].get("dcs", {}).get("postgresql", {}).get(
         "parameters", {})
     checks = {
@@ -156,7 +178,7 @@ def failed_checks(doc, os_family, backups, replica):
             ("restore_command" in params) == backups,
         "pgbackrest replica method":
             ("pgbackrest" in (doc["postgresql"].get(
-                "create_replica_methods") or [])) == replica,
+                "create_replica_methods") or [])) == (replica and backups),
         # A Debian restore or clone leaves no postgresql.conf behind unless the
         # method creates one, and the replica then never starts.
         "debian replica config directory":
@@ -173,7 +195,7 @@ def failed_checks(doc, os_family, backups, replica):
     return [name for name, ok in checks.items() if not ok]
 
 
-def check_switches(template):
+def check_switches(e, template):
     """Render every combination of the switches that gate the template."""
     everyone = set(PGEDGE + HAPROXY + BACKUP)
     failures = []
@@ -183,7 +205,7 @@ def check_switches(template):
         label = f"{os_family} backups={int(backups)} replica={int(replica)}"
         try:
             doc = yaml.safe_load(
-                template.render(**context(os_family, backups, replica,
+                template.render(**context(e, os_family, backups, replica,
                                           everyone)))
         except Exception as exc:
             failures.append(f"{label}: {type(exc).__name__}: {exc}")
@@ -200,7 +222,7 @@ def check_switches(template):
     return failures
 
 
-def check_missing_facts(template):
+def check_missing_facts(e, template):
     """A playbook whose plays are all 'pgedge' has no facts for the proxy and
     backup hosts. The template must not render against that, and this asserts
     the failure is still detectable rather than silently producing HBA lines
@@ -210,7 +232,7 @@ def check_missing_facts(template):
     # else -- a syntax error, a filter this script does not stub -- is the
     # template broken some other way, and passing on it would hide that.
     try:
-        template.render(**context("RedHat", True, False, set(PGEDGE)))
+        template.render(**context(e, "RedHat", True, False, set(PGEDGE)))
     except UndefinedError as exc:
         print("ok       missing proxy/backup facts are rejected "
               f"({type(exc).__name__})")
@@ -222,13 +244,13 @@ def check_missing_facts(template):
             "'pgedge' would emit HBA rules with no addresses in them"]
 
 
-def check_replica_script(template):
+def check_replica_script(e, template):
     """The Debian pgbackrest replica script has to be valid shell, restore
     before it touches the configuration directory, and create the cluster's
     configuration only where the restore left none.
     """
-    text = template.render(**context("Debian", True, True,
-                                     set(PGEDGE + HAPROXY + BACKUP)))
+    text = template.render(**context(e, "Debian", True, True,
+                                        set(PGEDGE + HAPROXY + BACKUP)))
     result = subprocess.run(["sh", "-n"], input=text, text=True,
                             capture_output=True)
     if result.returncode != 0:
@@ -251,10 +273,11 @@ def main():
     e = env()
     template = e.get_template("patroni.yml.j2")
 
-    failures = check_switches(template)
+    failures = check_switches(e, template)
     print()
-    failures += check_missing_facts(template)
-    failures += check_replica_script(e.get_template("pgbackrest_replica.sh.j2"))
+    failures += check_missing_facts(e, template)
+    failures += check_replica_script(
+        e, e.get_template("pgbackrest_replica.sh.j2"))
 
     if failures:
         print("\n" + "\n".join(f"  - {f}" for f in failures))
