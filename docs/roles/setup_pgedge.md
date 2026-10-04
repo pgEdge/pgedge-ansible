@@ -79,6 +79,7 @@ This role uses the following parameters from the inventory file:
 | `proxy_node` | Specific proxy hostname for HA deployments. |
 | `proxy_port` | Proxy port for HA deployments (default: 5432). |
 | `pgedge_seed_zone` | Zone the other zones copy their data from (HA only). |
+| `pgedge_seed_stall_minutes` | Give up on the copy from the seed zone after this long without progress (default: 15). |
 | `pgedge_seed_max_hours` | Longest the copy from the seed zone may take (default: 24). |
 
 See the [Configuration Reference](../configuration.md) for descriptions and
@@ -125,6 +126,20 @@ subscribes to the seed zone with `synchronize_structure` and
 `synchronize_data`, and waits for the copy to finish, before the role creates
 any other subscription. The recovery playbook uses this to refill the zones it
 rebuilds from the zone it restored.
+
+The wait for the copy does not use `spock.sub_wait_for_sync()`, which keeps
+waiting while Spock restarts a copy that has failed. It polls
+`spock.sub_show_status()` and `spock.local_sync_status` instead, and succeeds
+once the subscription is `replicating` and every table is ready. It fails
+immediately if the subscription is `disabled`. It also fails if the
+subscription stays `down` for two minutes, as it does after a bad provider DSN
+or password, or a copy that broke partway; Spock 5 does not resume a copy that
+broke after it started. Last, it fails if nothing has moved for
+`pgedge_seed_stall_minutes`. Movement is any change in the sync step, in the
+tables left to sync, in the database's size, or in the progress Postgres reports
+for the COPY and index builds. The failure message shows the subscription's
+status, the tables not yet synced, and the Spock lines from the end of the
+Postgres log. `pgedge_seed_max_hours` is a backstop for the whole wait.
 
 The copy runs once. A later run finds the subscription and leaves it alone, so
 the setting does no harm if it stays in place.

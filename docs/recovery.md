@@ -175,7 +175,9 @@ more durable arrangement, because it works from any controller.
 | `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the newest backup that can reach the target. |
 | `recovery_stall_minutes` | `15` | Give up only after the restored node has made no progress for this long. |
 | `recovery_poll_seconds` | `30` | How often to look. |
-| `recovery_max_hours` | `24` | Hard ceiling on the restore, the replay, and each zone's Spock copy. Raise it for a restore or copy expected to run longer. |
+| `recovery_max_hours` | `24` | Hard ceiling on the restore and the replay. Raise it for a restore expected to run longer. |
+| `pgedge_seed_stall_minutes` | `15` | Give up on a zone's Spock copy of the restored zone after it has made no progress for this long. It fails sooner if the subscription is disabled or stays down for two minutes. |
+| `pgedge_seed_max_hours` | `24` | Hard ceiling on each zone's Spock copy. Raise it for a copy expected to run longer. |
 
 ## Trying Again
 

@@ -19,8 +19,15 @@ argument_specs:
           other zone copies its schema and data from it before the rest of the
           subscriptions are created. Empty in an ordinary deployment.
         default: ""
+      pgedge_seed_stall_minutes:
+        type: "int"
+        description:
+        - Give up on the copy from I(pgedge_seed_zone) when it has made no
+          progress for this many minutes.
+        default: 15
       pgedge_seed_max_hours:
         type: "int"
         description:
-        - The longest the copy from I(pgedge_seed_zone) may take, in hours.
+        - The longest the copy from I(pgedge_seed_zone) may take, in hours. A
+          backstop behind I(pgedge_seed_stall_minutes).
         default: 24

@@ -7,7 +7,10 @@
 
 pgedge_seed_zone: ""
 
-# How long the copy from the seed zone may take. A backstop rather than an
-# estimate: the copy takes as long as the database is large.
+# How long to wait for the copy from the seed zone. Not an estimate: the copy
+# takes as long as the database is large. The wait gives up when nothing has
+# moved for pgedge_seed_stall_minutes, or sooner if Spock reports the copy has
+# failed; pgedge_seed_max_hours is a backstop against a wait that never returns.
 
+pgedge_seed_stall_minutes: 15
 pgedge_seed_max_hours: 24

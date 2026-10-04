@@ -40,6 +40,17 @@ pgedge:
   are created. The recovery playbook sets it to the zone it restores; an
   ordinary deployment leaves it unset.
 
+## pgedge_seed_stall_minutes
+
+- Type: Integer
+- Default: `15`
+- Description: This parameter sets how long the copy from `pgedge_seed_zone`
+  may go without progress before the role gives up, in minutes. Progress is
+  any change in the sync step, the tables left to sync, the database's size, or
+  the COPY and index-build progress Postgres reports. The role gives up sooner
+  if Spock disables the subscription or its apply worker stays down for two
+  minutes.
+
 ## pgedge_seed_max_hours
 
 - Type: Integer

@@ -87,19 +87,152 @@
 # The copy is likely the longest step of whatever playbook asked for it, so the
 # wait runs under async: one SSH session held open for the whole copy is one a
 # dropped connection would fail.
+#
+# It does not call spock.sub_wait_for_sync(). That function waits for the copy
+# to finish and nothing else: when the copy fails, Spock restarts the apply
+# worker every few seconds and the function keeps waiting, so a bad provider
+# DSN or a conflict in the structure sync would hold the run until
+# pgedge_seed_max_hours. A copy that fails after it has started never resumes:
+# Spock 5 refuses to continue from the structure, data or constraint step.
+#
+# So the wait reads the state the function reads, plus spock.sub_show_status(),
+# and judges it every few seconds. It finishes when the apply worker is running
+# and the subscription and every table are ready, as the function would. It
+# fails at once if the subscription is disabled, when the worker has been down
+# for two minutes, and when nothing has moved for pgedge_seed_stall_minutes.
+# Movement is any change in the sync step, in the tables still to sync, in the
+# database's size, or in the progress Postgres reports for the COPY and index
+# builds that do the work. pgedge_seed_max_hours stays as the backstop.
 
 - name: Wait for this zone to finish copying the seed zone
-  community.postgresql.postgresql_query:
-    login_port: "{{ pg_port }}"
-    login_db: "{{ item }}"
-    login_unix_socket: /var/run/postgresql
-    query: >-
-      SELECT spock.sub_wait_for_sync(subscription_name := %(sub_name)s)
-    named_args:
-      sub_name: "sub_n{{ zone }}_n{{ pgedge_seed_zone }}"
+  shell:
+    cmd: |
+      set -u
+      psql() {
+        "{{ pg_path }}/bin/psql" -X -h /var/run/postgresql -p {{ pg_port }} \
+          -d "$SEED_DB" -v ON_ERROR_STOP=1 -v sub="$SEED_SUB" "$@"
+      }
+      fail() {
+        echo "Copy of $SEED_DB from the seed zone through $SEED_SUB failed: $1" >&2
+        echo "Sync step: $(step "${sync:--}")" >&2
+        printf '%s\n' "$SEED_STATUS" | psql -f - >&2 2>&1
+        log=$(printf '%s\n' "$SEED_LOG" | psql -At -f - 2>/dev/null || true)
+        if [ -n "$log" ] && [ -r "$log" ]; then
+          echo "The apply worker reports its errors in $log. Its last Spock lines:" >&2
+          grep -iE 'spock|subscri' "$log" | tail -n 20 >&2
+        else
+          echo "The apply worker reports its errors in this node's Postgres log." >&2
+        fi
+        exit 1
+      }
+      step() {
+        case $1 in
+          i) echo "i (starting)" ;;
+          s) echo "s (structure)" ;;
+          d) echo "d (data)" ;;
+          c) echo "c (constraints)" ;;
+          u) echo "u (catching up)" ;;
+          r) echo "r (ready)" ;;
+          *) echo "$1" ;;
+        esac
+      }
+      stall=$(( {{ pgedge_seed_stall_minutes | int }} * 60 ))
+      grace=120
+      sync=""
+      last=""
+      last_moved=$(date +%s)
+      down_since=""
+      while :; do
+        now=$(date +%s)
+        if row=$(printf '%s\n' "$SEED_PROBE" | psql -At -F ' ' -f - 2>/dev/null); then
+          [ -n "$row" ] || fail "the subscription no longer exists"
+        else
+          row=""
+        fi
+        set -- $row
+        if [ $# -eq 6 ]; then
+          status=$1
+          sync=$2
+          if [ "$status" = replicating ] && [ "$sync" = r ] && [ "$3" = 0 ]; then
+            echo "$SEED_DB copied the seed zone and is replicating"
+            exit 0
+          fi
+          case $status in
+          disabled)
+            fail "Spock disabled the subscription."
+            ;;
+          down)
+            [ -n "$down_since" ] || down_since=$now
+            if [ $(( now - down_since )) -ge "$grace" ]; then
+              case $sync in
+              s|d|c)
+                fail "the apply worker stopped during step $sync and Spock does not resume a copy from there. Fix the cause, drop the subscription and empty this zone's database before trying again."
+                ;;
+              *)
+                fail "the apply worker has been down for $grace seconds. Spock keeps restarting it and it keeps stopping; the cause is in the log below."
+                ;;
+              esac
+            fi
+            ;;
+          *)
+            down_since=""
+            ;;
+          esac
+          current="$2:$3:$4:$5:$6"
+        else
+          current="$last"
+        fi
+        if [ "$current" != "$last" ]; then
+          last=$current
+          last_moved=$now
+        elif [ $(( now - last_moved )) -ge "$stall" ]; then
+          fail "no progress for {{ pgedge_seed_stall_minutes }} minutes."
+        fi
+        sleep 10
+      done
+  environment:
+    SEED_DB: "{{ item }}"
+    SEED_SUB: "sub_n{{ zone }}_n{{ pgedge_seed_zone }}"
+    SEED_PROBE: |
+      SELECT st.status,
+             coalesce((SELECT l.sync_status::text
+                         FROM spock.local_sync_status l
+                        WHERE l.sync_subid = s.sub_id
+                          AND l.sync_nspname IS NULL
+                          AND l.sync_relname IS NULL), '-'),
+             (SELECT count(*)
+                FROM spock.local_sync_status l
+               WHERE l.sync_subid = s.sub_id
+                 AND l.sync_relname IS NOT NULL
+                 AND l.sync_status <> 'r'),
+             pg_database_size(current_database()),
+             (SELECT coalesce(sum(p.bytes_processed), 0)
+                FROM pg_stat_progress_copy p
+               WHERE p.datname = current_database()),
+             (SELECT coalesce(sum(p.blocks_done + p.tuples_done), 0)
+                FROM pg_stat_progress_create_index p
+               WHERE p.datname = current_database())
+        FROM spock.subscription s,
+             spock.sub_show_status(s.sub_name) st
+       WHERE s.sub_name = :'sub';
+    SEED_STATUS: |
+      \pset footer off
+      SELECT * FROM spock.sub_show_status(:'sub');
+      SELECT l.sync_kind, l.sync_nspname, l.sync_relname, l.sync_status
+        FROM spock.local_sync_status l
+        JOIN spock.subscription s ON s.sub_id = l.sync_subid
+       WHERE s.sub_name = :'sub'
+         AND (l.sync_relname IS NULL OR l.sync_status <> 'r')
+       ORDER BY l.sync_nspname NULLS FIRST, l.sync_relname
+       LIMIT 20;
+    SEED_LOG: |
+      SELECT CASE WHEN f LIKE '/%' THEN f
+                  ELSE current_setting('data_directory') || '/' || f END
+        FROM pg_current_logfile() AS f;
   loop: "{{ db_names }}"
   async: "{{ pgedge_seed_max_hours | int * 3600 }}"
   poll: 30
+  changed_when: false
   become: true
   become_user: postgres
   when:

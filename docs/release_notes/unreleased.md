@@ -231,6 +231,15 @@ same play to the top:
   holds the cluster's data. Every other zone copies it with
   `synchronize_structure` and `synchronize_data` before the rest of the mesh is
   built. The recovery playbook sets it to the restored zone.
+- New `pgedge_seed_stall_minutes` parameter (default 15) for `setup_pgedge`
+  bounds the wait for that copy by progress, not time. The wait polls
+  `spock.sub_show_status()` and the sync status instead of calling
+  `spock.sub_wait_for_sync()`, which keeps waiting while Spock retries a failed
+  copy. It fails at once on a disabled subscription, after two minutes of an
+  apply worker that will not stay up (a bad DSN or password, or a copy that
+  broke partway), or after the stall window without progress. It reports the
+  subscription status and the Spock lines from the Postgres log.
+  `pgedge_seed_max_hours` (default 24) remains the backstop.
 - New `patroni_replica_from_backup` parameter makes Patroni rebuild a replica
   with a pgBackRest delta restore instead of a fresh `pg_basebackup` from its
   zone's leader, falling back to `pg_basebackup` (`pg_clonecluster` on Debian)
