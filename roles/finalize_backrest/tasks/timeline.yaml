@@ -30,6 +30,10 @@
 # The newest backup's timeline is the first eight hex digits of the WAL segment
 # it started in. A history line reads "parent<TAB>switchpoint<TAB>reason", and
 # the line naming that timeline as parent says where the cluster left it.
+# The history is split with splitlines() rather than split('\n'): in a folded
+# scalar the backslash reaches the template as written, so '\n' matches no
+# newline, the whole file splits at whitespace as one line, and only a backup
+# on timeline 1 -- the first field of the first line -- was ever found in it.
 # LSNs are compared as numbers: the high and low halves of X/Y in hex.
 
 - name: Record whether the newest backup can restore this cluster
@@ -48,7 +52,7 @@
     current_tli: "{{ (backrest_timeline.query_result | first).timeline_id }}"
     stop_lsn: "{{ newest.lsn.stop }}"
     switch_lsn: >-
-      {{ (backrest_timeline.query_result | first).history | default('') |
-         split('\n') | map('trim') | reject('match', '^(#|$)') |
+      {{ ((backrest_timeline.query_result | first).history | default('') or
+          '').splitlines() | map('trim') | reject('match', '^(#|$)') |
          map('split') | selectattr('0', 'eq', backup_tli | string) |
          map(attribute='1') | first | default('') }}
