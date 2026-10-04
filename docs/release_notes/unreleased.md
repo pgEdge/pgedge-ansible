@@ -47,6 +47,15 @@ backup, or installs the cron entries, and a non-HA cluster never gets its
     stanza every archive attempt fails, Postgres keeps every WAL segment until
     one succeeds, and `pg_wal` grows until the disk is full.
 
+!!! note "Archive failures before the stanza exists are expected"
+    Even with the roles in the right order, the Postgres log on an HA cluster
+    shows failed `archive-push` attempts from the moment Patroni starts Postgres
+    until `finalize_backrest` creates the stanza at the end of the deployment.
+    This is expected. Postgres keeps the WAL it could not archive, and the
+    archiver sends all of it to the repository once the stanza exists. If the
+    failures continue after `finalize_backrest` has run, look into them: they
+    are no longer part of the deployment.
+
 Make the following changes to every playbook that configures backups:
 
 1. In the play for the `pgedge` hosts, move `setup_backrest` so it comes before

@@ -9,6 +9,9 @@ differential backups.
 It is the second half of backup setup. `setup_backrest` writes configuration and
 needs nothing running, so it is applied before Patroni starts Postgres;
 everything this role does needs a live cluster to talk to, so it is applied last.
+On an HA cluster Postgres starts archiving before this role runs, and every
+`archive-push` fails until the stanza exists; the failures stop, and the WAL
+Postgres kept is archived, once this role has created the stanza.
 
 The role performs the following tasks on inventory hosts:
 
