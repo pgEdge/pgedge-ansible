@@ -7,10 +7,14 @@
 # would restore. The newest backup has to be of the cluster running now, as the
 # stanza's newest db entry describes it.
 #
-# After a point-in-time recovery the restored zone has to have taken one as
-# well, because its backups past the target are on the timeline the recovery
-# abandoned. So under a target, the newest backup in every zone must also be on
-# the timeline that zone is running on.
+# After a point-in-time recovery the restored zone may need one as well. A
+# backup that finished before the recovery's target is still on the zone's
+# history -- the new timeline branched from the old one after it -- and restores
+# the zone as it is now. One that finished past the target is on the timeline
+# the recovery abandoned, and committing has to replace it. So under a target,
+# the newest backup in every zone must lie on the timeline that zone runs on,
+# or on an earlier one that the zone's history left only after the backup
+# finished: the same rule finalize_backrest applies in timeline.yaml.
 
 - hosts: pgedge
   become: true
@@ -112,6 +116,21 @@
     delegate_to: "{{ zone_primary }}"
     when: inventory_hostname == first_node_in_zone
 
+  # A history line reads "parent<TAB>switchpoint<TAB>reason". Timeline 1 has no
+  # history file, and nothing branched before it.
+
+  - name: Read the history that led to that timeline
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT pg_read_file('pg_wal/' || lpad(to_hex(timeline_id), 8, '0')
+              || '.history')
+         FROM pg_control_checkpoint() WHERE timeline_id > 1"
+    register: history
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
   - name: Assert the zone has a backup of the cluster it holds now
     vars:
       stanza: "{{ repo_info.stdout | from_json | first }}"
@@ -122,20 +141,37 @@
            map(attribute='id') | list }}
       newest: "{{ stanza.backup | default([]) | last | default({}, true) }}"
       newest_tli: "{{ (newest.archive.start | default('0' * 24))[:8] }}"
+      # Where the zone's history left the newest backup's timeline, or '' when
+      # it never did: the backup is on the timeline the zone runs on.
+      switch_lsn: >-
+        {{ (history.stdout | default('') | string).splitlines() | map('trim') |
+           reject('match', '^(#|$)') | map('split') |
+           selectattr('0', 'eq', newest_tli | int(base=16) | string) |
+           map(attribute='1') | first | default('') }}
+      stop_lsn: "{{ newest.lsn.stop | default('0/0') }}"
+      on_history: >-
+        {{ newest_tli | int(base=16) == timeline.stdout | trim | int or
+           (switch_lsn | length > 0 and
+            stop_lsn.split('/')[0] | int(base=16) * 4294967296 +
+            stop_lsn.split('/')[1] | int(base=16) <=
+            switch_lsn.split('/')[0] | int(base=16) * 4294967296 +
+            switch_lsn.split('/')[1] | int(base=16)) }}
     assert:
       that:
       - newest.database.id | default(-1) in current_ids
-      - recovery_target_type == '' or
-        newest_tli | int(base=16) == timeline.stdout | trim | int
+      - recovery_target_type == '' or on_history | bool
       fail_msg: >-
         Zone {{ zone }}'s newest backup, {{ newest.label | default('none') }},
         is from db entry {{ newest.database.id | default('none') }} on timeline
-        {{ newest_tli | int(base=16) }}, but stanza {{ stanza.name }} describes
-        this cluster as db entries {{ current_ids }} and the zone runs on
-        timeline {{ timeline.stdout | trim }}. A backup from another db entry is
-        of the cluster a recovery replaced; one from an older timeline after a
-        point-in-time recovery is on the timeline the recovery abandoned.
-        Either way finalize_backrest did not leave this zone a recovery point.
+        {{ newest_tli | int(base=16) }} (stopping at {{ stop_lsn }}), but stanza
+        {{ stanza.name }} describes this cluster as db entries {{ current_ids }}
+        and the zone runs on timeline {{ timeline.stdout | trim }}, having left
+        timeline {{ newest_tli | int(base=16) }} at
+        {{ switch_lsn | default('no point', true) }}. A backup from another db
+        entry is of the cluster a recovery replaced; one that finished past
+        where the zone left its timeline is on the timeline a point-in-time
+        recovery abandoned. Either way finalize_backrest did not leave this
+        zone a recovery point.
       success_msg: >-
         Zone {{ zone }}'s newest backup, {{ newest.label }}, is of the cluster
         running there now.
