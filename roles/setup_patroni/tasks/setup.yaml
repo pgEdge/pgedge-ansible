@@ -3,6 +3,24 @@
 - include_tasks: tls.yaml
   when: patroni_dcs.type in ('etcd', 'etcd3')
 
+# On Debian, a replica rebuilt from the backup repository needs a configuration
+# directory the restore does not create, so the pgbackrest replica method there
+# is a script that restores and then creates it. Patroni runs it as postgres,
+# which only needs to execute it; root owns it so the postgres user cannot
+# change what Patroni runs.
+
+- name: Install the Debian replica method that restores from the repository
+  template:
+    src: templates/pgbackrest_replica.sh.j2
+    dest: "{{ patroni_pgbackrest_replica_script }}"
+    mode: "0755"
+    owner: root
+    group: root
+  become: true
+  when:
+  - ansible_os_family == 'Debian'
+  - replica_from_backup | bool
+
 - name: Create configuration file for Patroni node
   template:
     src: templates/patroni.yml.j2

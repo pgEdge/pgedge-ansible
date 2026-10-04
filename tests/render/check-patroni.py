@@ -14,6 +14,9 @@ whose plays are all 'pgedge' renders this template against a proxy no play has
 touched, and fails partway through the deployment. The last case below is that
 playbook, and it is expected to fail.
 
+It also renders the script Debian replicas restore through, which has to
+create the configuration directory a restore leaves out.
+
 Ansible's template module turns trim_blocks on, unlike a bare Jinja2
 Environment, so a '{%- if %}' that renders cleanly here would not there.
 """
@@ -21,6 +24,7 @@ Environment, so a '{%- if %}' that renders cleanly here would not there.
 import itertools
 import json
 import re
+import subprocess
 import sys
 
 import yaml
@@ -39,6 +43,17 @@ HAPROXY = ["10.0.0.16", "10.0.0.17"]
 BACKUP = ["10.0.0.18", "10.0.0.19"]
 ZONE_OF = dict([(h, 1) for h in PGEDGE[:3]] + [(h, 2) for h in PGEDGE[3:]])
 ZONE_OF.update({HAPROXY[0]: 1, HAPROXY[1]: 2, BACKUP[0]: 1, BACKUP[1]: 2})
+
+# setup_patroni's role variable naming the Debian pgbackrest replica script.
+REPLICA_SCRIPT = "/usr/local/bin/patroni_pgbackrest_replica"
+
+# The Debian replica methods that create /etc/postgresql/<version>/<cluster>,
+# keyed by the command each must run. Patroni fails to start a replica whose
+# configuration directory has no postgresql.conf.
+DEBIAN_CONFIG_METHODS = {
+    "pg_clonecluster": "/usr/share/patroni/pg_clonecluster_patroni",
+    "pgbackrest": REPLICA_SCRIPT,
+}
 
 
 def env():
@@ -96,6 +111,7 @@ def context(os_family, backups, replica, hosts_with_facts):
         pg_port=5432, pg_data="/var/lib/pgsql/17/data",
         pg_config_dir="/var/lib/pgsql/17/data", pg_path="/usr/pgsql-17",
         pg_home="/var/lib/pgsql", pg_version=17, cluster_name="demo", zone=zone,
+        patroni_pgbackrest_replica_script=REPLICA_SCRIPT,
         pg_supports_output_plugin_libraries=True,
         spock_exception_behaviour="transdiscard",
         groups={"pgedge": PGEDGE, "haproxy": HAPROXY, "backup": BACKUP},
@@ -107,7 +123,25 @@ def context(os_family, backups, replica, hosts_with_facts):
         backup_user="backrest", db_password="p", replication_password="p")
 
 
-def failed_checks(doc, backups, replica):
+def debian_config_dir_guaranteed(pg):
+    """Whether every Debian replica method Patroni can stop at creates the
+    configuration directory.
+
+    Patroni keeps the first method that succeeds, so each one ahead of
+    basebackup has to create it, and there has to be at least one: with no
+    list at all, Patroni uses basebackup alone. basebackup itself is the last
+    resort and creates nothing.
+    """
+    methods = pg.get("create_replica_methods") or ["basebackup"]
+    ahead = methods[:methods.index("basebackup")] if "basebackup" in methods \
+        else methods
+    return bool(ahead) and all(
+        m in DEBIAN_CONFIG_METHODS
+        and (pg.get(m) or {}).get("command") == DEBIAN_CONFIG_METHODS[m]
+        for m in ahead)
+
+
+def failed_checks(doc, os_family, backups, replica):
     """The switches each combination has to have produced, and what failed."""
     params = doc["bootstrap"].get("dcs", {}).get("postgresql", {}).get(
         "parameters", {})
@@ -123,6 +157,11 @@ def failed_checks(doc, backups, replica):
         "pgbackrest replica method":
             ("pgbackrest" in (doc["postgresql"].get(
                 "create_replica_methods") or [])) == replica,
+        # A Debian restore or clone leaves no postgresql.conf behind unless the
+        # method creates one, and the replica then never starts.
+        "debian replica config directory":
+            os_family != "Debian"
+            or debian_config_dir_guaranteed(doc["postgresql"]),
         # Every address the HBA rules name has to be a real one. A host whose
         # facts were missing renders as an empty string or the literal 'None',
         # and Postgres refuses to start on that line.
@@ -151,7 +190,7 @@ def check_switches(template):
             print(f"FAIL     {label}")
             continue
 
-        bad = failed_checks(doc, backups, replica)
+        bad = failed_checks(doc, os_family, backups, replica)
         if bad:
             failures.append(f"{label}: {', '.join(bad)}")
             print(f"FAIL     {label}: {', '.join(bad)}")
@@ -183,12 +222,39 @@ def check_missing_facts(template):
             "'pgedge' would emit HBA rules with no addresses in them"]
 
 
+def check_replica_script(template):
+    """The Debian pgbackrest replica script has to be valid shell, restore
+    before it touches the configuration directory, and create the cluster's
+    configuration only where the restore left none.
+    """
+    text = template.render(**context("Debian", True, True,
+                                     set(PGEDGE + HAPROXY + BACKUP)))
+    result = subprocess.run(["sh", "-n"], input=text, text=True,
+                            capture_output=True)
+    if result.returncode != 0:
+        print("FAIL     Debian replica script is not valid shell")
+        return [f"pgbackrest_replica.sh.j2: sh -n: {result.stderr.strip()}"]
+
+    restore = text.find("pgbackrest --stanza=pgedge-demo-1 --delta restore")
+    guard = text.find("if [ -e '/var/lib/pgsql/17/data/postgresql.conf' ]")
+    create = text.find("pg_createcluster -p 5432")
+    if not 0 <= restore < guard < create:
+        print("FAIL     Debian replica script steps out of order")
+        return ["pgbackrest_replica.sh.j2 must restore, then check for "
+                "postgresql.conf, then run pg_createcluster"]
+
+    print("ok       Debian replica script")
+    return []
+
+
 def main():
-    template = env().get_template("patroni.yml.j2")
+    e = env()
+    template = e.get_template("patroni.yml.j2")
 
     failures = check_switches(template)
     print()
     failures += check_missing_facts(template)
+    failures += check_replica_script(e.get_template("pgbackrest_replica.sh.j2"))
 
     if failures:
         print("\n" + "\n".join(f"  - {f}" for f in failures))

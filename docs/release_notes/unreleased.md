@@ -221,8 +221,8 @@ same play to the top:
   built. The recovery playbook sets it to the restored zone.
 - New `patroni_replica_from_backup` parameter makes Patroni rebuild a replica
   with a pgBackRest delta restore instead of a fresh `pg_basebackup` from its
-  zone's leader, falling back to `pg_basebackup` if the restore fails. Off by
-  default.
+  zone's leader, falling back to `pg_basebackup` (`pg_clonecluster` on Debian)
+  if the restore fails. Off by default.
 - New `finalize_backrest` role initializes the backup repository and the backup
   schedule: the backup database user, the stanza, the first backup and the cron
   entries. It is applied at the end of a deployment, where a running cluster
@@ -376,8 +376,12 @@ same play to the top:
 - The Patroni template now spells replica creation as `create_replica_methods`
   rather than the legacy `create_replica_method`. Patroni reads both, although
   its configuration validator knows only the new spelling. Debian replicas are
-  still built with `pg_clonecluster`, as before. Debian needs it: it creates
-  the `/etc/postgresql` configuration directory that `basebackup` leaves out.
+  still built with `pg_clonecluster` by default, as before. Debian needs it: it
+  creates the `/etc/postgresql` configuration directory that `basebackup`
+  leaves out. With `patroni_replica_from_backup` enabled, a Debian replica
+  tries the pgBackRest restore first, through a script `setup_patroni`
+  installs at `/usr/local/bin/patroni_pgbackrest_replica`, which creates that
+  directory after the restore; `pg_clonecluster` is the fallback.
 
 ### Security
 

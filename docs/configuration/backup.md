@@ -327,6 +327,16 @@ In the following example, the inventory rebuilds replicas from the repository:
 patroni_replica_from_backup: true
 ```
 
+!!! note "Debian"
+    Debian keeps `postgresql.conf` in `/etc/postgresql/<version>/<cluster>`
+    rather than in the data directory, and Patroni cannot start a replica
+    without it. A restore writes only the data directory, so on Debian the
+    restore runs through `/usr/local/bin/patroni_pgbackrest_replica`, a script
+    `setup_patroni` installs that restores and then creates the configuration
+    directory with `pg_createcluster` if it is empty. When the restore fails,
+    Debian falls back to `pg_clonecluster`, which creates the directory and then
+    runs `pg_basebackup`, rather than to a bare `pg_basebackup`.
+
 ## Recovery Parameters
 
 The following parameters apply only to the

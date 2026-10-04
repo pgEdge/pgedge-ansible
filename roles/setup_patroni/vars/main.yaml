@@ -1,1 +1,5 @@
 ---
+
+# The replica method setup_patroni installs on Debian when Patroni rebuilds
+# replicas from the backup repository. See templates/pgbackrest_replica.sh.j2.
+patroni_pgbackrest_replica_script: /usr/local/bin/patroni_pgbackrest_replica

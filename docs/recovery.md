@@ -247,9 +247,11 @@ first instead, which moves only the blocks that changed and reads from the
 repository rather than from the leader. It is worth it for a large database, at
 the cost of making replica creation depend on the repository being healthy;
 `pg_basebackup` remains the fallback either way, because Patroni walks its list
-of methods in order. PgBackRest refuses to restore a backup of a cluster its
-stanza no longer describes, so a replica in a zone a recovery rebuilt falls
-back to `pg_basebackup` until that zone is committed.
+of methods in order. On Debian the fallback is `pg_clonecluster`, which runs
+`pg_basebackup` after creating the cluster's configuration directory.
+PgBackRest refuses to restore a backup of a cluster its stanza no longer
+describes, so a replica in a zone a recovery rebuilt falls back to
+`pg_basebackup` until that zone is committed.
 
 ## Why the Standard Playbook Is Safe to Re-run
 

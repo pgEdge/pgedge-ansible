@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# Patroni replica method for Debian: a PgBackRest delta restore of this node's
+# data directory, followed by the Debian configuration directory the restore
+# does not create.
+#
+# Debian keeps postgresql.conf in {{ pg_config_dir }} rather than in the data
+# directory. Patroni renames that file to postgresql.base.conf the first time it
+# starts a replica, and fails to start Postgres at all when it is missing. A
+# restore writes only the data directory, so a replica whose configuration
+# directory is empty, as it is on a new node or after wipe_cluster, needs one
+# made for it. Debian's pg_clonecluster_patroni does the same thing before
+# its pg_basebackup.
+#
+# The configuration is made after the restore, so a restore that fails leaves
+# the directory as it found it and the next method in Patroni's list starts from
+# where this one did. pg_createcluster cannot adopt the restored data directory:
+# it expects postgresql.conf inside it, which a Debian cluster's backup does not
+# hold. So it creates the cluster around a scratch data directory, which is then
+# swapped for the real one in the new postgresql.conf and thrown away. A failure
+# partway through has pg_createcluster drop the cluster it was making, which
+# removes the scratch directory rather than the restored one.
+#
+# Patroni passes no arguments (no_params), so every path is fixed here when
+# setup_patroni writes the script. That also keeps the cluster's name out of
+# the Patroni scope, which pg_clonecluster_patroni splits at hyphens.
+
+set -eu
+
+pgbackrest --stanza={{ backup_stanza }} --delta restore
+
+if [ -e '{{ pg_config_dir }}/postgresql.conf' ]; then
+    exit 0
+fi
+
+# pg_createcluster refuses a configuration directory that still holds
+# pg_hba.conf. Patroni writes that file from its own configuration, so one left
+# behind without its postgresql.conf has nothing in it worth keeping.
+rm -f '{{ pg_config_dir }}/pg_hba.conf'
+
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+
+pg_createcluster -p {{ pg_port }} -d "$scratch/data" {{ pg_version }} {{ cluster_name }} >/dev/null
+pg_conftool {{ pg_version }} {{ cluster_name }} set data_directory '{{ pg_data }}'
