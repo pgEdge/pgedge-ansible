@@ -26,10 +26,20 @@ TARGET := $(DIR)/pgedge-platform-$(VERSION).tar.gz
 build: $(TARGET)
 
 # Every file the collection ships, not only its task files: a template, a
-# script, or a meta file edited on its own changes the collection just as much.
-# A dirty tree keeps the same version string across edits, so the tarball's name
-# alone never forces a rebuild.
-$(TARGET): $(shell find $(DIR)/roles $(DIR)/meta -type f) $(DIR)/galaxy.template.yml
+# script, a doc page, or a meta file edited on its own changes the collection
+# just as much. A dirty tree keeps the same version string across edits, so the
+# tarball's name alone never forces a rebuild.
+#
+# The directories are listed too, not only the files in them. A deleted file
+# is no longer there for make to compare, but removing it touches its parent
+# directory, so the tarball still rebuilds without it. The top-level directory
+# is left out on purpose: writing galaxy.yml and the tarball there touches it on
+# every build, and nothing would ever be up to date.
+SOURCES := $(shell find $(DIR)/roles $(DIR)/meta $(DIR)/docs $(DIR)/sample-playbooks) \
+	$(DIR)/galaxy.template.yml $(DIR)/README.md $(DIR)/SECURITY.md \
+	$(DIR)/mkdocs.yml $(DIR)/Makefile
+
+$(TARGET): $(SOURCES)
 	sed -E 's/version:.*/version: "$(VERSION)"/g' $(DIR)/galaxy.template.yml > $(DIR)/galaxy.yml
 	ansible-galaxy collection build --force $(DIR)
 

@@ -498,3 +498,8 @@ same play to the top:
   for the primary compared that with the bare inventory name, so it never saw
   the primary come up and failed after its retries. The port is now stripped
   before the comparison.
+- `make build` rebuilds the tarball when a file is deleted from the
+  collection, and when a doc page or sample playbook changes. It compared only
+  the role and meta files that still existed, so a deletion left a stale
+  tarball in place — under the same name, since a dirty tree keeps its version
+  string — and `make install` reinstalled the removed file.
