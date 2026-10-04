@@ -147,6 +147,9 @@ Every one of these checks runs before a supplied authority is written to
 `tls/etcd/`, so one that is refused is not left staged for the next run to
 find. And because an unanswered member is not an agreeing one, the collection
 also stops when any pgEdge host cannot be reached to ask, naming the host.
+That includes hosts outside a `--limit`: every host in the `pgedge` group is
+asked. Bring the host back, or remove it from the inventory if it has left the
+cluster for good.
 
 Supplying the authority from an Ansible Vault file lets any controller with
 the vault password manage the cluster. Automated or disposable environments

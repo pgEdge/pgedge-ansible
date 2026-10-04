@@ -180,6 +180,14 @@ describes how to capture the authority from the original controller.
 A cluster that is only ever managed from the controller that deployed it needs
 no change.
 
+Any cluster whose Patroni uses etcd can still meet one new stop. The check asks
+every host in the `pgedge` group, not only the hosts the play runs on, so
+`setup_patroni`, and `setup_etcd` whenever it builds a node, now stop when any
+pgEdge host in the inventory is unreachable, naming that host, even under
+`--limit`. Previously an unreachable host dropped out of the play and the rest
+carried on. Bring the host back, or remove it from the inventory if it has left
+the cluster for good.
+
 ### Gather facts for every host first
 
 Roles read other hosts' addresses from the facts gathered for those hosts, so
