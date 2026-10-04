@@ -419,6 +419,13 @@ same play to the top:
   recovered — [Backup Configuration](../configuration/backup.md#upgrading-a-cluster-deployed-before-this-was-required)
   gives the command. Treat a recovered value as compromised and plan to
   re-encrypt.
+- A collection tarball built with `make build` no longer includes private keys
+  left in the tree by local runs. `ansible-galaxy` ignores `.gitignore`, so the
+  etcd CA and node keys the sample playbooks write under `tls/`, the SSH host
+  keys under `host-keys/`, and the test harness's SSH key were all packaged.
+  `galaxy.yml` now excludes them, along with all of `tests/` and other local
+  files. Anyone who built and shared a tarball from a tree where these existed
+  should treat the keys in it as exposed.
 
 ### Fixed
 
