@@ -48,6 +48,19 @@ on:
         type: boolean
         required: false
         default: false
+      recover_to:
+        description: >-
+          With recover, where to restore to. latest replays the whole archive;
+          lsn stops at a recorded WAL position and checks rows written after it
+          stayed out; both runs latest and then lsn against the same cluster,
+          doubling the recovery's share of the run.
+        type: choice
+        required: false
+        default: both
+        options:
+          - both
+          - latest
+          - lsn
 
 jobs:
   test:
@@ -193,13 +206,26 @@ jobs:
       # from: setup_postgres stages its certificates from a path resolved
       # against the playbook's own location, and the recovery reuses them when
       # recover_postgres applies setup_postgres to every node.
+      #
+      # both is latest first and then lsn. Each pass commits, so the second
+      # starts from a working cluster and seeds it again; in that order the
+      # targeted pass also restores across the timeline the first one created,
+      # which is the case recover_postgres's timeline handling is for.
       - name: Recover the cluster from its backup repository
         if: ${{ inputs.recover }}
         env:
           DEPLOY_PLAYBOOK_DIR: tests/playbooks
+          RECOVER_TO: ${{ inputs.recover_to || 'both' }}
         run: |
-          tests/run-recovery-test.sh \
-            ultra-ha ${{ matrix.os }} ${{ matrix.dcs }} ${{ matrix.backup }}
+          case "$RECOVER_TO" in
+            both) passes="latest lsn" ;;
+            *) passes="$RECOVER_TO" ;;
+          esac
+          for pass in $passes; do
+            tests/run-recovery-test.sh \
+              ultra-ha ${{ matrix.os }} ${{ matrix.dcs }} ${{ matrix.backup }} \
+              "$pass"
+          done
 
       - name: Show container logs on failure
         if: failure()

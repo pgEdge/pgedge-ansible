@@ -18,14 +18,77 @@
   vars:
     # Passed through from the recovery's own arguments by run-recovery-test.sh.
     recovery_target_type: ""
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+    patroni_cfg: >-
+      {{ '/etc/patroni/17-demo.yml' if ansible_os_family == 'Debian'
+         else '/etc/patroni/patroni.yml' }}
+    # The fallback is only there because delegate_to is templated even on the
+    # nodes that skip the task.
+    zone_primary: >-
+      {{ zone_leaders | default([]) | first | default(first_node_in_zone) }}
 
   tasks:
-  - name: Determine whether this node is its zone's primary
+  # Each zone is checked once, against the node Patroni says leads it. Asking
+  # every node whether it is in recovery and skipping the ones that are would
+  # pass a zone with no primary at all without checking it.
+
+  - name: Ask Patroni which node leads this zone
     become_user: postgres
-    command: >
-      psql -d postgres -t -A -c "SELECT NOT pg_is_in_recovery()"
-    register: node_is_primary
+    command: patronictl -c {{ patroni_cfg }} list -f json
+    register: zone_members
     changed_when: false
+    failed_when: false
+    retries: 30
+    delay: 5
+    until: >-
+      zone_members.rc == 0 and
+      (zone_members.stdout | default('[]', true) | from_json
+       | selectattr('Role', 'eq', 'Leader')
+       | selectattr('State', 'eq', 'running') | list | length) == 1
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Note this zone's leaders
+    set_fact:
+      zone_leaders: >-
+        {{ (zone_members.stdout | default('[]', true) | from_json
+            if zone_members.rc | default(1) == 0 else [])
+           | selectattr('Role', 'eq', 'Leader')
+           | selectattr('State', 'eq', 'running')
+           | map(attribute='Host') | map('regex_replace', ':[0-9]+$', '')
+           | list }}
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert this zone has exactly one leader
+    assert:
+      that:
+      - zone_leaders | length == 1
+      - zone_leaders | first in nodes_in_zone
+      fail_msg: >-
+        Zone {{ zone }} has {{ zone_leaders | length }} running Patroni leaders
+        ({{ zone_leaders | join(', ') or 'none' }}) among
+        {{ nodes_in_zone | join(', ') }}, so there is no one primary whose
+        backups to check.
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert every zone named its leader
+    vars:
+      zones: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | map(attribute='zone') | unique | list }}
+      named: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('zone_leaders', 'defined')
+           | map(attribute='zone') | unique | list }}
+    assert:
+      that: zones | difference(named) | length == 0
+      fail_msg: >-
+        Zones {{ zones | difference(named) | join(', ') }} reported no leader,
+        so nothing below would check them.
+    run_once: true
 
   # Named, because the repository may hold more than this zone's stanza: every
   # zone shares an S3 bucket, and an unnamed info lists all of them, in an order
@@ -36,7 +99,8 @@
     command: pgbackrest --output=json --stanza=pgedge-demo-{{ zone }} info
     register: repo_info
     changed_when: false
-    when: node_is_primary.stdout | trim == 't'
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
 
   - name: Read the timeline this zone is running on
     become_user: postgres
@@ -45,7 +109,8 @@
       "SELECT timeline_id FROM pg_control_checkpoint()"
     register: timeline
     changed_when: false
-    when: node_is_primary.stdout | trim == 't'
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
 
   - name: Assert the zone has a backup of the cluster it holds now
     vars:
@@ -74,4 +139,4 @@
       success_msg: >-
         Zone {{ zone }}'s newest backup, {{ newest.label }}, is of the cluster
         running there now.
-    when: node_is_primary.stdout | trim == 't'
+    when: inventory_hostname == first_node_in_zone

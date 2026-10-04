@@ -1,5 +1,6 @@
 ---
-# Put data into the cluster that only a restore can bring back.
+# Put data into the cluster that only a restore can bring back, and record what
+# the cluster was before the wipe.
 #
 # The deployment's full backup is taken before this runs, so these rows exist
 # solely in WAL that PgBackRest archived afterwards. A recovery that replays the
@@ -7,9 +8,24 @@
 # not, and the two are otherwise indistinguishable -- an empty cluster passes
 # every structural check in the verify suite.
 #
-# Written on one zone and left to replicate. That is deliberate: it also proves
-# the mesh was working before the recovery, so a missing row afterwards is the
-# recovery's doing and not a cluster that never replicated in the first place.
+# Written on the zone the recovery will restore and left to replicate. That is
+# deliberate: it also proves the mesh was working before the recovery, so a
+# missing row afterwards is the recovery's doing and not a cluster that never
+# replicated in the first place. It has to be the restored zone for a targeted
+# pass, too, because an LSN means something only in the cluster that wrote it.
+#
+# Rows alone cannot tell a restore from a rebuild that was refilled across
+# Spock, so each zone's system identifier and timeline are written to
+# recovery_state_file on the controller. The repository database is about to be
+# wiped; a file outside the cluster is the only place that survives to be
+# compared against. verify-recovery.yml asserts the restored zone kept its
+# identifier and moved to a later timeline, which only a PITR does, and that
+# every other zone has a new one, which only a fresh initdb gives.
+#
+# With recovery_pass=lsn this also writes a second batch after noting the WAL
+# position between the two, and records that position as the target a
+# recovery should stop at: the first batch has to come back and the second must
+# not.
 
 - hosts: pgedge
   become: true
@@ -18,12 +34,32 @@
   vars:
     pg_port: 5432
     marker_rows: 25
+    # From run-recovery-test.sh: the node the recovery will restore, where the
+    # file recording the cluster goes, and whether to seed a target for a
+    # targeted recovery.
+    recovery_node: ""
+    recovery_state_file: ""
+    recovery_pass: latest
     nodes_in_zone: >-
       {{ groups['pgedge'] | map('extract', hostvars) |
       selectattr('zone', 'eq', zone) |
       map(attribute='inventory_hostname') | list }}
     first_node_in_zone: "{{ nodes_in_zone | first }}"
-    seed_zone: "{{ groups['pgedge'] | map('extract', hostvars) | map(attribute='zone') | min }}"
+    seed_zone: >-
+      {{ hostvars[recovery_node].zone if recovery_node > ''
+         else groups['pgedge'] | map('extract', hostvars) |
+              map(attribute='zone') | min }}
+    patroni_cfg: >-
+      {{ '/etc/patroni/17-demo.yml' if ansible_os_family == 'Debian'
+         else '/etc/patroni/patroni.yml' }}
+    # Every write and reading below goes to the node Patroni says leads the
+    # zone, not to whichever node the inventory lists first: after a failover
+    # the first node is a replica, which refuses the writes and reports a
+    # timeline it has only replayed. The fallback is only there because
+    # delegate_to is templated even on the nodes that skip the task.
+    zone_primary: >-
+      {{ hostvars[first_node_in_zone].zone_leader | default('', true)
+         or first_node_in_zone }}
 
   tasks:
   # A recovery that failed partway leaves exactly the state this refuses to run
@@ -33,21 +69,48 @@
   # failure surfaces much later, as a wait that never finishes, looking like a
   # problem with archiving rather than with the cluster.
 
-  - name: Check whether this zone's leader is accepting connections
+  - name: Ask Patroni which node leads this zone
     become_user: postgres
-    command: psql -d postgres -t -A -c "SELECT 1"
-    register: zone_alive
+    command: patronictl -c {{ patroni_cfg }} list -f json
+    register: zone_members
     changed_when: false
     failed_when: false
     when: inventory_hostname == first_node_in_zone
 
+  - name: Note this zone's leader
+    set_fact:
+      zone_leader: >-
+        {{ (zone_members.stdout | default('[]', true) | from_json
+            if zone_members.rc | default(1) == 0 else [])
+           | selectattr('Role', 'eq', 'Leader')
+           | selectattr('State', 'eq', 'running')
+           | map(attribute='Host') | map('regex_replace', ':[0-9]+$', '')
+           | select('in', nodes_in_zone) | list | first | default('') }}
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Check whether this zone's leader is accepting connections
+    become_user: postgres
+    command: psql -d postgres -t -A -c "SELECT NOT pg_is_in_recovery()"
+    register: zone_alive
+    changed_when: false
+    failed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when:
+    - inventory_hostname == first_node_in_zone
+    - zone_leader > ''
+
   - name: Ensure the cluster is whole before seeding anything
     assert:
-      that: zone_alive.rc == 0
+      that:
+      - zone_leader > ''
+      - zone_alive.rc | default(1) == 0
+      - zone_alive.stdout | default('') | trim == 't'
       fail_msg: >-
-        Zone {{ zone }}'s leader {{ inventory_hostname }} is not accepting
-        connections, so there is no cluster here to seed. psql exited
-        {{ zone_alive.rc }}: {{ zone_alive.stderr | default('') | trim }}.
+        Zone {{ zone }} has no leader accepting writes, so there is no cluster
+        here to seed. Patroni named leader
+        '{{ zone_leader | default('', true) or 'none' }}'; psql there exited
+        {{ zone_alive.rc | default('-') }}:
+        {{ zone_alive.stderr | default('') | trim }}.
         A recovery that failed partway leaves this: the zones it had not reached
         yet are erased and their Patroni is disabled. That is not a state to
         repair before retrying -- it is what the next attempt expects, and the
@@ -55,6 +118,32 @@
         seeded. Run the recovery again rather than seeding; seeding is a
         one-time step. tests/run-recovery-test.sh skips it by itself when there
         is no cluster to seed.
+    when: inventory_hostname == first_node_in_zone
+
+  # What each zone is before the wipe. The timeline is read from the WAL file
+  # the leader is writing rather than from the last checkpoint, which lags a
+  # promotion until the next checkpoint completes.
+
+  - name: Read this zone's system identifier and timeline
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -F'|' -c
+      "SELECT system_identifier,
+              pg_walfile_name(pg_current_wal_lsn())
+         FROM pg_control_system()"
+    register: zone_identity
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Note what this zone is
+    vars:
+      fields: "{{ zone_identity.stdout | trim | split('|') }}"
+    set_fact:
+      zone_record:
+        system_identifier: "{{ fields[0] }}"
+        timeline: "{{ fields[1][:8] | int(base=16) }}"
+        leader: "{{ zone_leader }}"
     when: inventory_hostname == first_node_in_zone
 
   - name: Create the marker table on the seed zone and fill it
@@ -69,27 +158,105 @@
          SELECT g, 'written after the deployment backup'
            FROM generate_series(1, {{ marker_rows }}) g
          ON CONFLICT (id) DO NOTHING;"
+    delegate_to: "{{ zone_primary }}"
     when:
     - inventory_hostname == first_node_in_zone
     - zone == seed_zone
 
   # Spock carries the table and its rows to the other zones. Waiting here means
   # a later absence is the recovery's doing rather than a race with replication.
+  # Only the first batch is counted: a second batch from a targeted pass is
+  # never waited for, and one an earlier attempt left must not satisfy this.
 
   - name: Wait for the marker to reach every zone
     become_user: postgres
     command: >
-      psql -d demo -t -A -c "SELECT count(*) FROM recovery_marker"
+      psql -d demo -t -A -c
+      "SELECT count(*) FROM recovery_marker WHERE id <= {{ marker_rows }}"
     register: marker_count
     changed_when: false
     retries: 30
     delay: 2
     until: marker_count.stdout | trim | int == marker_rows | int
+    delegate_to: "{{ zone_primary }}"
     when: inventory_hostname == first_node_in_zone
+
+  # The target for a targeted pass: the leader's write position once the first
+  # batch is committed and has reached every zone, so every commit record of
+  # that batch lies before it and every one of the second batch after it. Its
+  # timeline goes with it, so a recovery can name the timeline the position is
+  # on rather than follow whichever timeline an earlier attempt left newest.
+
+  - name: Note the position a targeted recovery should stop at
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -F'|' -c
+      "SELECT pg_current_wal_lsn(), pg_walfile_name(pg_current_wal_lsn())"
+    register: target_point
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when:
+    - recovery_pass == 'lsn'
+    - inventory_hostname == first_node_in_zone
+    - zone == seed_zone
+
+  - name: Write the batch a targeted recovery must not bring back
+    become_user: postgres
+    command: >
+      psql -d demo -v ON_ERROR_STOP=1 -c
+      "INSERT INTO recovery_marker (id, note)
+         SELECT g, 'written after the recovery target'
+           FROM generate_series({{ marker_rows | int + 1 }},
+                                {{ marker_rows | int * 2 }}) g
+         ON CONFLICT (id) DO NOTHING;"
+    delegate_to: "{{ zone_primary }}"
+    when:
+    - recovery_pass == 'lsn'
+    - inventory_hostname == first_node_in_zone
+    - zone == seed_zone
+
+  # Recorded before the WAL switch below, which is not a write of the cluster's
+  # but does move the leader into a new segment. One file for the whole
+  # cluster, written once every zone has reported.
+
+  - name: Record what the cluster was before the wipe
+    vars:
+      leaders: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('zone_record', 'defined') | list }}
+      seed_first: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('zone', 'eq', seed_zone)
+           | map(attribute='inventory_hostname') | first }}
+      target_fields: >-
+        {{ hostvars[seed_first].target_point.stdout | default('') | trim
+           | split('|') }}
+    copy:
+      dest: "{{ recovery_state_file }}"
+      mode: "0644"
+      content: >-
+        {{ {'recovery_node': recovery_node,
+            'zones': dict(leaders | map(attribute='zone') | map('string')
+                          | zip(leaders | map(attribute='zone_record')))}
+           | combine({'target': {
+               'type': 'lsn',
+               'lsn': target_fields[0],
+               'timeline': target_fields[1][:8] | int(base=16),
+               'zone': seed_zone | string,
+               'absent_from': marker_rows | int + 1,
+               'absent_to': marker_rows | int * 2}}
+             if recovery_pass == 'lsn' else {})
+           | to_nice_json }}
+    delegate_to: localhost
+    become: false
+    run_once: true
+    when: recovery_state_file > ''
 
   # The rows are in WAL that has not necessarily been archived yet. Force the
   # segment out and wait for PgBackRest to take it, because a restore can only
-  # replay what reached the repository.
+  # replay what reached the repository. On a targeted pass this is the segment
+  # holding the second batch: a recovery that could not have read it proves
+  # nothing by leaving those rows out.
   #
   # Which segment is recorded before the switch, because that is the one holding
   # the rows. Waiting on last_archived_wal merely being non-null would be
@@ -103,6 +270,7 @@
       "SELECT pg_walfile_name(pg_current_wal_lsn())"
     register: marker_wal
     changed_when: false
+    delegate_to: "{{ zone_primary }}"
     when:
     - inventory_hostname == first_node_in_zone
     - zone == seed_zone
@@ -112,6 +280,7 @@
     command: >
       psql -d postgres -t -A -c "SELECT pg_switch_wal()"
     changed_when: false
+    delegate_to: "{{ zone_primary }}"
     when:
     - inventory_hostname == first_node_in_zone
     - zone == seed_zone
@@ -131,6 +300,7 @@
       retries: 60
       delay: 5
       until: archived.stdout | trim == 't|t'
+      delegate_to: "{{ zone_primary }}"
 
     - name: Report what a recovery now has to bring back
       debug:
@@ -139,6 +309,12 @@
           WAL that carries them. These rows are not in any backup: only WAL replay
           can return them, so a recovery that produces an empty cluster fails
           verify-recovery.yml rather than passing it.
+          {% if recovery_pass == 'lsn' %}
+          Then wrote rows {{ marker_rows | int + 1 }} to
+          {{ marker_rows | int * 2 }} after position
+          {{ target_point.stdout | trim | split('|') | first }}, which a
+          recovery to that position must leave out.
+          {% endif %}
 
     rescue:
     # Archiving that never completes is the failure this whole exercise is
@@ -160,17 +336,19 @@
       register: archiver_state
       changed_when: false
       failed_when: false
+      delegate_to: "{{ zone_primary }}"
 
     - name: Read the tail of PgBackRest's archive log
       command: tail -n 15 /var/log/pgbackrest/{{ backup_stanza }}-archive-push.log
       register: archive_log
       changed_when: false
       failed_when: false
+      delegate_to: "{{ zone_primary }}"
 
     - name: Report why the segment never reached the repository
       fail:
         msg: >-
-          WAL archiving on {{ inventory_hostname }} did not complete.
+          WAL archiving on {{ zone_primary }} did not complete.
           pg_stat_archiver reports
           archive_mode|archive_command|archived|failed|last_failed_wal|last_failed_time
           = {{ archiver_state.stdout | default('unavailable') | trim }}.

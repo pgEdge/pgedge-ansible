@@ -322,10 +322,18 @@ same play to the top:
   deployed: wipe, recover, verify, commit, verify. The seed writes rows *after*
   the deployment's backup, so they exist only in archived WAL: a recovery has
   to replay the archive to return them to the restored zone and carry them
-  across Spock to the zones rebuilt empty. The verification also asserts the
-  replication mesh was rebuilt to exactly the expected size, that every replica
-  came back, that writes made afterwards reach every zone, that each zone can
-  archive again, and that the recovery took no backup. After the commit it
+  across Spock to the zones rebuilt empty. The seed also records each zone's
+  system identifier and timeline on the controller, and the verification
+  asserts the restored zone kept its identifier and moved to a later timeline
+  while every rebuilt zone has a new one. A second pass, `lsn`, seeds a further
+  batch after a recorded WAL position, recovers to that position and asserts
+  the batch stayed out; the Ultra-HA workflow's `recover_to` input picks
+  `latest`, `lsn` or `both`. Every zone-wide check runs against the leader
+  Patroni names, and fails a zone with no leader rather than skipping it. The
+  verification also asserts the replication mesh was rebuilt to exactly the
+  expected size, that every replica came back, that writes made afterwards
+  reach every zone, that each zone can archive again, and that the recovery
+  took no backup. After the commit it
   asserts every zone has a backup of the cluster it runs.
 - New `backup_stanza` and `backup_repo_configured` variables in `role_config`,
   so that the roles which now share them cannot drift apart.
