@@ -59,7 +59,7 @@ This role uses the following parameters:
 | Parameter | Use Case |
 |-----------|----------|
 | `wipe_confirm` | Must be `true` for the role to do anything (default: `false`). |
-| `wipe_without_backup` | Wipe the cluster even when no zone's repository holds a backup of it (default: `false`). |
+| `wipe_without_backup` | Wipe the cluster even when no zone's repository holds a backup of it (default: `false`). Also needed to retry a recovery that failed before its restore finished; see [Trying Again](../recovery.md#trying-again). |
 | `patroni_dcs` | Decides whether the store is the collection's etcd or an external one. |
 
 ## How It Works

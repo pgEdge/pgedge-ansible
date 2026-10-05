@@ -189,6 +189,17 @@ different `recovery_node`. A recovery that failed partway is retried the same
 way. The wipe accepts the uncommitted cluster, because the restored zone still
 holds the backups it came from.
 
+The one exception is a recovery that failed before the restore finished
+writing the data directory: for example, when `setup_postgres` fails after
+initializing the cluster, or when the restore itself dies. Each zone's first
+node then holds a newly initialized cluster that no stanza describes, so every
+zone reports `not backed up` and the wipe refuses, telling you to take a backup
+first. Do not take one: the repositories still hold every backup they had, and
+a backup of that empty cluster would fail anyway. Run the wipe again with
+`-e wipe_without_backup=true` instead. The zone states in the wipe's message
+show which case you are in: a zone that finished its restore reports
+`backed up`, and the wipe goes ahead without the override.
+
 Two things are worth knowing:
 
 - A second point-in-time recovery to a **later** moment than the first has to
