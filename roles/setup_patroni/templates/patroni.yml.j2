@@ -92,17 +92,17 @@ postgresql:
     - pg_clonecluster
 {% endif %}
     - basebackup
-  # A restore writes only the data directory. On Debian that leaves no
-  # postgresql.conf in /etc/postgresql/<version>/<cluster>, and Patroni fails to
-  # start a replica without it, so there the restore runs through a script that
-  # creates the configuration directory afterwards.
+  # The restore runs through a script that first asks the leader whether the
+  # newest backup can become its replica, and fails without restoring when it
+  # cannot -- after a point-in-time recovery, the newest backup can lie past
+  # where the leader's timeline branched -- so the next method takes over. It
+  # needs the leader's connection string, so Patroni passes its parameters. On
+  # Debian a restore also leaves no postgresql.conf in
+  # /etc/postgresql/<version>/<cluster>, and Patroni fails to start a replica
+  # without it, so there the script creates the configuration directory
+  # afterwards.
   pgbackrest:
-{% if ansible_os_family == 'Debian' %}
     command: {{ patroni_pgbackrest_replica_script }}
-{% else %}
-    command: pgbackrest --stanza={{ backup_stanza }} --delta restore
-{% endif %}
-    no_params: true
     keep_data: true
 {% elif ansible_os_family == 'Debian' %}
   create_replica_methods:

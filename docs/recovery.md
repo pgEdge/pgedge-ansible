@@ -262,9 +262,12 @@ the cost of making replica creation depend on the repository being healthy;
 `pg_basebackup` remains the fallback either way, because Patroni walks its list
 of methods in order. On Debian the fallback is `pg_clonecluster`, which runs
 `pg_basebackup` after creating the cluster's configuration directory.
-PgBackRest refuses to restore a backup of a cluster its stanza no longer
-describes, so a replica in a zone a recovery rebuilt falls back to
-`pg_basebackup` until that zone is committed.
+The restore is tried only when the newest backup can become a replica of the
+zone's leader, so until a recovery is committed, two kinds of replica fall back
+to `pg_basebackup`. One is a replica in a zone the recovery rebuilt, whose
+stanza holds only backups of the cluster it replaced. The other is a replica in
+the restored zone after a point-in-time recovery that stopped before the newest
+backup, which lies on the timeline the recovery abandoned.
 
 ## Why the Standard Playbook Is Safe to Re-run
 

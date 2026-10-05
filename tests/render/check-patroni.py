@@ -14,8 +14,10 @@ whose plays are all 'pgedge' renders this template against a proxy no play has
 touched, and fails partway through the deployment. The last case below is that
 playbook, and it is expected to fail.
 
-It also renders the script Debian replicas restore through, which has to
-create the configuration directory a restore leaves out.
+It also renders the script replicas restore through. It has to refuse a
+backup that cannot become a replica of the leader, which is run here against
+stand-ins for psql and pgbackrest, and on Debian it has to create the
+configuration directory a restore leaves out.
 
 What the template sees as replica_from_backup is not set here. It is derived
 from the inventory's patroni_replica_from_backup and backup_repo_configured by
@@ -31,8 +33,10 @@ Environment, so a '{%- if %}' that renders cleanly here would not there.
 import itertools
 import json
 import re
+import os
 import subprocess
 import sys
+import tempfile
 
 import yaml
 from jinja2 import (Environment, FileSystemLoader, StrictUndefined,
@@ -52,7 +56,7 @@ BACKUP = ["10.0.0.18", "10.0.0.19"]
 ZONE_OF = dict([(h, 1) for h in PGEDGE[:3]] + [(h, 2) for h in PGEDGE[3:]])
 ZONE_OF.update({HAPROXY[0]: 1, HAPROXY[1]: 2, BACKUP[0]: 1, BACKUP[1]: 2})
 
-# setup_patroni's role variable naming the Debian pgbackrest replica script.
+# setup_patroni's role variable naming the pgbackrest replica script.
 REPLICA_SCRIPT = "/usr/local/bin/patroni_pgbackrest_replica"
 
 # The Debian replica methods that create /etc/postgresql/<version>/<cluster>,
@@ -179,6 +183,12 @@ def failed_checks(doc, os_family, backups, replica):
         "pgbackrest replica method":
             ("pgbackrest" in (doc["postgresql"].get(
                 "create_replica_methods") or [])) == (replica and backups),
+        # The script needs the leader's connection string to judge the backup,
+        # and Patroni passes it only without no_params.
+        "pgbackrest method runs the replica script":
+            not (replica and backups)
+            or (doc["postgresql"]["pgbackrest"].get("command") == REPLICA_SCRIPT
+                and not doc["postgresql"]["pgbackrest"].get("no_params")),
         # A Debian restore or clone leaves no postgresql.conf behind unless the
         # method creates one, and the replica then never starts.
         "debian replica config directory":
@@ -245,28 +255,148 @@ def check_missing_facts(e, template):
 
 
 def check_replica_script(e, template):
-    """The Debian pgbackrest replica script has to be valid shell, restore
-    before it touches the configuration directory, and create the cluster's
-    configuration only where the restore left none.
+    """The pgbackrest replica script has to be valid shell and judge the backup
+    before it restores; on Debian it then creates the cluster's configuration
+    only where the restore left none.
     """
-    text = template.render(**context(e, "Debian", True, True,
-                                        set(PGEDGE + HAPROXY + BACKUP)))
-    result = subprocess.run(["sh", "-n"], input=text, text=True,
-                            capture_output=True)
-    if result.returncode != 0:
-        print("FAIL     Debian replica script is not valid shell")
-        return [f"pgbackrest_replica.sh.j2: sh -n: {result.stderr.strip()}"]
+    failures = []
+    for os_family in ("RedHat", "Debian"):
+        text = template.render(**context(e, os_family, True, True,
+                                            set(PGEDGE + HAPROXY + BACKUP)))
+        result = subprocess.run(["sh", "-n"], input=text, text=True,
+                                capture_output=True)
+        if result.returncode != 0:
+            print(f"FAIL     {os_family} replica script is not valid shell")
+            failures.append(f"pgbackrest_replica.sh.j2 ({os_family}): sh -n: "
+                            f"{result.stderr.strip()}")
+            continue
 
-    restore = text.find("pgbackrest --stanza=pgedge-demo-1 --delta restore")
-    guard = text.find("if [ -e '/var/lib/pgsql/17/data/postgresql.conf' ]")
-    create = text.find("pg_createcluster -p 5432")
-    if not 0 <= restore < guard < create:
-        print("FAIL     Debian replica script steps out of order")
-        return ["pgbackrest_replica.sh.j2 must restore, then check for "
-                "postgresql.conf, then run pg_createcluster"]
+        judge = text.find("python3 - '/usr/pgsql-17/bin/psql'")
+        restore = text.find("pgbackrest --stanza=pgedge-demo-1 --delta restore")
+        guard = text.find("if [ -e '/var/lib/pgsql/17/data/postgresql.conf' ]")
+        create = text.find("pg_createcluster -p 5432")
+        if os_family == "Debian":
+            ordered = 0 <= judge < restore < guard < create
+            want = "judge the backup, restore, check for postgresql.conf, " \
+                   "then run pg_createcluster"
+        else:
+            ordered = 0 <= judge < restore and guard < 0 and create < 0
+            want = "judge the backup, then restore, and nothing more"
+        if not ordered:
+            print(f"FAIL     {os_family} replica script steps out of order")
+            failures.append(f"pgbackrest_replica.sh.j2 ({os_family}) must "
+                            f"{want}")
+            continue
+        print(f"ok       {os_family} replica script")
+    return failures
 
-    print("ok       Debian replica script")
-    return []
+
+# Stand-ins the replica script runs instead of the real psql and pgbackrest.
+# psql answers the two replication commands from the environment; pgbackrest
+# prints the repository's info and records that a restore ran.
+STUB_PSQL = """#!/bin/sh
+for arg in "$@"; do last=$arg; done
+case "$last" in
+    IDENTIFY_SYSTEM) echo "$STUB_SYSID|$STUB_TLI|0/9000000|" ;;
+    TIMELINE_HISTORY*) printf '%08X.history|%b' "$STUB_TLI" "$STUB_HISTORY" ;;
+    *) exit 1 ;;
+esac
+"""
+STUB_PGBACKREST = """#!/bin/sh
+case "$*" in
+    *info*) printf '%s\\n' "$STUB_INFO" ;;
+    *restore*) touch "$STUB_RESTORED" ;;
+esac
+"""
+
+SYSID = "7400000000000000001"
+
+
+def repo_info(*backups):
+    """pgbackrest info for one stanza: (system id, timeline, stop lsn)."""
+    dbs = {sysid: i + 1 for i, sysid in
+           enumerate(dict.fromkeys(b[0] for b in backups))}
+    return json.dumps([{
+        "name": "pgedge-demo-1",
+        "db": [{"id": i, "system-id": int(sysid)} for sysid, i in dbs.items()],
+        "backup": [{"label": f"backup{n}",
+                    "timestamp": {"stop": 1000 + n},
+                    "database": {"id": dbs[sysid]},
+                    "archive": {"start": f"{tli:08X}000000000000000A"},
+                    "lsn": {"stop": stop}}
+                   for n, (sysid, tli, stop) in enumerate(backups)],
+    }])
+
+
+# Each case: what it is, the repository, the leader's timeline and history, and
+# whether the script should restore.
+DECISIONS = [
+    ("backup on the leader's timeline",
+     repo_info((SYSID, 1, "0/5000000")), 1, "", True),
+    ("backup before the leader's branch point",
+     repo_info((SYSID, 1, "0/5000000")), 2,
+     "1\\t0/7000000\\tno recovery target specified\\n", True),
+    ("backup ending at the branch point",
+     repo_info((SYSID, 1, "0/7000000")), 2, "1\\t0/7000000\\treason\\n", True),
+    ("backup on an ancestor two timelines back",
+     repo_info((SYSID, 1, "0/5000000")), 3,
+     "1\\t0/7000000\\tr\\n2\\t0/8000000\\tr\\n", True),
+    ("backup past the leader's branch point (PITR)",
+     repo_info((SYSID, 1, "1/0")), 2, "1\\t0/FFFFFFFF\\tr\\n", False),
+    ("backup on a timeline the leader abandoned",
+     repo_info((SYSID, 1, "0/5000000"), (SYSID, 3, "0/9000000")), 4,
+     "1\\t0/7000000\\tr\\n2\\t0/8000000\\tr\\n", False),
+    ("only the newest backup counts",
+     repo_info((SYSID, 1, "0/5000000"), (SYSID, 1, "0/8000000")), 2,
+     "1\\t0/7000000\\tr\\n", False),
+    ("backup of another cluster",
+     repo_info(("7400000000000000002", 1, "0/5000000")), 1, "", False),
+    ("repository with no backup",
+     repo_info(), 1, "", False),
+    ("timeline 1 leader, newer backup timeline",
+     repo_info((SYSID, 2, "0/5000000")), 1, "", False),
+]
+
+
+def check_replica_decision(e, template):
+    """Run the replica script against each repository and leader the cases
+    describe, and check it restores exactly the backups that can follow it.
+    """
+    failures = []
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / "bin").mkdir()
+        for name, body in (("psql", STUB_PSQL), ("pgbackrest", STUB_PGBACKREST)):
+            stub = tmp / "bin" / name
+            stub.write_text(body)
+            stub.chmod(0o755)
+        ctx = context(e, "RedHat", True, True, set(PGEDGE + HAPROXY + BACKUP))
+        ctx["pg_path"] = str(tmp)
+        script = tmp / "replica.sh"
+        script.write_text(template.render(**ctx))
+
+        for label, info, tli, history, restores in DECISIONS:
+            marker = tmp / "restored"
+            marker.unlink(missing_ok=True)
+            run_env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}",
+                           STUB_SYSID=SYSID, STUB_TLI=str(tli),
+                           STUB_HISTORY=history, STUB_INFO=info,
+                           STUB_RESTORED=str(marker))
+            result = subprocess.run(
+                ["sh", str(script), "--keep_data=True", "--scope=17-demo",
+                 "--role=replica", "--datadir=/var/lib/pgsql/17/data",
+                 "--connstring=host=10.0.0.10 port=5432 user=replicator"],
+                env=run_env, capture_output=True, text=True)
+            restored = marker.exists()
+            ok = restored == restores and (result.returncode == 0) == restores
+            print(f"{'ok' if ok else 'FAIL':<9}replica decision: {label}")
+            if not ok:
+                failures.append(
+                    f"replica decision '{label}': expected "
+                    f"{'a restore' if restores else 'a refusal'}, got rc "
+                    f"{result.returncode}, restored={restored}: "
+                    f"{result.stderr.strip()}")
+    return failures
 
 
 def main():
@@ -277,6 +407,8 @@ def main():
     print()
     failures += check_missing_facts(e, template)
     failures += check_replica_script(
+        e, e.get_template("pgbackrest_replica.sh.j2"))
+    failures += check_replica_decision(
         e, e.get_template("pgbackrest_replica.sh.j2"))
 
     if failures:

@@ -251,7 +251,13 @@ same play to the top:
 - New `patroni_replica_from_backup` parameter makes Patroni rebuild a replica
   with a pgBackRest delta restore instead of a fresh `pg_basebackup` from its
   zone's leader, falling back to `pg_basebackup` (`pg_clonecluster` on Debian)
-  if the restore fails. Off by default.
+  if the restore fails. Off by default. The restore runs through
+  `/usr/local/bin/patroni_pgbackrest_replica`, which first asks the leader for
+  its system identifier and timeline history and fails, without restoring,
+  unless the newest backup is of the leader's cluster and ends on its history.
+  After a point-in-time recovery that stopped before the newest backup, the
+  replicas therefore fall back instead of restoring a backup they cannot
+  follow.
 - New `finalize_backrest` role initializes the backup repository and the backup
   schedule: the backup database user, the stanza, the first backup and the cron
   entries. It is applied at the end of a deployment, where a running cluster

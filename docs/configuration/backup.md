@@ -323,6 +323,17 @@ It also makes replica creation depend on the repository being healthy, so it is
 off by default; a cluster that leaves it unset builds replicas exactly as it
 did before.
 
+The restore runs through `/usr/local/bin/patroni_pgbackrest_replica`, a script
+`setup_patroni` installs. Before restoring, it asks the zone's leader for its
+system identifier and timeline history and checks that the newest backup is of
+the leader's cluster and ends on the leader's history. It fails when the backup
+does not, and Patroni moves on to `pg_basebackup`. That happens after a
+point-in-time recovery that stopped before the newest backup, whose
+replicas would otherwise restore a backup they could never follow; once the
+recovery is committed, the full backup it takes is restored again. It also
+happens in a zone a recovery rebuilt, whose stanza holds only backups of the
+cluster it replaced.
+
 In the following example, the inventory rebuilds replicas from the repository:
 
 ```yaml
@@ -332,12 +343,12 @@ patroni_replica_from_backup: true
 !!! note "Debian"
     Debian keeps `postgresql.conf` in `/etc/postgresql/<version>/<cluster>`
     rather than in the data directory, and Patroni cannot start a replica
-    without it. A restore writes only the data directory, so on Debian the
-    restore runs through `/usr/local/bin/patroni_pgbackrest_replica`, a script
-    `setup_patroni` installs that restores and then creates the configuration
-    directory with `pg_createcluster` if it is empty. When the restore fails,
-    Debian falls back to `pg_clonecluster`, which creates the directory and then
-    runs `pg_basebackup`, rather than to a bare `pg_basebackup`.
+    without it. A restore writes only the data directory, so on Debian
+    `/usr/local/bin/patroni_pgbackrest_replica` also creates the configuration
+    directory with `pg_createcluster` after the restore if it is empty. When
+    the restore fails or is refused, Debian falls back to `pg_clonecluster`,
+    which creates the directory and then runs `pg_basebackup`, rather than to a
+    bare `pg_basebackup`.
 
 ## Recovery Parameters
 

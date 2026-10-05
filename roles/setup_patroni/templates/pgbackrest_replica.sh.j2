@@ -1,8 +1,27 @@
 #!/bin/sh
 #
-# Patroni replica method for Debian: a PgBackRest delta restore of this node's
-# data directory, followed by the Debian configuration directory the restore
-# does not create.
+# Patroni replica method: a PgBackRest delta restore of this node's data
+# directory, run only when the backup it would restore can become a replica of
+# the leader{% if ansible_os_family == 'Debian' %}, followed by the Debian configuration directory the restore
+# does not create{% endif %}.
+#
+# Without a backup set named, PgBackRest restores the newest backup. After a
+# point-in-time recovery that stops short of it, the newest backup lies on the
+# timeline the recovery abandoned, past the point the leader's timeline branched
+# from it. The restore succeeds, but Postgres then refuses to follow the leader
+# ("requested timeline is not a child of this server's history"), and Patroni
+# moves on to the next method only when this one fails. So this asks the leader
+# for its system identifier and timeline history over a replication connection,
+# as pg_basebackup would, and refuses the backup -- exiting before the restore,
+# so the next method starts from an untouched data directory -- unless it is a
+# backup of the leader's cluster that ends on the leader's history. That is the
+# check finalize_backrest makes before deciding whether a full backup is due,
+# so once a recovery is committed, the backup it takes passes it.
+#
+# Patroni passes the leader's connection string as --connstring, along with
+# --scope, --role, --datadir and this method's own options, which are unused
+# here. The password comes from the pgpass file Patroni names in PGPASSFILE.
+{% if ansible_os_family == 'Debian' %}
 #
 # Debian keeps postgresql.conf in {{ pg_config_dir }} rather than in the data
 # directory. Patroni renames that file to postgresql.base.conf the first time it
@@ -21,13 +40,103 @@
 # partway through has pg_createcluster drop the cluster it was making, which
 # removes the scratch directory rather than the restored one.
 #
-# Patroni passes no arguments (no_params), so every path is fixed here when
-# setup_patroni writes the script. That also keeps the cluster's name out of
-# the Patroni scope, which pg_clonecluster_patroni splits at hyphens.
+# Every path is fixed here when setup_patroni writes the script, which also
+# keeps the cluster's name out of the Patroni scope, which
+# pg_clonecluster_patroni splits at hyphens.
+{% endif %}
 
 set -eu
 
+connstring=
+for arg in "$@"; do
+    case "$arg" in
+        --connstring=*) connstring=${arg#--connstring=} ;;
+    esac
+done
+
+python3 - '{{ pg_path }}/bin/psql' '{{ backup_stanza }}' "$connstring" <<'EOF'
+import json
+import subprocess
+import sys
+
+psql, stanza, connstring = sys.argv[1:4]
+
+
+def refuse(why):
+    sys.stderr.write("patroni_pgbackrest_replica: %s; leaving this replica to "
+                     "the next method\n" % why)
+    sys.exit(1)
+
+
+def run(command, what):
+    result = subprocess.run(command, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True)
+    if result.returncode != 0:
+        refuse("could not %s: %s" % (what, result.stderr.strip()))
+    return result.stdout
+
+
+def leader(command, what):
+    return run([psql, "-XAtq", "-v", "ON_ERROR_STOP=1",
+                "-d", connstring + " replication=true", "-c", command], what)
+
+
+def lsn(text):
+    high, low = text.split("/")
+    return (int(high, 16) << 32) + int(low, 16)
+
+
+if not connstring:
+    refuse("Patroni named no node to clone from")
+
+# systemid|timeline|xlogpos|dbname
+fields = leader("IDENTIFY_SYSTEM", "ask the leader for its timeline").strip()
+fields = fields.split("|")
+system_id, leader_tli = fields[0], int(fields[1])
+
+info = json.loads(run(["pgbackrest", "--stanza=" + stanza, "--output=json",
+                       "info"], "read the repository"))
+found = [s for s in info if s.get("name") == stanza]
+backups = (found[0].get("backup") or []) if found else []
+if not backups:
+    refuse("the repository holds no backup")
+
+newest = sorted(backups, key=lambda b: b["timestamp"]["stop"])[-1]
+db_ids = dict((d["id"], str(d["system-id"])) for d in found[0].get("db", []))
+if db_ids.get(newest["database"]["id"]) != system_id:
+    refuse("the newest backup, %s, is not of the leader's cluster"
+           % newest["label"])
+
+# A backup on the leader's own timeline lies on its history. Otherwise the
+# leader's history has to name the backup's timeline as a parent and leave it
+# no earlier than the backup ended. A history line reads
+# "parent<TAB>switchpoint<TAB>reason". The file comes back as the second
+# column; a walsender sends it raw, but hex is decoded in case one does not.
+backup_tli = int(newest["archive"]["start"][:8], 16)
+if backup_tli != leader_tli:
+    history = ""
+    if leader_tli > 1:
+        output = leader("TIMELINE_HISTORY %d" % leader_tli,
+                        "read the leader's timeline history")
+        history = output.split("|", 1)[1] if "|" in output else ""
+        if history.startswith("\\x"):
+            history = bytes.fromhex(history[2:].strip()).decode()
+    switch = [line.split()[1] for line in history.splitlines()
+              if line.strip() and not line.startswith("#")
+              and line.split()[0] == str(backup_tli)]
+    if not switch:
+        refuse("the newest backup, %s, is on timeline %d, which the leader's "
+               "timeline %d did not come from"
+               % (newest["label"], backup_tli, leader_tli))
+    if lsn(newest["lsn"]["stop"]) > lsn(switch[0]):
+        refuse("the newest backup, %s, ends at %s on timeline %d, after the "
+               "leader's history left that timeline at %s"
+               % (newest["label"], newest["lsn"]["stop"], backup_tli,
+                  switch[0]))
+EOF
+
 pgbackrest --stanza={{ backup_stanza }} --delta restore
+{% if ansible_os_family == 'Debian' %}
 
 if [ -e '{{ pg_config_dir }}/postgresql.conf' ]; then
     exit 0
@@ -43,3 +152,4 @@ trap 'rm -rf "$scratch"' EXIT
 
 pg_createcluster -p {{ pg_port }} -d "$scratch/data" {{ pg_version }} {{ cluster_name }} >/dev/null
 pg_conftool {{ pg_version }} {{ cluster_name }} set data_directory '{{ pg_data }}'
+{% endif %}
