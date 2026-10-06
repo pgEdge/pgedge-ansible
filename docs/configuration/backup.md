@@ -371,7 +371,7 @@ an inventory, where they would sit waiting for the next unrelated run.
 | `recovery_target_type` | (none) | PgBackRest `--type`: `time`, `xid`, `lsn`, `name` or `immediate`. Unset restores everything the repository holds. |
 | `recovery_target` | (none) | The value the target type stops at. Required for `time`, `xid`, `lsn` and `name`; must be unset for `immediate` or no type. |
 | `recovery_target_timeline` | (none) | PgBackRest `--target-timeline`. Unset follows the newest timeline. |
-| `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the newest backup that can reach the target. |
+| `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the newest backup, or leaves the choice to PgBackRest for a `time`, `xid`, `lsn` or `name` target. |
 | `recovery_stall_minutes` | `15` | Give up only after the restored node has made no progress for this long. |
 | `recovery_poll_seconds` | `30` | How often to look. |
 | `recovery_max_hours` | `24` | Hard ceiling on the restore and the replay. |

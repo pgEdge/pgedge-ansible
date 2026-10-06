@@ -94,11 +94,14 @@ written at promotion reach the repository. The role waits for the end of
 recovery for as long as Postgres keeps making progress, and gives up only when
 nothing has moved for `recovery_stall_minutes`.
 
-When neither `recovery_backup_set` nor a target picks a backup, the role names
-the newest backup explicitly. PgBackRest's own choice is the newest backup of
-the cluster the stanza describes now, and it refuses when the newest backup
-belongs to an earlier one, which is the case when a zone an earlier recovery
-rebuilt is restored before that recovery was committed.
+When `recovery_backup_set` is empty and `recovery_target_type` is empty or
+`immediate`, the role names the newest backup explicitly. PgBackRest's own
+choice is the newest backup of the cluster the stanza describes now, and it
+refuses when the newest backup belongs to an earlier one, which is the case
+when a zone an earlier recovery rebuilt is restored before that recovery was
+committed. With a `time`, `xid`, `lsn` or `name` target the role leaves the
+choice to PgBackRest, so to restore such a zone to one of those targets, name
+the backup with `recovery_backup_set`.
 
 After promotion the role removes the recovery settings PgBackRest wrote into
 `postgresql.auto.conf`, because replicas copy that file and would otherwise

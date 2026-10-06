@@ -173,7 +173,7 @@ more durable arrangement, because it works from any controller.
 | `recovery_target_type` | (none) | PgBackRest `--type`: `time`, `xid`, `lsn`, `name` or `immediate`. Unset restores everything the repository holds. |
 | `recovery_target` | (none) | The value the target type stops at. Required for `time`, `xid`, `lsn` and `name`; must be unset for `immediate` or no type. |
 | `recovery_target_timeline` | (none) | PgBackRest `--target-timeline`. Unset follows the newest timeline. See [Trying Again](#trying-again). |
-| `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the newest backup that can reach the target. |
+| `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the newest backup, or leaves the choice to PgBackRest for a `time`, `xid`, `lsn` or `name` target. |
 | `recovery_stall_minutes` | `15` | Give up only after the restored node has made no progress for this long. |
 | `recovery_poll_seconds` | `30` | How often to look. |
 | `recovery_max_hours` | `24` | Hard ceiling on the restore and the replay. Raise it for a restore expected to run longer. |
@@ -212,8 +212,11 @@ Two things are worth knowing:
   give the number to use.
 - Recovering from a zone an earlier, uncommitted recovery rebuilt works too.
   That zone's stanza was upgraded to describe the rebuilt cluster, but every
-  backup of the original is still in it, and `recover_postgres` names the
-  newest of them explicitly and upgrades the stanza back.
+  backup of the original is still in it. With no `recovery_target_type`, or
+  with `immediate`, `recover_postgres` names the newest of them explicitly and
+  upgrades the stanza back. With a `time`, `xid`, `lsn` or `name` target, name
+  the backup yourself with `recovery_backup_set`: the role leaves the choice to
+  PgBackRest, which may refuse a stanza upgraded this way.
 
 ## Committing a Recovery
 
