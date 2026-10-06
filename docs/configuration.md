@@ -24,7 +24,7 @@ apply across roles unless noted otherwise.
   server-level settings like ports and SELinux.
 - [Backup Configuration Parameters](#backup-configuration-parameters) -
   Configure PgBackRest repositories, encryption, and schedules.
-- [Recovery Parameters](recovery.md) - Restore a cluster from its
+- [Recovery Parameters](recovery.md#recovery-parameters) - Restore a cluster from its
   PgBackRest repository.
 - [Spock Configuration Parameters](#spock-configuration-parameters) - Control
   logical replication exception handling.
@@ -161,18 +161,19 @@ behavior:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | backup_host | (none) | Hostname of the dedicated backup server. When empty and backup_repo_type is ssh, the first node in the backup host group in the same zone is used. |
-| backup_user | backrest | PostgreSQL user created for backup operations. This user is granted pg_checkpoint privileges. |
+| backup_user | backrest | PostgreSQL user created for backup operations. This user is created with the REPLICATION attribute, and granted pg_checkpoint membership on Postgres 15 and later. |
 | backup_password | secret | Password for backup_user. |
 | backup_repo_type | ssh | Backup repository type. Accepted values are ssh (dedicated backup server) and s3 (AWS S3 bucket). |
-| backup_repo_user | Ansible user | OS user that owns the PgBackRest repository on the backup server in SSH mode. |
-| backup_repo_path | /home/{{ ansible_user }} | Path to the PgBackRest repository on the backup server. |
+| backup_repo_user | login user | OS user that owns the PgBackRest repository on the backup server in SSH mode. Defaults to ansible_user, or the ansible_user_id fact where ansible_user is not set. |
+| backup_repo_path | /home/LOGIN_USER | Path to the PgBackRest repository on the backup server. Defaults to the home directory of the login user that backup_repo_user defaults to. |
 | backup_repo_cipher_type | aes-256-cbc | Encryption algorithm PgBackRest applies to the repository. Accepts aes-256-cbc, or none where the storage layer encrypts instead. |
 | backup_repo_cipher | (none - required) | Password PgBackRest encrypts the repository with. Required unless backup_repo_cipher_type is none. It has no default: a generated password would have to be identical on every run and also unguessable, and nothing can be both. |
 | full_backup_count | 1 | Number of full backups to retain in the repository. |
 | diff_backup_count | 6 | Number of differential backups to retain in the repository. |
-| full_backup_schedule | 10 0 * * 0 | Cron schedule for full backups. The default runs every Sunday at 00:10 UTC. An empty string installs no entry. |
-| diff_backup_schedule | 10 0 * * 1-6 | Cron schedule for differential backups. The default runs Monday through Saturday at 00:10 UTC. An empty string installs no entry. |
+| full_backup_schedule | 10 0 * * 0 | Cron schedule for full backups. The default runs every Sunday at 00:10, host time. An empty string installs no entry. |
+| diff_backup_schedule | 10 0 * * 1-6 | Cron schedule for differential backups. The default runs Monday through Saturday at 00:10, host time. An empty string installs no entry. |
 | backup_repo_params | (see below) | Dictionary of S3 repository parameters. Required when backup_repo_type is s3. |
+| patroni_replica_from_backup | false | When true, Patroni rebuilds a replica with a PgBackRest delta restore before falling back to pg_basebackup. Takes effect only where a backup repository is configured. See [Backup Configuration](configuration/backup.md#patroni_replica_from_backup). |
 
 The `backup_repo_params` dictionary accepts the following keys with the
 defaults shown:

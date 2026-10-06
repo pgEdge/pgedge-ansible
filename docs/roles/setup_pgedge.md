@@ -83,7 +83,8 @@ This role uses the following parameters from the inventory file:
 | `pgedge_seed_max_hours` | Longest the copy from the seed zone may take (default: 24). |
 
 See the [Configuration Reference](../configuration.md) for descriptions and
-defaults.
+defaults, and [Spock Configuration](../configuration/spock.md) for the
+`pgedge_seed_*` parameters.
 
 ## How It Works
 
@@ -114,8 +115,9 @@ allowing HAProxy to run on a pgEdge node rather than a dedicated host.
 ### Subscription Synchronization
 
 After creating subscriptions, the role waits for initial synchronization
-using the `spock.sub_wait_for_sync()` function. For large databases, this
-can take considerable time.
+using the `spock.sub_wait_for_sync()` function. These subscriptions copy
+nothing, so the wait is short; only the copy from a seed zone, described
+below, takes time in proportion to the database's size.
 
 ### Seeding From One Zone
 
@@ -139,7 +141,9 @@ broke after it started. Last, it fails if nothing has moved for
 tables left to sync, in the database's size, or in the progress Postgres reports
 for the COPY and index builds. The failure message shows the subscription's
 status, the tables not yet synced, and the Spock lines from the end of the
-Postgres log. `pgedge_seed_max_hours` is a backstop for the whole wait.
+Postgres log. `pgedge_seed_max_hours` is a backstop for the whole wait. Each
+database in `db_names` is waited for in turn, and both limits apply to each
+database separately.
 
 The copy runs once. A later run finds the subscription and leaves it alone, so
 the setting does no harm if it stays in place.

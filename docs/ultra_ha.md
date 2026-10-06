@@ -168,10 +168,12 @@ Patroni failover without requiring manual resubscription.
 `setup_backrest` runs before `setup_postgres` because Patroni's configuration
 carries the pgBackRest archive command, so Postgres starts archiving as soon as
 Patroni starts it, and because `setup_postgres` asks the repository whether it
-already holds this cluster before initializing a data directory. `finalize_backrest` runs last because creating the repository
-stanza and taking the first backup need a cluster that is already up. It takes
-a backup only when the repository has none, so re-running this playbook against
-an existing cluster leaves the repository's recovery point where it is.
+already holds this cluster before initializing a data directory.
+`finalize_backrest` runs last because creating the repository stanza and taking
+the first backup need a cluster that is already up. It takes a backup only when
+the repository holds no backup that can restore the cluster running now, so
+re-running this playbook against an existing cluster leaves the repository's
+recovery point where it is.
 
 ## Running the Playbook
 
@@ -187,7 +189,10 @@ ansible-playbook -i inventory.yaml playbook.yaml
 
 By default, backups use SSH to transmit data to the dedicated backup server in
 each zone. To use AWS S3 instead, update your configuration, setting
-`backup_repo_type` to `s3` and supplying the required parameters:
+`backup_repo_type` to `s3` and supplying the required parameters. An S3 zone
+has no backup server: remove the hosts from the `backup` group and drop the
+`hosts: backup` play, because `init_server` refuses an S3 zone that still has
+one.
 
 ```yaml
 backup_repo_type: s3

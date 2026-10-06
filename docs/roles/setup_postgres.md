@@ -176,13 +176,15 @@ This role generates and modifies the following files on inventory hosts:
 
 ## Platform-Specific Behavior
 
-On Debian-based systems, Postgres auto-initializes during package installation.
-The data directory is `/var/lib/postgresql/{{ pg_version }}/main` and the
-configuration directory is `/etc/postgresql/{{ pg_version }}/main`. The
-service name is `postgresql@{{ pg_version }}-main`.
+On Debian-based systems, the package auto-initializes a default cluster named
+`main` during installation. Its data directory is
+`/var/lib/postgresql/{{ pg_version }}/main`, its configuration directory is
+`/etc/postgresql/{{ pg_version }}/main`, and its service name is
+`postgresql@{{ pg_version }}-main`.
 
 The role creates a cluster named by `cluster_name` with its data in `pg_data`
 and its configuration in `/etc/postgresql/{{ pg_version }}/{{ cluster_name }}`.
+Its service name is `postgresql@{{ pg_version }}-{{ cluster_name }}`.
 When that configuration directory still holds `postgresql.conf` or
 `pg_hba.conf` but `pg_data` holds no cluster, the role stops the cluster the
 files describe and removes them before creating the new one. That covers a

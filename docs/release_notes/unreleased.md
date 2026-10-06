@@ -18,7 +18,8 @@ Its main features are:
   [Recovering a Cluster from Backup](../recovery.md).
 - A new `finalize_backrest` role that creates the stanza, the first backup and
   the backup schedule at the end of a deployment, and takes that first backup
-  only when the repository holds none.
+  only when the repository holds no backup that can restore the cluster running
+  now.
 - An etcd certificate authority that can be supplied from Ansible Vault, so a
   controller other than the one that first deployed the cluster can manage it.
 - `backup_repo_cipher` no longer has a default, because the default could be
@@ -105,10 +106,16 @@ left out here; `sample-playbooks/ultra-ha/playbook.yaml` has them.
 ```
 
 Running `finalize_backrest` against an existing cluster is safe. It takes a full
-backup only when the stanza holds none, so a repository that already has
-backups keeps them. It also checks the archive command in Patroni's
-configuration store, and changes it only when the store does not already
-point at pgBackRest.
+backup only when the repository holds no backup that can restore the cluster
+running now, so a repository that already has backups of it keeps them. It
+also checks the archive command in Patroni's configuration store, and changes
+it only when the store does not already point at pgBackRest.
+
+`full_backup_schedule` and `diff_backup_schedule` now belong to
+`finalize_backrest`, which installs the cron entries. Values set in the
+inventory still apply. A playbook that passes them as role variables to
+`setup_backrest` must pass them to `finalize_backrest` instead, or the
+schedule falls back to the defaults.
 
 ### Set backup_repo_cipher
 
@@ -217,9 +224,12 @@ same play to the top:
   configuration store with `patronictl`, remove the backup schedule, and erase
   the components' configuration and data. No repository is touched, and the
   wipe is refused unless `wipe_confirm` is set and some zone's repository holds
-  a backup of the cluster in it.
+  a backup of the cluster in it. `wipe_without_backup` lifts the second
+  condition for a cluster whose data is not worth keeping.
 - New `recover_postgres` role builds the cluster's Postgres from a backup, in
-  place of `setup_postgres`. It applies `setup_postgres` to every node, restores
+  place of `setup_postgres`. It applies `setup_postgres` to every node, with
+  the new `backup_repo_reuse` set so that the repository identity check lets it
+  build a cluster beside the existing stanza, restores
   `recovery_node` from its zone's repository and promotes it outside Patroni,
   strips the restored node's stale Spock metadata, and upgrades each zone's
   stanza to describe the cluster now in it. One zone is restored and every other
@@ -234,7 +244,9 @@ same play to the top:
   to another target or from another zone with every backup still in place.
 - New `recovery_node`, `recovery_target_type`, `recovery_target`,
   `recovery_target_timeline` and `recovery_backup_set` parameters drive a
-  recovery. Only `recover_postgres` reads them.
+  recovery. `recover_postgres` reads them, and the
+  `sample-playbooks/ultra-ha-recover/` playbook also reads `recovery_node` to
+  choose the zone the others are seeded from.
 - New `pgedge_seed_zone` parameter for `setup_pgedge` names a zone that already
   holds the cluster's data. Every other zone copies it with
   `synchronize_structure` and `synchronize_data` before the rest of the mesh is
@@ -299,7 +311,9 @@ same play to the top:
   same backups afterwards, which is the assertion that would have caught the
   destructive behaviour this release removes: a second full backup expires its
   predecessor under the default retention, so a repository rewritten that way
-  still holds one backup and only its label changes.
+  still holds one backup and only its label changes. The Ultra-HA workflow's
+  `backup` input now runs this against an S3 repository on MinIO as well as an
+  SSH one.
 - The recovery waits for the restored node's replay by watching whether it is
   still making progress rather than by counting attempts. How long a replay
   takes is a property of the database, so any fixed budget is wrong for some
@@ -307,7 +321,8 @@ same play to the top:
   gives up only when neither has moved for `recovery_stall_minutes` (default
   15), or at once if Postgres stops. `recovery_max_hours` (default 24) is a hard
   ceiling. The restore and the wait run under `async`, so neither is lost with
-  an SSH connection.
+  an SSH connection, and are polled every `recovery_poll_seconds` (default
+  30).
 - New `etcd_ca_cert` and `etcd_ca_key` supply the certificate authority that
   signs etcd's certificates and every node's Patroni client certificate from
   Ansible Vault. Previously the authority existed only on the controller that
@@ -320,18 +335,14 @@ same play to the top:
   already staged is refused rather than applied, because signing against a
   different authority than the running etcd trusts leaves no node able to reach
   the store.
-- Adding or rebuilding a node from a controller without the cluster's
-  certificate authority no longer generates a new one. The etcd setup skipped
-  nodes that already ran etcd but not the node being added, so it minted an
-  authority for that node, and every node's Patroni client certificate was then
-  reissued against an authority the running etcd did not trust. Every play that
-  signs certificates now reads the authority each existing etcd member trusts
-  and stops unless the controller holds that one.
 - New `tests/render/check-patroni.py` renders the Patroni template offline
   across every combination of the backup switches, and asserts that a template
   rendered without facts for the proxy and backup hosts fails rather than
   emitting HBA rules with no addresses in them. Run by both workflows and both
   local harnesses.
+- New `tests/render/check-pgbackrest.py` renders `pgbackrest.conf` offline for
+  both cipher types and for SSH and S3 repositories, including the
+  S3-compatible settings. Run by both workflows and both local harnesses.
 - New `tests/run-recovery-test.sh`, `tests/playbooks/seed-recovery.yml`,
   `tests/verify/verify-recovery.yml` and `tests/verify/verify-commit.yml`
   exercise a recovery against a cluster the end-to-end harness has already
@@ -383,13 +394,13 @@ same play to the top:
   `setup_pgedge`. The new file is now rendered beside the old one and both are
   asked to read the stanza first. The previous file is also kept as a backup
   each time it changes, with the same owner and mode.
-- The initial backup is now taken only when the repository reports that the
-  stanza holds none, rather than on every run. `full_backup_count` defaults to
-  `1`, so a full backup taken against a repository that already had one expired
-  the previous full backup and its WAL the moment it completed — discarding the
-  recovery point a redeployed cluster was about to be restored from. The
-  decision is now made from the repository's contents rather than from where the
-  role sits in a playbook.
+- The initial backup is now taken only when the repository holds no backup that
+  can restore the cluster running now, rather than on every run.
+  `full_backup_count` defaults to `1`, so a full backup taken against a
+  repository that already had one expired the previous full backup and its WAL
+  the moment it completed — discarding the recovery point a redeployed cluster
+  was about to be restored from. The decision is now made from the repository's
+  contents rather than from where the role sits in a playbook.
 - `setup_backrest` now writes files only and touches Postgres not at all, and
   moves before `setup_postgres` in the role order. An HA cluster gets its
   `archive_command` from the Patroni configuration, so Postgres starts archiving
@@ -456,9 +467,14 @@ same play to the top:
   left in the tree by local runs. `ansible-galaxy` ignores `.gitignore`, so the
   etcd CA and node keys the sample playbooks write under `tls/`, the SSH host
   keys under `host-keys/`, and the test harness's SSH key were all packaged.
-  `galaxy.yml` now excludes them, along with all of `tests/` and other local
-  files. Anyone who built and shared a tarball from a tree where these existed
-  should treat the keys in it as exposed.
+  `galaxy.template.yml`, from which `make build` generates `galaxy.yml`, now
+  excludes them, along with all of `tests/` and other local files. Anyone who
+  built and shared a tarball from a tree where these existed should treat the
+  keys in it as exposed.
+- Running a playbook with `--diff` no longer prints secrets. The tasks that
+  write `patroni.yml`, `pgbackrest.conf` and the `.pgpass` entries showed their
+  changes in the diff output, and those carry the database passwords, the
+  repository cipher and any object-store secret key.
 
 ### Fixed
 
@@ -505,13 +521,21 @@ same play to the top:
   being named, and an S3 repository names none, so S3 clusters were left with no
   `pgbackrest.conf`, no archive command and no backups, with nothing reporting
   it. The gate is now whether a repository is configured at all.
+- Adding or rebuilding a node from a controller without the cluster's
+  certificate authority no longer generates a new one. The etcd setup skipped
+  nodes that already ran etcd but not the node being added, so it minted an
+  authority for that node, and every node's Patroni client certificate was then
+  reissued against an authority the running etcd did not trust. Every play that
+  signs certificates now reads the authority each existing etcd member trusts
+  and stops unless the controller holds that one.
 - `setup_patroni` finds the primary when Postgres listens on a port other than
   5432. `patronictl` then shows each member's host as `host:port`, and the wait
   for the primary compared that with the bare inventory name, so it never saw
   the primary come up and failed after its retries. The port is now stripped
   before the comparison.
-- `make build` rebuilds the tarball when a file is deleted from the
-  collection, and when a doc page or sample playbook changes. It compared only
-  the role and meta files that still existed, so a deletion left a stale
-  tarball in place — under the same name, since a dirty tree keeps its version
-  string — and `make install` reinstalled the removed file.
+- `make build` rebuilds the tarball whenever a shipped file changes or is
+  deleted, including role templates and scripts, the top-level `meta/`, doc
+  pages and sample playbooks. It compared only the roles' YAML files that still
+  existed, so an edit to anything else, or a deletion, left a stale tarball in
+  place — under the same name, since a dirty tree keeps its version string —
+  and `make install` reinstalled the old content.

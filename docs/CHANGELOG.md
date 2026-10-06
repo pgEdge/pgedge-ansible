@@ -53,10 +53,18 @@ in full.
 - An HA cluster's archive and restore commands come from the Patroni
   configuration template.
 - The Patroni template uses `create_replica_methods`.
+- `setup_backrest` refuses to replace a `pgbackrest.conf` that can read the
+  stanza with one that cannot.
+- `setup_postgres` on Debian recreates a cluster whose configuration outlived
+  its data directory, including one named `main`.
 
 ### Security
 
 - `backup_repo_cipher` has no default and `init_server` requires it.
+- A collection tarball built with `make build` no longer includes private keys
+  left in the tree by local runs.
+- Running a playbook with `--diff` no longer prints passwords or the repository
+  cipher.
 
 ### Fixed
 
@@ -71,6 +79,10 @@ in full.
 - S3 repositories get a client configuration.
 - A controller without the cluster's etcd certificate authority no longer
   generates a new one.
+- `setup_patroni` finds the primary when Postgres listens on a port other than
+  5432.
+- `make build` rebuilds the tarball when any shipped file changes or is
+  deleted.
 
 ## v1.1.0
 

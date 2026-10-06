@@ -49,7 +49,7 @@ The `sample-playbooks/wipe-cluster` playbook does exactly this. Pass the
 confirmation on the command line rather than writing it into an inventory:
 
 ```bash
-ansible-playbook playbook.yaml -i inventory.yaml -e wipe_confirm=true
+ansible-playbook playbook.yaml -i ../ultra-ha/inventory.yaml -e wipe_confirm=true
 ```
 
 ## Configuration

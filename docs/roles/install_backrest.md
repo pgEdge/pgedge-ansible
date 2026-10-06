@@ -63,8 +63,9 @@ The PgBackRest package installs:
 - The log directory at `/var/log/pgbackrest/`.
 
 !!! note "Backup Configuration"
-    This role only installs PgBackRest. The `setup_backrest` role handles
-    backup configuration, repository setup, and scheduling.
+    This role only installs PgBackRest. The `setup_backrest` role writes the
+    backup configuration, and the `finalize_backrest` role creates the
+    repository stanza, takes the first backup, and schedules backups.
 
 ## Usage Examples
 
@@ -122,4 +123,5 @@ Vixie cron support. Both distributions install the `pgedge-pgbackrest` package.
 ## Idempotency
 
 This role is idempotent and safe to re-run on inventory hosts. The role
-may update packages to the latest available version when newer versions exist.
+installs packages that are missing and leaves installed packages at their
+current version.

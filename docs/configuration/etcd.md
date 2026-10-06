@@ -118,8 +118,7 @@ patroni_tls_dir: "/etc/ssl/certs/patroni"
 A generated authority exists only on the controller that ran that first
 deployment. Any other controller — a colleague's workstation, a fresh CI
 runner, a new checkout — cannot sign certificates for the cluster, so it
-cannot add a replica, rebuild a node, recover the cluster, or re-run the
-deployment.
+cannot add a replica, rebuild a node, or re-run the deployment.
 
 Before signing anything, the collection reads the authority every running etcd
 member trusts and compares it with the one on the controller. When the

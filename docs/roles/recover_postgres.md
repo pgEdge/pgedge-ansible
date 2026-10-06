@@ -39,20 +39,33 @@ hold no cluster: freshly provisioned hosts, or hosts that
 [`wipe_cluster`](wipe_cluster.md) has torn down. On Debian with
 `cluster_name: main` and the default `pg_data`, a fresh host already holds the
 cluster the Postgres package created, and the role refuses it; run
-`wipe_cluster` on such hosts first. Set `pgedge_seed_zone` for
-`setup_pgedge` to the restored zone, so the other zones copy it:
+`wipe_cluster` on such hosts first. Set up the backup servers before it, and
+set `pgedge_seed_zone` for `setup_pgedge` to the restored zone, so the other
+zones copy it:
 
 ```yaml
+- hosts: backup
+  collections:
+    - pgedge.platform
+  roles:
+    - setup_backrest
+
+- hosts: pgedge
+  collections:
+    - pgedge.platform
+  roles:
+    - setup_backrest
+    - recover_postgres
+    - setup_etcd
+    - setup_patroni
+
 - hosts: pgedge
   collections:
     - pgedge.platform
   vars:
     pgedge_seed_zone: "{{ hostvars[recovery_node].zone }}"
   roles:
-    - setup_backrest
-    - recover_postgres
-    - setup_etcd
-    - setup_patroni
+    - setup_pgedge
 ```
 
 ## Configuration

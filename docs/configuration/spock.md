@@ -49,12 +49,13 @@ pgedge:
   any change in the sync step, the tables left to sync, the database's size, or
   the COPY and index-build progress Postgres reports. The role gives up sooner
   if Spock disables the subscription or its apply worker stays down for two
-  minutes.
+  minutes. The limit applies to each database in `db_names` separately.
 
 ## pgedge_seed_max_hours
 
 - Type: Integer
 - Default: `24`
 - Description: This parameter limits how long the copy from
-  `pgedge_seed_zone` may take, in hours. It is a backstop, not an estimate:
-  the copy takes as long as the database is large.
+  `pgedge_seed_zone` may take, in hours, for each database in `db_names`
+  separately. It is a backstop, not an estimate: the copy takes as long as the
+  database is large.

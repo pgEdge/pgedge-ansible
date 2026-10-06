@@ -2,9 +2,9 @@
 
 The `finalize_backrest` role initializes the PgBackRest repository and the backup
 schedule for a cluster that is up and running. It creates the backup database
-user, creates the repository stanza if it does not exist, takes a full backup if
-the stanza holds none, and installs the cron entries for scheduled full and
-differential backups.
+user, creates the repository stanza if it does not exist, takes a full backup
+only when the repository holds no backup that can restore the cluster running
+now, and installs the cron entries for scheduled full and differential backups.
 
 It is the second half of backup setup. `setup_backrest` writes configuration and
 needs nothing running, so it is applied before Patroni starts Postgres;
@@ -15,8 +15,8 @@ Postgres kept is archived, once this role has created the stanza.
 
 The role performs the following tasks on inventory hosts:
 
-- Compare the cluster's system identifier against the one the stanza describes,
-  and stop if they disagree.
+- Compare the cluster's system identifier against the identifiers the stanza
+  has described, and stop if none matches.
 - On an HA cluster, find each zone's Patroni leader, and stop if there is not
   exactly one among the zone's nodes.
 - Create the `backup_user` PostgreSQL role with `pg_checkpoint` privileges, and
@@ -28,7 +28,8 @@ The role performs the following tasks on inventory hosts:
   them there if they are missing, because a cluster that was bootstrapped
   without a repository keeps the `/bin/true` placeholder in the store. It then
   waits until the leader's Postgres is using the new `archive_command`.
-- Take an initial full backup when the stanza holds no backups.
+- Take a full backup only when the repository holds no backup that can restore
+  the cluster running now.
 - Create cron entries for scheduled full and differential backups.
 
 ## Role Dependencies
@@ -78,7 +79,7 @@ and defaults.
 The role's one decision is whether to take a backup, and it asks the repository
 rather than assuming. `pgbackrest info` reports what the stanza holds; the
 stanza is created only when it does not exist, and a full backup is taken only
-when the stanza holds none.
+when the repository holds no backup that can restore the cluster running now.
 
 That matters because of retention. `full_backup_count` defaults to `1`, which
 renders `repo1-retention-full=1`, so a full backup taken against a repository
@@ -150,9 +151,9 @@ This role generates and modifies the following files on inventory hosts:
 
 | File | New / Modified | Explanation |
 |------|----------------|-------------|
-| `{{ backup_repo_path }}/archive/` | New | WAL archive storage, created by `stanza-create`. |
-| `{{ backup_repo_path }}/backup/` | New | Backup storage, created by `stanza-create`. |
-| Crontab for the repository user | Modified | Scheduled full and differential backup entries. |
+| `{{ backup_repo_path }}/archive/` | New | WAL archive storage, created by `stanza-create` (SSH mode; in the bucket for S3). |
+| `{{ backup_repo_path }}/backup/` | New | Backup storage, created by `stanza-create` (SSH mode; in the bucket for S3). |
+| Crontab for `backup_repo_user` on the backup server (SSH) or `postgres` on each pgEdge node (S3) | Modified | Scheduled full and differential backup entries. |
 
 ## Idempotency
 

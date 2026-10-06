@@ -77,7 +77,9 @@ backup_repo_path: /backup/pgbackrest
 - Type: String
 - Default: `backrest`
 - Description: This parameter specifies the PostgreSQL username for backup
-  operations. The collection creates this user with `pg_checkpoint` privileges.
+  operations. The collection creates this user with the `REPLICATION`
+  attribute, and grants it `pg_checkpoint` membership on Postgres 15 and
+  later.
 
 ## backup_password
 
@@ -193,7 +195,7 @@ gives a zone the wrong password stops in `setup_backrest`, before it replaces a
 ## full_backup_schedule
 
 - Type: String (cron format)
-- Default: `10 0 * * 0` (Sundays at 00:10 UTC)
+- Default: `10 0 * * 0` (Sundays at 00:10, host time)
 - Description: This parameter specifies the cron schedule for automated full
   backups.
 
@@ -207,7 +209,7 @@ full_backup_schedule: "0 2 * * 0"
 ## diff_backup_schedule
 
 - Type: String (cron format)
-- Default: `10 0 * * 1-6` (Monday through Saturday at 00:10 UTC)
+- Default: `10 0 * * 1-6` (Monday through Saturday at 00:10, host time)
 - Description: This parameter specifies the cron schedule for automated
   differential backups.
 
@@ -315,7 +317,9 @@ backup_repo_params:
 - Description: This parameter controls whether Patroni rebuilds a replica from
   the backup repository instead of streaming a fresh `pg_basebackup` from its
   zone's leader. When enabled, Patroni tries a PgBackRest delta restore first
-  and falls back to `pg_basebackup` if it fails.
+  and falls back to `pg_basebackup` if it fails. It takes effect only where a
+  backup repository is configured; without one, replicas are built from the
+  leader as before.
 
 A delta restore moves only the blocks that changed and reads from the
 repository rather than from the leader, which is worth it for a large database.
@@ -355,7 +359,8 @@ patroni_replica_from_backup: true
 The following parameters apply only to the
 [`recover_postgres`](../roles/recover_postgres.md) role, which the recovery
 playbook described in [Recovering a Cluster from Backup](../recovery.md) uses.
-They are all empty by default, and an ordinary deployment never reads them.
+The first five are empty by default, and an ordinary deployment never reads
+them.
 
 Pass them on the `ansible-playbook` command line rather than writing them into
 an inventory, where they would sit waiting for the next unrelated run.
@@ -369,7 +374,12 @@ an inventory, where they would sit waiting for the next unrelated run.
 | `recovery_backup_set` | (none) | A specific backup to restore, labelled as `pgbackrest info` labels it. Unset takes the newest backup that can reach the target. |
 | `recovery_stall_minutes` | `15` | Give up only after the restored node has made no progress for this long. |
 | `recovery_poll_seconds` | `30` | How often to look. |
-| `recovery_max_hours` | `24` | Hard ceiling on the restore, the replay, and each zone's Spock copy. |
+| `recovery_max_hours` | `24` | Hard ceiling on the restore and the replay. |
+
+Each zone's Spock copy of the restored zone has limits of its own,
+`pgedge_seed_stall_minutes` and `pgedge_seed_max_hours`, which
+[Recovery Parameters](../recovery.md#recovery-parameters) and
+[Spock Configuration](spock.md) describe.
 
 In the following example, the command restores a wiped cluster to a point in
 time:

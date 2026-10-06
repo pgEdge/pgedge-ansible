@@ -105,8 +105,8 @@ When the role runs on pgedge hosts, it performs the following steps:
 
 1. Generate `/etc/pgbackrest/pgbackrest.conf` with stanza settings and
    repository connection details based on `backup_repo_type`.
-2. For SSH mode, add the backup server SSH host key to `known_hosts` and
-   distribute the `postgres` user's SSH public key to the backup server.
+2. For SSH mode, authorize the backup server's SSH public key for the
+   `postgres` user and add the backup server to that user's `known_hosts`.
 The archive commands are not set here. An HA cluster gets them from the Patroni
 configuration template, which is the only place they can live and survive a
 recovery — a value patched into the Patroni configuration store is lost when the
@@ -238,8 +238,12 @@ This role generates and modifies the following files on inventory hosts:
 |------|----------------|-------------|
 | `/etc/pgbackrest/pgbackrest.conf` | New | PgBackRest configuration file with stanza settings, repository configuration, and encryption parameters. |
 | `/etc/pgbackrest/pgbackrest.conf.<pid>.<date>~` | New | The previous `pgbackrest.conf`, kept each time the role replaces it. |
-| `~postgres/.ssh/known_hosts` | Modified | SSH host keys for backup server communication in SSH mode. |
-| `~postgres/.pgpass` | Modified | Backup user credentials for automated authentication. |
+| `/var/log/pgbackrest/` | Modified | PgBackRest log directory, owned by the user that runs PgBackRest. |
+| `~postgres/.ssh/authorized_keys` | Modified | The backup server's SSH public key, on pgEdge nodes in SSH mode. |
+| `~postgres/.ssh/known_hosts` | Modified | SSH host keys of the backup server, on pgEdge nodes in SSH mode. |
+| `~<backup_repo_user>/.ssh/authorized_keys` | Modified | SSH public keys of the zone's pgEdge nodes, on the backup server. |
+| `~<backup_repo_user>/.ssh/known_hosts` | Modified | SSH host keys of the zone's pgEdge nodes, on the backup server. |
+| `~<backup_repo_user>/.pgpass` | Modified | Backup user credentials for automated authentication, on the backup server. |
 
 ## Idempotency
 

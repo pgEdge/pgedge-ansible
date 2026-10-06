@@ -56,9 +56,9 @@ The check is skipped during a recovery, where an empty data directory beside a
 full repository is exactly what was intended.
 
 `finalize_backrest` is last because everything it does needs a cluster that is up
-and wired together. It takes a full backup only when the repository has none, so
-re-running a playbook against a cluster whose repository already holds backups
-adds nothing to it — which matters, because the default retention would
+and wired together. It takes a full backup only when the repository holds no
+backup that can restore the cluster running now, so re-running a playbook
+against a cluster whose repository already holds such backups adds nothing to it — which matters, because the default retention would
 otherwise expire the recovery point the repository already had.
 
 The two pgBouncer roles are the only optional pair in the sequence. Pooling is
@@ -70,7 +70,9 @@ does not pool omits them and is otherwise unchanged. See
 a cluster down so the sequence can run again. A recovery runs the same sequence
 with [`recover_postgres`](roles/recover_postgres.md) in place of
 `setup_postgres` and stops short of `finalize_backrest` until the result is
-committed. See [Recovering a Cluster from Backup](recovery.md).
+committed. It also sets up the backup servers before the pgEdge nodes, since the
+restore reads from them, and runs `setup_pgedge` with `pgedge_seed_zone` set to
+the restored zone. See [Recovering a Cluster from Backup](recovery.md).
 
 ## Role Categories
 

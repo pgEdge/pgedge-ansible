@@ -18,8 +18,9 @@ A recovery has three steps, each a playbook:
    `sample-playbooks/ultra-ha-recover/commit-restore.yaml`, which takes the
    backups the recovery did not and restores the backup schedule.
 
-No step ever removes a backup. Only the commit adds one, and under the default
-retention the commit is what expires the backups the recovery came from.
+Neither the wipe nor the recovery removes a backup. Only the commit adds one,
+and under the default retention the commit is what expires the backups the
+recovery came from.
 
 ## What the Procedure Does
 
@@ -254,11 +255,12 @@ needs none of the above. Patroni rebuilds a replica on its own: erase the data
 directory and start the Patroni service, and the node clones from its zone's
 leader.
 
-By default that clone is a `pg_basebackup` from the leader. Setting
-`patroni_replica_from_backup: true` makes Patroni try a PgBackRest delta restore
-first instead, which moves only the blocks that changed and reads from the
-repository rather than from the leader. It is worth it for a large database, at
-the cost of making replica creation depend on the repository being healthy;
+By default that clone is a `pg_basebackup` from the leader (through
+`pg_clonecluster` on Debian). Setting `patroni_replica_from_backup: true` makes
+Patroni try a PgBackRest delta restore first instead, which moves only the
+blocks that changed and reads from the repository rather than from the leader.
+It is worth it for a large database, at the cost of making replica creation
+depend on the repository being healthy;
 `pg_basebackup` remains the fallback either way, because Patroni walks its list
 of methods in order. On Debian the fallback is `pg_clonecluster`, which runs
 `pg_basebackup` after creating the cluster's configuration directory.

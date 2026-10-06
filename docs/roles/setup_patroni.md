@@ -1,4 +1,4 @@
-⎈# setup_patroni
+# setup_patroni
 
 The `setup_patroni` role configures and starts Patroni for high availability
 Postgres cluster management. The role generates the Patroni configuration file
@@ -10,9 +10,10 @@ The role performs the following tasks on inventory hosts:
 
 - Generate TLS certificates for communicating with etcd, when the cluster uses
   an etcd store.
-- Generate the `patroni.yaml` configuration file from a template.
 - Install the replica method that restores from the backup repository, when
-  `patroni_replica_from_backup` is enabled.
+  `patroni_replica_from_backup` is enabled and a backup repository is
+  configured.
+- Generate the `patroni.yaml` configuration file from a template.
 - Disable the native Postgres systemd service so Patroni takes control.
 - Start Patroni on the primary node first, then on all replica nodes.
 - Wait for the cluster to reach a running state before proceeding.
@@ -172,7 +173,7 @@ This role generates the following files on inventory hosts:
 | `{{ patroni_tls_dir }}/patroni.key` | New | Private key for encrypting traffic to etcd. Created for etcd stores only. |
 | `{{ patroni_tls_dir }}/patroni.crt` | New | Certificate for communicating with etcd as a client. Created for etcd stores only. |
 | `{{ pg_home }}/.patroni_pgpass` | New | Password file for Patroni database connections with mode 600. |
-| `/usr/local/bin/patroni_pgbackrest_replica` | New | Replica method that restores from the backup repository when the newest backup can become a replica of the leader, and on Debian then creates the `/etc/postgresql` configuration directory. Installed only when `patroni_replica_from_backup` is enabled. |
+| `/usr/local/bin/patroni_pgbackrest_replica` | New | Replica method that restores from the backup repository when the newest backup can become a replica of the leader, and on Debian then creates the `/etc/postgresql` configuration directory. Installed only when `patroni_replica_from_backup` is enabled and a backup repository is configured. |
 
 ## Platform-Specific Behavior
 
