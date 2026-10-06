@@ -28,61 +28,57 @@ in full.
   `sample-playbooks/wipe-cluster/` and `sample-playbooks/ultra-ha-recover/`
   playbooks, rebuild an HA cluster from its pgBackRest repositories, optionally
   to a point in time, and commit the result once it is right. See
-  [Recovering a Cluster from Backup](recovery.md).
+  [Recovering a Cluster from Backup](recovery.md). (EE-39)
 - New `pgedge_seed_zone` parameter has `setup_pgedge` fill empty zones from one
-  that holds the cluster's data.
+  that holds the cluster's data. (EE-39)
 - New `finalize_backrest` role creates the backup user, stanza, first backup and
-  cron schedule at the end of a deployment.
+  cron schedule at the end of a deployment. (EE-39)
 - A repository identity check stops a deployment that would build an empty
-  cluster beside a repository holding a different one.
+  cluster beside a repository holding a different one. (EE-39)
 - New `patroni_replica_from_backup` parameter rebuilds replicas with a
-  pgBackRest delta restore.
+  pgBackRest delta restore. (EE-39)
 - New `etcd_ca_cert` and `etcd_ca_key` parameters supply the etcd certificate
-  authority from Ansible Vault.
-- New render, recovery and backup checks in the test suite.
+  authority from Ansible Vault. (EE-39)
+- New render, recovery and backup checks in the test suite. (EE-39)
 - New `uri_style`, `storage_ca_file`, `storage_port` and `storage_verify_tls`
-  keys in `backup_repo_params` for S3-compatible stores such as MinIO.
+  keys in `backup_repo_params` for S3-compatible stores such as MinIO. (EE-39)
 - `init_server` validates S3 repository settings and refuses a backup server in
-  an S3 zone.
+  an S3 zone. (EE-39)
 
 ### Changed
 
 - The first backup is taken only when the repository holds none that can
-  restore the cluster.
-- `setup_backrest` writes files only and runs before `setup_postgres`.
+  restore the cluster. (EE-39)
+- `setup_backrest` writes files only and runs before `setup_postgres`. (EE-39)
 - An HA cluster's archive and restore commands come from the Patroni
-  configuration template.
-- The Patroni template uses `create_replica_methods`.
+  configuration template. (EE-39)
+- The Patroni template uses `create_replica_methods`. (EE-39)
 - `setup_backrest` refuses to replace a `pgbackrest.conf` that can read the
-  stanza with one that cannot.
+  stanza with one that cannot. (EE-39)
 - `setup_postgres` on Debian recreates a cluster whose configuration outlived
-  its data directory, including one named `main`.
+  its data directory, including one named `main`. (EE-39)
 
 ### Security
 
-- `backup_repo_cipher` has no default and `init_server` requires it.
+- `backup_repo_cipher` has no default and `init_server` requires it. (EE-39)
 - A collection tarball built with `make build` no longer includes private keys
-  left in the tree by local runs.
+  left in the tree by local runs. (EE-39)
 - Running a playbook with `--diff` no longer prints passwords or the repository
-  cipher.
+  cipher. (EE-39)
 
 ### Fixed
 
-- `backup_repo_cipher_type: none` produces a configuration PgBackRest accepts.
-- A wipe stops when it cannot read an external configuration store, instead of
-  treating the store as empty.
-- A wipe removes the cluster from an external configuration store even after
-  its members have expired, and also from fresh hosts with no Patroni
-  configuration.
+- `backup_repo_cipher_type: none` produces a configuration PgBackRest
+  accepts. (EE-39)
 - `backup_repo_user` and `backup_repo_path` no longer become `root` and
-  `/home/root` when facts are gathered under `become`.
-- S3 repositories get a client configuration.
+  `/home/root` when facts are gathered under `become`. (EE-39)
+- S3 repositories get a client configuration. (EE-39)
 - A controller without the cluster's etcd certificate authority no longer
-  generates a new one.
+  generates a new one. (EE-39)
 - `setup_patroni` finds the primary when Postgres listens on a port other than
-  5432.
+  5432. (EE-39)
 - `make build` rebuilds the tarball when any shipped file changes or is
-  deleted.
+  deleted. (EE-39)
 
 ## v1.1.0
 
