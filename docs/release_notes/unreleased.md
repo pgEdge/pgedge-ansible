@@ -469,6 +469,12 @@ same play to the top:
   arrangement that permits key rotation, since PgBackRest cannot rotate its own
   cipher. The password line is now emitted only where something is encrypting,
   and `init_server` rejects a password set where nothing is.
+- `wipe_cluster` checks for a backup on every pgEdge node, not only on each
+  zone's first node. A first node with no cluster on it, such as one that had
+  lost its disk, made its zone look empty, so the check passed and the wipe
+  erased the live data on the node Patroni had failed over to without asking
+  whether any backup held it. A zone now counts as backed up only when every
+  node in it that holds a cluster is.
 - `wipe_cluster` does not treat an external configuration store it cannot read
   as a store with no cluster in it. An unreadable store stops the wipe before
   anything is erased, rather than leaving Patroni waiting forever for a leader

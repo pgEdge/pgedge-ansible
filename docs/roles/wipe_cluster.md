@@ -76,9 +76,11 @@ erased.
 
 Once the cluster is wiped, its data survives only in the backup repositories.
 Every zone holds the same data, replicated across Spock, so a backup in any
-one zone is enough. The role asks each zone's repository whether it holds a
-backup of the cluster in that zone, matched by system identifier, and refuses
-only when none does. That is also what lets a recovery be retried: until it is
+one zone is enough. Every pgEdge node asks its zone's repository whether it
+holds a backup of the cluster on that node, matched by system identifier. A
+zone counts as backed up when every node in it that holds a cluster is, so a
+first node that has lost its disk does not hide the live data on the node
+Patroni failed over to. The role refuses only when no zone is backed up. That is also what lets a recovery be retried: until it is
 committed, the zones it rebuilt have no backups of their own, but the zone it
 restored still has the backups it came from.
 
