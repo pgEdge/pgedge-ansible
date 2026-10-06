@@ -473,8 +473,8 @@ same play to the top:
   zone's first node. A first node with no cluster on it, such as one that had
   lost its disk, made its zone look empty, so the check passed and the wipe
   erased the live data on the node Patroni had failed over to without asking
-  whether any backup held it. A zone now counts as backed up only when every
-  node in it that holds a cluster is.
+  whether any backup held it. A zone is now judged by whichever of its nodes
+  holds the cluster.
 - `wipe_cluster` does not treat an external configuration store it cannot read
   as a store with no cluster in it. An unreadable store stops the wipe before
   anything is erased, rather than leaving Patroni waiting forever for a leader

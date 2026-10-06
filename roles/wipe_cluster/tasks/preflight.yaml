@@ -29,10 +29,9 @@
 # recovery upgraded also lists backups of the cluster it replaced, under an
 # older db entry, and those cannot bring this one back.
 #
-# A zone is then judged by every node in it that holds a cluster, and counts
-# as backed up only when all of them are. The nodes of a zone normally hold
-# the same cluster and so agree; one that disagrees holds data the backups do
-# not cover. A zone none of whose nodes holds a cluster has nothing to lose.
+# A zone is then judged by the nodes in it that hold a cluster, wherever
+# Patroni has put it, and counts as backed up when any of them is. A zone none
+# of whose nodes holds a cluster has nothing to lose.
 
 - block:
   - name: Check whether this node holds a cluster
@@ -97,11 +96,11 @@
         {{ wipe_stanza.backup | default([]) |
            selectattr('database.id', 'in', wipe_db_ids) | list }}
 
-  - name: Judge this zone by every node in it that holds a cluster
+  - name: Judge this zone by the nodes in it that hold a cluster
     set_fact:
       wipe_zone_state: >-
         {{ 'empty' if wipe_zone_node_states | length == 0
-           else 'backed up' if wipe_zone_node_states == ['backed up']
+           else 'backed up' if 'backed up' in wipe_zone_node_states
            else 'unreadable' if 'unreadable' in wipe_zone_node_states
            else 'not backed up' }}
     vars:
