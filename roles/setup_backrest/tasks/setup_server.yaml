@@ -25,7 +25,7 @@
   known_hosts:
     name: "{{ item }}"
     state: present
-    key: "{{ lookup('pipe', 'ssh-keyscan {{ item }} | grep -v ''^\\#''') }}"
+    key: "{{ item }} {{ lookup('file', 'host-keys/' + item + '.host') }}"
     hash_host: false
   become: true
   become_user: "{{ backup_repo_user }}"

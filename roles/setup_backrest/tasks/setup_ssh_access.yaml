@@ -16,7 +16,7 @@
   known_hosts:
     name: "{{ item }}"
     state: present
-    key: "{{ lookup('pipe', 'ssh-keyscan {{ item }} | grep -v ''^\\#''') }}"
+    key: "{{ item }} {{ lookup('file', 'host-keys/' + item + '.host') }}"
     hash_host: false
   loop: "{{ backups_in_zone + [backup_host] | select }}"
   become: true

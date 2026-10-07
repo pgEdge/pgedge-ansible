@@ -22,3 +22,9 @@
     flat: yes
   become: true
   become_user: "{{ os_user }}"
+
+- name: Retrieve this server's SSH host public key
+  fetch:
+    src: /etc/ssh/ssh_host_ed25519_key.pub
+    dest: "host-keys/{{ inventory_hostname }}.host"
+    flat: yes
