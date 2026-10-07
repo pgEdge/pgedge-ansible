@@ -1,0 +1,274 @@
+---
+
+# Put an inventory-supplied certificate authority where the certificate tasks
+# expect to find one, before any of them look.
+#
+# The authority that signs etcd's server and peer certificates and every node's
+# Patroni client certificate is generated once, on the controller, into a
+# directory Ansible resolves against the playbook's own location -- and it is
+# gitignored, because it holds a private key. Nothing regenerates it: setup_etcd
+# creates it, and setup_etcd skips itself entirely once the etcd data directory
+# exists. So on a live cluster the authority cannot be recreated, and a
+# controller that has lost that directory can no longer add a replica, rebuild a
+# node, or re-run the deployment. The checks in this file stop it there, before
+# anything is signed.
+#
+# Supplying it from the inventory puts it where every other secret this
+# collection needs already lives -- an Ansible Vault variable beside db_password
+# and the rest -- and leaves the staging directory as a cache rather than the
+# only copy.
+#
+# Every check runs before anything is written, so a supplied authority that
+# turns out to be wrong is refused without being left staged, where the next run
+# would find it and take it for the controller's own.
+#
+# Backwards compatible by construction: with neither variable set this writes
+# nothing at all, and the generation that follows behaves exactly as it always
+# has, creating an authority when there is none and reusing one when there is.
+
+- name: Ensure the certificate authority is supplied as a pair or not at all
+  assert:
+    that: (etcd_ca_cert | default('') | length > 0) ==
+          (etcd_ca_key | default('') | length > 0)
+    fail_msg: >-
+      etcd_ca_cert and etcd_ca_key must be set together. One without the other
+      cannot sign anything: the certificate is what the nodes trust and the key
+      is what signs for it.
+  run_once: true
+
+- name: Check which parts of an authority are staged here
+  stat:
+    path: "tls/etcd/{{ item }}"
+  loop:
+  - ca.crt
+  - ca.key
+  register: staged_ca_files
+  delegate_to: localhost
+  run_once: true
+
+# Replacing a staged authority with a different one is how a working cluster
+# gets broken: setup_patroni would sign each node's client certificate against
+# the new authority and push it, while the running etcd still trusts only the
+# old one, and no node could reach the store afterwards. An authority that
+# matches what is already there is no change at all, so only a genuine mismatch
+# stops here.
+
+- name: Ensure the supplied authority is the one already in use
+  assert:
+    that: (lookup('file', 'tls/etcd/ca.crt') | trim) == (etcd_ca_cert | trim)
+    fail_msg: >-
+      etcd_ca_cert does not match the certificate authority already staged in
+      tls/etcd/ca.crt. Signing this cluster's certificates against a different
+      authority than its etcd trusts would leave no node able to reach the
+      configuration store. If the supplied authority is the correct one, remove
+      the staged copy and run again; if the cluster genuinely needs a new
+      authority, that is a rebuild of the store: wipe_cluster erases the
+      collection's etcd, and a deployment or recovery then builds it again.
+  delegate_to: localhost
+  run_once: true
+  when:
+  - etcd_ca_cert | default('') | length > 0
+  - staged_ca_files.results[0].stat.exists
+
+# The generation in setup_etcd skips itself only when a certificate is already
+# staged, so a staged certificate has to come with the key that signed it. A
+# ca.crt left without its ca.key -- a partial copy of tls/etcd/ from another
+# controller, say -- would otherwise pass every check here, and generation would
+# then mint a new key, find the staged certificate no longer matches it, and
+# replace that too: the authority the cluster trusts gone from the controller,
+# and every node signed after it unable to reach etcd. A key with the wrong
+# certificate fails the same way, only later, so both are refused here. A key
+# without a certificate is left to generation: with no certificate there is
+# nothing for the cluster to have trusted, and the check below decides whether
+# generating one is safe.
+#
+# A supplied pair is checked the same way, from the variables rather than from
+# disk, because it is about to replace whatever is staged.
+
+- name: Ensure a staged certificate authority comes with its private key
+  assert:
+    that: not crt_staged or key_staged
+    fail_msg: >-
+      tls/etcd/ca.crt is staged on this controller but tls/etcd/ca.key is not.
+      The certificate cannot sign anything without its key, and continuing
+      would generate a new authority over it. Copy ca.key from the controller
+      that deployed the cluster, or supply both with etcd_ca_cert and
+      etcd_ca_key.
+  vars:
+    crt_staged: "{{ staged_ca_files.results[0].stat.exists }}"
+    key_staged: "{{ staged_ca_files.results[1].stat.exists }}"
+  run_once: true
+  when: etcd_ca_cert | default('') | length == 0
+
+- name: Read the controller's certificate authority
+  community.crypto.x509_certificate_info:
+    content: "{{ etcd_ca_cert if supplied else omit }}"
+    path: "{{ omit if supplied else 'tls/etcd/ca.crt' }}"
+  vars:
+    supplied: "{{ etcd_ca_cert | default('') | length > 0 }}"
+  register: controller_ca_cert
+  delegate_to: localhost
+  run_once: true
+  when: supplied or staged_ca_files.results[0].stat.exists
+
+- name: Read the controller's certificate authority private key
+  community.crypto.openssl_privatekey_info:
+    content: "{{ etcd_ca_key if supplied else omit }}"
+    path: "{{ omit if supplied else 'tls/etcd/ca.key' }}"
+  vars:
+    supplied: "{{ etcd_ca_cert | default('') | length > 0 }}"
+  register: controller_ca_key
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  when: supplied or staged_ca_files.results[0].stat.exists
+
+- name: Ensure the private key belongs to the certificate
+  assert:
+    that: controller_ca_key.public_key == controller_ca_cert.public_key
+    fail_msg: >-
+      {% if supplied -%}
+      etcd_ca_key is not the private key of etcd_ca_cert, so nothing it signed
+      would verify against the certificate the nodes trust. Supply the matching
+      pair from the vault the cluster was deployed with.
+      {%- else -%}
+      tls/etcd/ca.key on this controller is not the private key of
+      tls/etcd/ca.crt, so nothing it signs would verify against the
+      certificate the nodes trust. Replace both with the matching pair from the
+      controller that deployed the cluster, or supply them together with
+      etcd_ca_cert and etcd_ca_key.
+      {%- endif %}
+  vars:
+    supplied: "{{ etcd_ca_cert | default('') | length > 0 }}"
+  run_once: true
+  when: supplied or staged_ca_files.results[0].stat.exists
+
+# Whatever authority the controller now holds -- supplied, staged by an earlier
+# run, or about to be generated because there is none -- has to be the one the
+# cluster's running etcd already trusts. setup_etcd's own guard is per host: it
+# skips a node whose etcd data exists and builds one whose data does not. So a
+# node being added or rebuilt passes that guard, and from a controller without
+# the authority it would mint a new one, sign the new node against it, and then
+# setup_patroni would reissue every node's client certificate against it too --
+# while the members still running trust only the old one. Nothing would fail
+# until Patroni lost the store everywhere at once.
+#
+# The members are asked directly, on every pgEdge host rather than the play's,
+# so a run limited to the node being added still sees the rest of the cluster.
+# A host with no etcd data is no member and has no say: that is a new cluster,
+# a new node, or a zone whose store was just erased to be rebuilt. The paths
+# are each host's own, because a delegated task otherwise templates the running
+# host's.
+#
+# A host that does not answer is a different matter. It may be a member that
+# trusts some other authority, and silence from it is not agreement, so the
+# read collects every host it can and the check after it refuses to go on
+# without the rest. Both ignores are needed for that: an unreachable item fails
+# the loop as well, and either one alone still ends the play here, with no
+# message saying which host it was. It runs in check mode too: a read that
+# skipped would leave nothing to compare.
+
+- name: Read the certificate authority each existing etcd member trusts
+  shell: >-
+    if [ -d {{ data_dir | quote }}/postgresql ] &&
+       [ -f {{ tls_dir | quote }}/ca.crt ];
+    then cat {{ tls_dir | quote }}/ca.crt; fi
+  vars:
+    data_dir: "{{ hostvars[item].etcd_data_dir | default(etcd_data_dir) }}"
+    tls_dir: "{{ hostvars[item].etcd_tls_dir | default(etcd_tls_dir) }}"
+  loop: "{{ groups['pgedge'] }}"
+  delegate_to: "{{ item }}"
+  become: true
+  run_once: true
+  changed_when: false
+  check_mode: false
+  ignore_unreachable: true
+  ignore_errors: true
+  register: member_cas
+
+- name: Ensure every pgEdge host said which authority it trusts
+  assert:
+    that: unanswered | length == 0
+    fail_msg: >-
+      Could not read the certificate authority etcd trusts on
+      {{ unanswered | join(', ') }}. Without every member's answer there is no
+      telling whether the authority on this controller is the cluster's, and
+      signing against the wrong one leaves no node able to reach the
+      configuration store. Bring the host back, or remove it from the
+      inventory if it has left the cluster for good.
+  vars:
+    unanswered: >-
+      {{ member_cas.results | rejectattr('rc', 'defined')
+         | map(attribute='item') | list
+         + member_cas.results | selectattr('rc', 'defined')
+         | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
+  run_once: true
+
+- name: Ensure the controller signs with the authority the cluster trusts
+  assert:
+    that:
+    - trusted_cas | length <= 1
+    - trusted_cas | length == 0 or controller_ca == trusted_cas[0]
+    fail_msg: >-
+      {% if trusted_cas | length > 1 -%}
+      The etcd members of this cluster do not agree on a certificate authority,
+      so there is no single one to sign new certificates with. Some zone's store
+      was rebuilt under a different authority than the rest. wipe_cluster
+      followed by a deployment or recovery rebuilds every zone under one.
+      {%- elif controller_ca | length == 0 -%}
+      This cluster's etcd already trusts a certificate authority, and this
+      controller does not hold it: etcd_ca_cert is unset and there is no
+      tls/etcd/ca.crt beside the playbook. Continuing would generate a new
+      authority that none of the running members trust, and reissue every
+      node's Patroni certificate against it. Supply the original authority with
+      etcd_ca_cert and etcd_ca_key, or copy tls/etcd/ from the controller that
+      deployed the cluster. See the etcd configuration documentation.
+      {%- elif etcd_ca_cert | default('') | length > 0 -%}
+      etcd_ca_cert is not the certificate authority this cluster's etcd
+      trusts. Signing against it would leave no node able to reach the
+      configuration store. Supply the cluster's own authority with
+      etcd_ca_cert and etcd_ca_key; nothing has been staged on this controller.
+      {%- else -%}
+      The certificate authority on this controller is not the one this
+      cluster's etcd trusts. Signing against it would leave no node able to
+      reach the configuration store. Supply the cluster's own authority with
+      etcd_ca_cert and etcd_ca_key, or replace tls/etcd/ with the one from the
+      controller that deployed the cluster.
+      {%- endif %}
+  vars:
+    trusted_cas: >-
+      {{ member_cas.results | map(attribute='stdout', default='')
+         | map('trim') | select | unique | list }}
+    controller_ca: >-
+      {{ etcd_ca_cert | trim if etcd_ca_cert | default('') | length > 0
+         else lookup('file', 'tls/etcd/ca.crt', errors='ignore')
+              | default('', true) | trim }}
+  run_once: true
+
+- name: Create the local TLS staging directory
+  file:
+    path: "tls/etcd"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  when: etcd_ca_cert | default('') | length > 0
+
+# Written with a trailing newline whatever the variable carries, so a supplied
+# authority and a generated one are byte-identical on disk and the generation
+# tasks that follow see no reason to touch either.
+
+- name: Stage the supplied certificate authority
+  copy:
+    content: "{{ item.pem | trim }}\n"
+    dest: "tls/etcd/{{ item.name }}"
+    mode: "{{ item.mode }}"
+  loop:
+  - { name: ca.crt, pem: "{{ etcd_ca_cert | default('') }}", mode: "0644" }
+  - { name: ca.key, pem: "{{ etcd_ca_key | default('') }}", mode: "0600" }
+  loop_control:
+    label: "tls/etcd/{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  when: etcd_ca_cert | default('') | length > 0

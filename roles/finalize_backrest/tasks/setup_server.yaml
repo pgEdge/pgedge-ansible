@@ -1,0 +1,26 @@
+---
+
+# The repository lives here, so this host drives the stanza and the backups for
+# every pgEdge node in its zone.
+
+- name: Read the repository's current state
+  include_tasks: repo_state.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"
+
+- name: Ensure the stanza exists
+  include_tasks: stanza_create.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"
+
+- name: Take the bootstrap backup if the repository has none
+  include_tasks: first_backup.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"
+
+# If the bootstrap backup succeeds, it's safe to set up automated backups.
+
+- name: Schedule the recurring backups
+  include_tasks: set_cron.yaml
+  vars:
+    os_user: "{{ backup_repo_user }}"

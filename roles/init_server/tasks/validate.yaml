@@ -52,6 +52,136 @@
       db_password, pgedge_password, replication_password, backup_password
   when: inventory_hostname in (groups.pgedge | default([]))
 
+# The backup repository's encryption, checked the same way the passwords are and
+# for the same reason: the value cannot be defaulted into existence.
+#
+# A generated cipher password would have to be identical on every run -- change
+# it and the repository can no longer be read -- and also unguessable, and
+# nothing can be both. The value this parameter used to default to was derived
+# from cluster_name and zone, which achieved the first by giving up the second:
+# anyone who knew the cluster's name could decrypt its backups.
+#
+# Asked of pgEdge nodes and backup servers alike, because both render the
+# repository configuration and both have to arrive at the same answer. An
+# inventory that sets this on the 'pgedge' group alone leaves the backup server
+# writing a different configuration than the nodes it serves, which is a
+# repository neither can read.
+
+- name: Ensure the backup repository cipher type is one PgBackRest accepts
+  assert:
+    that:
+    - backup_repo_cipher_type in ('none', 'aes-256-cbc')
+    fail_msg: >-
+      backup_repo_cipher_type is "{{ backup_repo_cipher_type }}". PgBackRest
+      accepts aes-256-cbc, or none where the storage layer encrypts instead.
+  when:
+  - backup_repo_configured | bool
+  - inventory_hostname in (groups.pgedge | default([])) or
+    inventory_hostname in (groups.backup | default([]))
+
+- name: Ensure an encrypted backup repository has been given a password
+  assert:
+    that:
+    - backup_repo_cipher | length > 0
+    fail_msg: >-
+      backup_repo_cipher is empty and backup_repo_cipher_type is
+      "{{ backup_repo_cipher_type }}", so PgBackRest is being asked to encrypt
+      this repository with nothing. It has no default on purpose: a generated
+      one would have to be identical on every run and also unguessable, and
+      nothing can be both. Set it to a secret you keep -- Ansible Vault, beside
+      the passwords -- or set backup_repo_cipher_type to none where the storage
+      encrypts instead, such as S3 bucket default encryption.
+      Store it somewhere you will still have it later: a lost cipher is an
+      unreadable repository, and this collection cannot rotate it.
+      Upgrading a cluster deployed before this parameter required a value? Its
+      repository still uses the old derived password, and the old derivation was
+      public, so recover it with:
+      ansible localhost -m debug -a
+      "msg={{ '{{' }} lookup('password', '/dev/null', length=20,
+      seed='pgedge{{ cluster_name }}-{{ zone }}') {{ '}}' }}"
+  when:
+  - backup_repo_configured | bool
+  - backup_repo_encrypted | bool
+  - inventory_hostname in (groups.pgedge | default([])) or
+    inventory_hostname in (groups.backup | default([]))
+
+# A password set where nothing encrypts is not harmless: it reads as encryption
+# to anyone reviewing the inventory, and PgBackRest refuses the configuration
+# outright rather than quietly ignoring it.
+
+- name: Ensure no cipher password is set where nothing is encrypting
+  assert:
+    that:
+    - backup_repo_cipher | length == 0
+    fail_msg: >-
+      backup_repo_cipher is set but backup_repo_cipher_type is none, so
+      PgBackRest is not encrypting this repository and the password does
+      nothing. Either remove it, or set a cipher type so it is used.
+  when:
+  - backup_repo_configured | bool
+  - not backup_repo_encrypted | bool
+  - inventory_hostname in (groups.pgedge | default([])) or
+    inventory_hostname in (groups.backup | default([]))
+
+# An S3 repository is the object store and nothing else. A backup server exists
+# to hold an SSH repository and to drive it over SSH, and none of that is set up
+# in S3 mode -- no SSH keys are exchanged -- so a server in the zone would fail
+# partway through the deployment trying to reach nodes it was never given
+# access to. Refused here instead, while nothing has been changed.
+#
+# Asked of the pgEdge nodes, which are the hosts the repository type is set for:
+# a backup server given no backup_repo_type of its own would think itself in SSH
+# mode and see nothing wrong.
+
+- name: Ensure an S3 zone has no backup server
+  assert:
+    that:
+    - backups_in_zone | length == 0
+    fail_msg: >-
+      Zone {{ zone }} uses an S3 repository, but has backup servers:
+      {{ backups_in_zone | join(', ') }}. A backup server only serves an SSH
+      repository. Remove these hosts from the 'backup' group, or set
+      backup_repo_type to ssh.
+  when:
+  - backup_type == 's3'
+  - inventory_hostname in (groups.pgedge | default([]))
+
+# The S3 settings have defaults only where one is plausible. The credentials
+# have none, and a configuration that leaves them empty fails only when
+# finalize_backrest first writes to the repository -- the last step of the
+# deployment, long after Postgres was built expecting to archive there.
+
+- name: Ensure the S3 repository settings are complete
+  assert:
+    that:
+    - s3_problems | length == 0
+    fail_msg: >-
+      backup_repo_type is s3, so backup_repo_params must name the bucket, region
+      and endpoint, and supply access_key and secret_key -- from Ansible Vault,
+      beside the passwords. If set, uri_style must be host or path, storage_port
+      a number from 1 to 65535, and storage_verify_tls true or false.
+      Missing or invalid: {{ s3_problems | join(', ') }}.
+  vars:
+    s3_problems: >-
+      {{ ['access_key', 'secret_key', 'bucket', 'region', 'endpoint']
+         | reject('in', backup_params | dict2items | selectattr('value')
+                        | map(attribute='key') | list) | list
+         + (['uri_style'] if backup_params.uri_style not in ('', 'host', 'path')
+            else [])
+         + (['storage_port'] if port_given > ''
+              and not (port_given is match('^[0-9]+$')
+                       and port_given | int in range(1, 65536))
+            else [])
+         + (['storage_verify_tls'] if verify_given | lower not in
+              ('', 'true', 'false', 'yes', 'no', 'y', 'n', 'on', 'off',
+               '1', '0')
+            else []) }}
+    port_given: "{{ backup_params.storage_port | string }}"
+    verify_given: "{{ backup_params.storage_verify_tls | string }}"
+  when:
+  - backup_type == 's3'
+  - inventory_hostname in (groups.pgedge | default([]))
+
 # These roles simply won't work on anything but RHEL / Debian systems right
 # now. There may be workarounds, but for now it's best to fail early.
 

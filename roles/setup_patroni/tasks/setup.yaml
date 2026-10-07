@@ -3,6 +3,22 @@
 - include_tasks: tls.yaml
   when: patroni_dcs.type in ('etcd', 'etcd3')
 
+# The pgbackrest replica method is a script that restores only a backup that
+# can become a replica of the leader, and on Debian then creates the
+# configuration directory the restore does not. Patroni runs it as postgres,
+# which only needs to execute it; root owns it so the postgres user cannot
+# change what Patroni runs.
+
+- name: Install the replica method that restores from the repository
+  template:
+    src: templates/pgbackrest_replica.sh.j2
+    dest: "{{ patroni_pgbackrest_replica_script }}"
+    mode: "0755"
+    owner: root
+    group: root
+  become: true
+  when: replica_from_backup | bool
+
 - name: Create configuration file for Patroni node
   template:
     src: templates/patroni.yml.j2
@@ -11,6 +27,9 @@
     owner: postgres
     group: postgres
   become: true
+  # The file holds the superuser and replication passwords, and --diff would
+  # print both.
+  diff: false
 
 - name: Ensure the Postgres service is disabled in favor of Patroni
   systemd_service:

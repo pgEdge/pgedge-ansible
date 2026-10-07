@@ -1,0 +1,188 @@
+---
+
+# Everything that can be checked is checked before anything is built.
+
+- name: Ensure a node to restore from the repository was named
+  assert:
+    that:
+    - recovery_node > ''
+    - recovery_node in (groups['pgedge'] | default([]))
+    fail_msg: >-
+      recovery_node must name the pgEdge node to restore from its backup
+      repository, as that node is spelled in the inventory. It is
+      "{{ recovery_node }}", which is not a member of the 'pgedge' group.
+  run_once: true
+
+# The zone's first node is the one Patroni starts first and the one setup_pgedge
+# creates the Spock node on, so it is the one that has to hold the data.
+
+- name: Ensure the node to restore is the first node in its zone
+  assert:
+    that:
+    - recovery_node == recovery_zone_first_node
+    fail_msg: >-
+      recovery_node is {{ recovery_node }}, but the first pgEdge node in zone
+      {{ recovery_zone }} is {{ recovery_zone_first_node }}. A zone's first
+      node is the one the rest of the zone is built from, so it is the node to
+      restore.
+  run_once: true
+
+- name: Ensure this is an HA cluster
+  assert:
+    that:
+    - is_ha_cluster | bool
+    fail_msg: >-
+      This role recovers a Patroni-managed cluster. A cluster without Patroni
+      has to be restored with pgbackrest directly.
+  run_once: true
+
+# The target has to agree with the type in both directions: PgBackRest refuses
+# --target beside a type that stops at no value, and needs one beside a type
+# that does.
+
+- name: Ensure the point-in-time target is one PgBackRest accepts
+  assert:
+    that:
+    - recovery_target_type in ('', 'time', 'xid', 'lsn', 'name', 'immediate')
+    - recovery_target_type in ('', 'immediate') or recovery_target > ''
+    - recovery_target_type not in ('', 'immediate') or recovery_target == ''
+    - recovery_target_timeline | string is match('^(|latest|current|[0-9]+)$')
+    fail_msg: >-
+      recovery_target_type is "{{ recovery_target_type }}", recovery_target is
+      "{{ recovery_target }}" and recovery_target_timeline is
+      "{{ recovery_target_timeline }}". The type must be empty, to restore
+      everything the repository holds, or one of time, xid, lsn, name or
+      immediate. Time, xid, lsn and name need recovery_target set to the value
+      they stop at; immediate and an empty type take none. The timeline must
+      be empty, latest, current or a timeline number.
+  run_once: true
+
+# A bare date is exactly what Ansible leaves of -e 'recovery_target=DATE TIME',
+# which splits at the space and drops the rest without a word.
+
+- name: Ensure a time target carries a time of day
+  assert:
+    that:
+    - recovery_target is match('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}')
+    fail_msg: >-
+      recovery_target is "{{ recovery_target }}", which is not a time PgBackRest
+      can restore to. It needs a date and a time of day, as
+      "2026-09-15 14:30:00+00". If you passed both, Ansible split them at the
+      space: quote the value inside the argument, as
+      -e "recovery_target='2026-09-15 14:30:00+00'".
+  when: recovery_target_type == 'time'
+  run_once: true
+
+# A node that still holds a cluster is one wipe_cluster has not been run on, and
+# Patroni would refuse to join a replica whose data belongs to another cluster.
+
+- name: Check whether this node still holds a cluster
+  stat:
+    path: "{{ pg_data }}/global/pg_control"
+  register: recovery_pg_control
+  become: true
+
+- name: Ensure this node holds no cluster yet
+  assert:
+    that:
+    - not recovery_pg_control.stat.exists
+    fail_msg: >-
+      {{ inventory_hostname }} already has a Postgres cluster in {{ pg_data }}.
+      A recovery builds every node from nothing. Run the wipe_cluster role
+      against the cluster first; it leaves the backup repositories alone.
+
+- name: Ensure every zone has a backup repository configured
+  assert:
+    that:
+    - backup_repo_configured | bool
+    fail_msg: >-
+      Zone {{ zone }} has no backup repository configured, so there is nothing
+      for it to archive to once the cluster is back. Set backup_repo_type to
+      s3, or give the zone a host in the 'backup' group, before recovering.
+  when: inventory_hostname == first_node_in_zone
+
+# A zone built empty has to have its stanza upgraded before it can archive, and
+# with an SSH repository that is done on the repository host. A server named
+# only by backup_host is outside the inventory, where nothing can reach it.
+
+- name: Ensure every rebuilt zone's repository host is in the inventory
+  assert:
+    that:
+    - backups_in_zone | length > 0
+    fail_msg: >-
+      Zone {{ zone }} reaches its SSH repository through backup_host
+      {{ backup_host }}, which is not in the 'backup' group. Its stanza has to
+      be upgraded on that server once the zone is rebuilt. Add
+      {{ backup_host }} to the 'backup' group with zone {{ zone }} before
+      recovering.
+  when:
+  - inventory_hostname == first_node_in_zone
+  - backup_type == 'ssh'
+  - zone | string != recovery_zone | string
+
+# Ask the repository itself what it holds. info exits 0 even for a repository it
+# could not read, so the stanza's status code is what says it looked inside:
+# 0, 1 and 2 are the codes that mean it did.
+
+- block:
+  - name: Ask the repository what it holds for the node being restored
+    command:
+      argv:
+      - pgbackrest
+      - "--stanza={{ backup_stanza }}"
+      - "--output=json"
+      - info
+    register: recovery_repo_info
+    changed_when: false
+    check_mode: false
+    failed_when: false
+    become: true
+    become_user: postgres
+
+  - name: Ensure the repository holds a backup to restore
+    assert:
+      that:
+      - recovery_stanza.status.code | default(-1) | int in [0, 1, 2]
+      - recovery_labels | length > 0
+      - recovery_backup_set == '' or recovery_backup_set in recovery_labels
+      fail_msg: >-
+        {% if recovery_stanza.status.code | default(-1) | int not in [0, 1, 2] %}
+        pgbackrest could not read stanza {{ backup_stanza }} from
+        {{ recovery_node }}:
+        {{ (recovery_stanza.repo | default([]) |
+            map(attribute='status.message') | join('; '))
+           or (recovery_repo_info.stderr | default('') | trim) }}
+        {% elif recovery_labels | length == 0 %}
+        Stanza {{ backup_stanza }} holds no backup, so there is nothing to
+        restore {{ recovery_node }} from. Name a recovery_node whose zone has
+        one.
+        {% else %}
+        recovery_backup_set is {{ recovery_backup_set }}, which is not one of
+        the backups stanza {{ backup_stanza }} holds:
+        {{ recovery_labels | join(', ') }}.
+        {% endif %}
+
+  # Name the backup explicitly whenever no target picks one. PgBackRest's own
+  # choice is the newest backup of the cluster the stanza describes now, and it
+  # refuses outright when the newest backup belongs to an earlier one -- which
+  # is the case when a zone rebuilt by an earlier recovery is restored before
+  # anything committed to that recovery. The newest backup is the right one
+  # either way. A time target picks its own backup, and any other target
+  # restores from the newest unless recovery_backup_set says otherwise.
+
+  - name: Choose the backup to restore
+    set_fact:
+      recovery_restore_set: >-
+        {{ recovery_backup_set if recovery_backup_set > ''
+           else recovery_labels | last
+             if recovery_target_type in ('', 'immediate')
+           else '' }}
+
+  vars:
+    recovery_stanza: >-
+      {{ (recovery_repo_info.stdout | from_json |
+          selectattr('name', 'eq', backup_stanza) | first | default({}))
+         if recovery_repo_info.rc == 0 else {} }}
+    recovery_labels: >-
+      {{ recovery_stanza.backup | default([]) | map(attribute='label') | list }}
+  when: inventory_hostname == recovery_node

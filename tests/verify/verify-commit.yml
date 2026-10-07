@@ -1,0 +1,178 @@
+---
+# Verify the backups commit-restore.yaml leaves after a recovery.
+#
+# Archiving again is not the same as having a recovery point. A rebuilt zone's
+# stanza still lists every backup of the cluster it replaced, so committing has
+# to take a full backup there, and that is what a second incident in this zone
+# would restore. The newest backup has to be of the cluster running now, as the
+# stanza's newest db entry describes it.
+#
+# After a point-in-time recovery the restored zone may need one as well. A
+# backup that finished before the recovery's target is still on the zone's
+# history -- the new timeline branched from the old one after it -- and restores
+# the zone as it is now. One that finished past the target is on the timeline
+# the recovery abandoned, and committing has to replace it. So under a target,
+# the newest backup in every zone must lie on the timeline that zone runs on,
+# or on an earlier one that the zone's history left only after the backup
+# finished: the same rule finalize_backrest applies in timeline.yaml.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    # Passed through from the recovery's own arguments by run-recovery-test.sh.
+    recovery_target_type: ""
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+    patroni_cfg: >-
+      {{ '/etc/patroni/17-demo.yml' if ansible_os_family == 'Debian'
+         else '/etc/patroni/patroni.yml' }}
+    # The fallback is only there because delegate_to is templated even on the
+    # nodes that skip the task.
+    zone_primary: >-
+      {{ zone_leaders | default([]) | first | default(first_node_in_zone) }}
+
+  tasks:
+  # Each zone is checked once, against the node Patroni says leads it. Asking
+  # every node whether it is in recovery and skipping the ones that are would
+  # pass a zone with no primary at all without checking it.
+
+  - name: Ask Patroni which node leads this zone
+    become_user: postgres
+    command: patronictl -c {{ patroni_cfg }} list -f json
+    register: zone_members
+    changed_when: false
+    failed_when: false
+    retries: 30
+    delay: 5
+    until: >-
+      zone_members.rc == 0 and
+      (zone_members.stdout | default('[]', true) | from_json
+       | selectattr('Role', 'eq', 'Leader')
+       | selectattr('State', 'eq', 'running') | list | length) == 1
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Note this zone's leaders
+    set_fact:
+      zone_leaders: >-
+        {{ (zone_members.stdout | default('[]', true) | from_json
+            if zone_members.rc | default(1) == 0 else [])
+           | selectattr('Role', 'eq', 'Leader')
+           | selectattr('State', 'eq', 'running')
+           | map(attribute='Host') | map('regex_replace', ':[0-9]+$', '')
+           | list }}
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert this zone has exactly one leader
+    assert:
+      that:
+      - zone_leaders | length == 1
+      - zone_leaders | first in nodes_in_zone
+      fail_msg: >-
+        Zone {{ zone }} has {{ zone_leaders | length }} running Patroni leaders
+        ({{ zone_leaders | join(', ') or 'none' }}) among
+        {{ nodes_in_zone | join(', ') }}, so there is no one primary whose
+        backups to check.
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert every zone named its leader
+    vars:
+      zones: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | map(attribute='zone') | unique | list }}
+      named: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('zone_leaders', 'defined')
+           | map(attribute='zone') | unique | list }}
+    assert:
+      that: zones | difference(named) | length == 0
+      fail_msg: >-
+        Zones {{ zones | difference(named) | join(', ') }} reported no leader,
+        so nothing below would check them.
+    run_once: true
+
+  # Named, because the repository may hold more than this zone's stanza: every
+  # zone shares an S3 bucket, and an unnamed info lists all of them, in an order
+  # that has nothing to do with which zone is asking.
+
+  - name: Ask the repository what it holds for this zone
+    become_user: postgres
+    command: pgbackrest --output=json --stanza=pgedge-demo-{{ zone }} info
+    register: repo_info
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Read the timeline this zone is running on
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT timeline_id FROM pg_control_checkpoint()"
+    register: timeline
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  # A history line reads "parent<TAB>switchpoint<TAB>reason". Timeline 1 has no
+  # history file, and nothing branched before it.
+
+  - name: Read the history that led to that timeline
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT pg_read_file('pg_wal/' || lpad(to_hex(timeline_id), 8, '0')
+              || '.history')
+         FROM pg_control_checkpoint() WHERE timeline_id > 1"
+    register: history
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert the zone has a backup of the cluster it holds now
+    vars:
+      stanza: "{{ repo_info.stdout | from_json | first }}"
+      newest_db: "{{ stanza.db | default([]) | sort(attribute='id') | last }}"
+      current_ids: >-
+        {{ stanza.db | default([]) |
+           selectattr('system-id', 'eq', newest_db['system-id']) |
+           map(attribute='id') | list }}
+      newest: "{{ stanza.backup | default([]) | last | default({}, true) }}"
+      newest_tli: "{{ (newest.archive.start | default('0' * 24))[:8] }}"
+      # Where the zone's history left the newest backup's timeline, or '' when
+      # it never did: the backup is on the timeline the zone runs on.
+      switch_lsn: >-
+        {{ (history.stdout | default('') | string).splitlines() | map('trim') |
+           reject('match', '^(#|$)') | map('split') |
+           selectattr('0', 'eq', newest_tli | int(base=16) | string) |
+           map(attribute='1') | first | default('') }}
+      stop_lsn: "{{ newest.lsn.stop | default('0/0') }}"
+      on_history: >-
+        {{ newest_tli | int(base=16) == timeline.stdout | trim | int or
+           (switch_lsn | length > 0 and
+            stop_lsn.split('/')[0] | int(base=16) * 4294967296 +
+            stop_lsn.split('/')[1] | int(base=16) <=
+            switch_lsn.split('/')[0] | int(base=16) * 4294967296 +
+            switch_lsn.split('/')[1] | int(base=16)) }}
+    assert:
+      that:
+      - newest.database.id | default(-1) in current_ids
+      - recovery_target_type == '' or on_history | bool
+      fail_msg: >-
+        Zone {{ zone }}'s newest backup, {{ newest.label | default('none') }},
+        is from db entry {{ newest.database.id | default('none') }} on timeline
+        {{ newest_tli | int(base=16) }} (stopping at {{ stop_lsn }}), but stanza
+        {{ stanza.name }} describes this cluster as db entries {{ current_ids }}
+        and the zone runs on timeline {{ timeline.stdout | trim }}, having left
+        timeline {{ newest_tli | int(base=16) }} at
+        {{ switch_lsn | default('no point', true) }}. A backup from another db
+        entry is of the cluster a recovery replaced; one that finished past
+        where the zone left its timeline is on the timeline a point-in-time
+        recovery abandoned. Either way finalize_backrest did not leave this
+        zone a recovery point.
+      success_msg: >-
+        Zone {{ zone }}'s newest backup, {{ newest.label }}, is of the cluster
+        running there now.
+    when: inventory_hostname == first_node_in_zone

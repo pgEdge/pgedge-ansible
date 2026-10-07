@@ -4,6 +4,10 @@
 # repo endpoint. We also want to be able to pull WAL files from the backup
 # repo in case of restores. Put these in the Postgres config to ensure they
 # get loaded.
+#
+# This is the non-HA path only. An HA cluster gets the same two commands from
+# the Patroni configuration template, because Patroni owns postgresql.conf on
+# those nodes and rewrites whatever is put here.
 
 - name: Configure cluster to integrate with PgBackRest
   lineinfile:
@@ -11,9 +15,8 @@
     line: "{{ item.var }} = '{{ item.setting }}'"
     regexp: "^{{ item.var }}[ =].*"
   vars:
-    stanza: "pgedge-{{ cluster_name }}-{{ zone }}"
-    push_args: "--stanza={{ stanza }} archive-push %p"
-    pull_args: "--stanza={{ stanza }} archive-get %f %p"
+    push_args: "--stanza={{ backup_stanza }} archive-push %p"
+    pull_args: "--stanza={{ backup_stanza }} archive-get %f %p"
   loop:
   - { var: "archive_mode", setting: "on" }
   - { var: "archive_command", setting: "pgbackrest {{ push_args }}" }

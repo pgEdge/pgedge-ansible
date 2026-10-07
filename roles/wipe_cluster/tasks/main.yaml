@@ -1,0 +1,35 @@
+---
+
+# Tear down everything this collection runs on the cluster's hosts -- Postgres,
+# Patroni, pgBouncer and the etcd the collection hosts -- so that a deployment
+# or a recovery can build the cluster again from nothing. It stops what is
+# running and erases what was configured, without unwinding anything in order:
+# nothing here has to survive, so nothing has to be shut down gracefully.
+#
+# Backups are the exception, and the reason this role is safe to have at all.
+# No repository, stanza, archive or pgbackrest.conf is touched, and neither is
+# anything an install role put in place: packages, repositories, unit files.
+# HAProxy keeps running too; it holds no state, and setup_haproxy rewrites it.
+#
+# Every step looks for its component first, so the role runs cleanly against
+# hosts that never got as far as having one -- a deployment that failed
+# partway, or freshly provisioned replacements. A configuration store the
+# collection does not host is the exception: it outlives the hosts, so even a
+# fresh zone's first node is asked to clear it, and needs patronictl to do so.
+#
+# Each task file finishes on every host before the next one starts, which is
+# what puts every Patroni out of the way before the store is cleared, and the
+# store cleared before anything is erased.
+
+- include_tasks: preflight.yaml
+
+- include_tasks: unschedule.yaml
+
+- include_tasks: stop.yaml
+  when: inventory_hostname in groups.pgedge
+
+- include_tasks: clear_dcs.yaml
+  when: inventory_hostname in groups.pgedge
+
+- include_tasks: erase.yaml
+  when: inventory_hostname in groups.pgedge

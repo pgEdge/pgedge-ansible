@@ -16,8 +16,69 @@
   - pg_port == 5432
   become: true
 
-# If the user supplied a cluster name other than "main", which is the Debian
-# default, create a new cluster rather than risk breaking an existing one.
+# A cluster whose configuration directory survived its data directory is left
+# over from one whose data was erased outside wipe_cluster, which removes both.
+# pg_createcluster refuses to create a cluster while postgresql.conf or
+# pg_hba.conf exists in its configuration directory, so remove the remains
+# first. Nothing is lost: the data directory holds no cluster, and Patroni
+# rewrites the configuration files when it starts.
+#
+# The same applies to "main" with a pg_data of its own. A fresh install's main
+# cluster lives in the Debian default data directory, so pg_data holds nothing
+# yet, but the package's configuration already sits in main's configuration
+# directory, and the package started that cluster from it.
+#
+# Only the files pg_createcluster writes are removed, and as root, since a
+# configuration directory left behind may belong to anyone. This is not
+# pg_dropcluster, which refuses a running cluster and deletes the data directory
+# its configuration names before the configuration itself: that fails on a
+# mount point or beneath a directory postgres cannot write, and for main it
+# would delete the package's cluster, which is better left where it is.
+
+- name: Check for a cluster configuration left without its data
+  stat:
+    path: "{{ item }}"
+  loop:
+  - "{{ pg_config_dir }}/postgresql.conf"
+  - "{{ pg_config_dir }}/pg_hba.conf"
+  - "{{ pg_data }}/PG_VERSION"
+  register: debian_cluster_files
+  become: true
+
+# The cluster those files describe may still be running, as the package's main
+# cluster is on a fresh install. Stop it while its configuration still says
+# where its data is; once the files are gone, its service would stop the new
+# cluster instead. The service itself is set up below and in ha_setup.yaml like
+# any other: enabled for a lone node, and left to Patroni in an HA zone.
+
+- block:
+  - name: Stop the cluster the leftover configuration describes
+    service:
+      name: "postgresql@{{ pg_version }}-{{ cluster_name }}"
+      state: stopped
+
+  - name: Remove the leftover configuration files
+    file:
+      path: "{{ pg_config_dir }}/{{ item }}"
+      state: absent
+    loop:
+    - postgresql.conf
+    - pg_hba.conf
+    - pg_ident.conf
+    - pg_ctl.conf
+    - start.conf
+    - environment
+
+  become: true
+  when:
+  - debian_cluster_files.results[0].stat.exists or
+    debian_cluster_files.results[1].stat.exists
+  - not debian_cluster_files.results[2].stat.exists
+
+# Create the cluster unless its data directory is already initialized. For a
+# name other than "main", the Debian default, this is a new cluster beside the
+# one the package created; for "main" it is one that a recovery erased, or one
+# with its own pg_data that replaces the package's.
 
 - name: Install and set up Postgres using Postgres CLI tooling
   command:
@@ -31,7 +92,6 @@
     creates: "{{ pg_data }}/PG_VERSION"
   become: true
   become_user: postgres
-  when: cluster_name != 'main'
 
 # Reload systemd since creating a new cluster implicitly adds a service.
 

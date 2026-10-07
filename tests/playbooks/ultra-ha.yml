@@ -26,9 +26,6 @@
       name: install_pgedge
 
   - include_role:
-      name: setup_postgres
-
-  - include_role:
       name: install_etcd
     when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
 
@@ -43,6 +40,12 @@
     when: pgbouncer_enabled | default(false) | bool
 
   - include_role:
+      name: setup_backrest
+
+  - include_role:
+      name: setup_postgres
+
+  - include_role:
       name: setup_etcd
     when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
 
@@ -52,9 +55,6 @@
   - include_role:
       name: setup_pgbouncer
     when: pgbouncer_enabled | default(false) | bool
-
-  - include_role:
-      name: setup_backrest
 
 - hosts: haproxy
 
@@ -90,3 +90,12 @@
 
   - include_role:
       name: setup_backrest
+
+- hosts: pgedge:backup
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: finalize_backrest

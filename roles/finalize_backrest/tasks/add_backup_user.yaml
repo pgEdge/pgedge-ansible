@@ -1,7 +1,8 @@
 ---
 
-# Only create the user on one node per pgEdge node group. If there are
-# replicas, they'll get the user creation anyway. The backup user is granted
+# Only create the user on one node per pgEdge node group: the zone's primary,
+# which setup_client chose. Replicas are read-only and get the user from it
+# through replication. The backup user is granted
 # REPLICATION rights and the ability to start a checkpoint as those are the
 # minimum elements necessary for PgBackRest.
 
@@ -14,7 +15,7 @@
     login_port: "{{ pg_port }}"
   become: true
   become_user: postgres
-  when: inventory_hostname == first_node_in_zone
+  when: inventory_hostname == zone_primary
 
 - name: Allow backup user to invoke checkpoints
   community.postgresql.postgresql_membership:
@@ -27,7 +28,7 @@
   become: true
   become_user: postgres
   when:
-  - inventory_hostname == first_node_in_zone
+  - inventory_hostname == zone_primary
   - pg_version | int > 14
 
 # We need to patch the pg_hba.conf file to include the backup user and host as

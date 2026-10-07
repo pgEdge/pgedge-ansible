@@ -95,6 +95,8 @@
     mode: "0600"
   become: true
   become_user: postgres
+  # The line is a password, and --diff would print it.
+  diff: false
 
 # Include all other common steps for a standard Postgres node
 

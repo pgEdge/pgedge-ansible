@@ -1,0 +1,193 @@
+---
+
+# Patroni records in its configuration store that each zone's cluster has been
+# initialized, and a node whose data directory is empty but whose cluster is
+# still recorded does not bootstrap: it waits for a leader to clone from, and
+# none is coming. So the store has to forget the cluster too.
+#
+# The etcd this collection hosts is simply erased with everything else: there
+# is nothing in it but this cluster, and setup_etcd builds it again from nothing
+# once its data directory is gone. A store the collection does not host -- an
+# external etcd, Consul, anything else -- is shared with whatever else uses it,
+# so only this cluster is removed from it, through patronictl, which speaks
+# every store Patroni does.
+
+- name: Populate service facts to see whether this node runs etcd
+  service_facts:
+  when: patroni_dcs_managed | bool
+
+- name: Stop and disable etcd
+  systemd_service:
+    name: etcd
+    state: stopped
+    enabled: false
+  become: true
+  when:
+  - patroni_dcs_managed | bool
+  - "'etcd.service' in ansible_facts.services"
+
+- name: Erase etcd's data
+  file:
+    path: "{{ etcd_data_dir }}/postgresql"
+    state: absent
+  become: true
+  when: patroni_dcs_managed | bool
+
+# Once per zone, from the zone's first node, since a zone's Patroni cluster is
+# one object in the store however many members it has.
+#
+# What is asked is whether the store still records the cluster as initialized,
+# not whether it lists any members. Members are kept on a lease that lapses
+# within Patroni's ttl of Patroni stopping -- which the step before this one
+# has just done, and which an incident may have done long before -- while the
+# keys that mark the cluster initialized have no lease and stay until removed.
+# A store that lists nothing can still hold the old system identifier, and a
+# rebuilt zone that meets it is refused by Patroni. So the cluster is removed
+# whenever the store can be read, members or not.
+
+- block:
+  # patronictl reads the store's address from Patroni's configuration. A node
+  # that never got as far as setup_patroni -- a deployment that failed early, a
+  # freshly provisioned replacement -- has none, but the store may still hold
+  # the cluster that ran in this zone before. patronictl needs only the scope,
+  # the namespace and the store's own section to reach it, so a node without a
+  # configuration is given those from the inventory, in a file that lives only
+  # as long as this block.
+
+  - name: Check whether Patroni's configuration is still in place
+    stat:
+      path: "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    register: wipe_patroni_config
+    become: true
+
+  - name: Check whether patronictl is installed
+    shell:
+      cmd: command -v patronictl
+    register: wipe_patronictl
+    changed_when: false
+    check_mode: false
+    failed_when: false
+
+  - name: Ensure patronictl is available to clear the configuration store
+    assert:
+      that:
+      - wipe_patronictl.rc == 0
+      fail_msg: >-
+        patronictl is not installed on {{ inventory_hostname }}, so the cluster
+        of zone {{ zone }} cannot be removed from the configuration store, and
+        a store that still records it stops the zone from being built again.
+        Nothing has been erased. Apply install_patroni to this host and run the
+        wipe again, or remove the cluster yourself with
+        'patronictl remove {{ patroni_scope }}' from a host that can reach the
+        store.
+
+  - name: Create a temporary patronictl configuration
+    tempfile:
+      state: file
+      suffix: .yml
+    register: wipe_temp_config
+    changed_when: false
+    check_mode: false
+    become: true
+    when: not wipe_patroni_config.stat.exists
+
+  - name: Write the store's settings from the inventory into it
+    copy:
+      dest: "{{ wipe_temp_config.path }}"
+      content: >-
+        {{ {'scope': patroni_scope,
+            'namespace': patroni_namespace,
+            patroni_dcs.type: patroni_dcs.parameters | default({})} |
+           to_nice_yaml(indent=2) }}
+      owner: postgres
+      group: postgres
+      mode: '0600'
+    changed_when: false
+    check_mode: false
+    become: true
+    # The store's settings can hold its credentials.
+    diff: false
+    when: not wipe_patroni_config.stat.exists
+
+  # A store that cannot be read is not a store with no cluster in it. Treating
+  # it as empty would erase the cluster and leave Patroni waiting forever for a
+  # leader whose key is still there. patronictl titles its table with the
+  # cluster's name and its initialization state when it reached the store --
+  # "(uninitialized)" for a cluster the store does not record -- and prints no
+  # table when it did not, so the output decides, not the exit code. The
+  # extended columns are asked for only to widen the table: patronictl cuts the
+  # title to the table's width, and with no members to list the plain table is
+  # narrow enough to cut a long scope's state off.
+
+  - name: Check whether this zone's cluster is in the configuration store
+    command:
+      cmd: "{{ patronictl_cmd }} list -e {{ patroni_scope }}"
+    register: wipe_dcs_before
+    changed_when: false
+    check_mode: false
+    failed_when: false
+    become: true
+    become_user: postgres
+
+  - name: Ensure the configuration store could be read
+    assert:
+      that:
+      - wipe_dcs_title in wipe_dcs_before.stdout
+      fail_msg: >-
+        patronictl could not read the cluster of zone {{ zone }} from the
+        configuration store, so whether the store still records it is unknown.
+        Nothing has been erased. patronictl said:
+        {{ [wipe_dcs_before.stderr | default(''),
+            wipe_dcs_before.stdout | default('')] | select | join(' ') |
+           default('nothing', true) }}.
+        {{ '' if wipe_patroni_config.stat.exists else
+           'This host has no Patroni configuration, so the store was reached '
+           'with the patroni_dcs settings from the inventory; check that every '
+           'file they name, such as a TLS certificate, exists on this host.' }}
+
+  # patronictl has no unattended mode for this. It asks for the cluster name,
+  # then for an exact phrase, and then -- if the store still shows a leader --
+  # for the leader's name; the answers are fed in the order it asks for them,
+  # and the third goes unread when there is no leader. It removes everything
+  # under the cluster's key whether or not any members are listed, and an
+  # uninitialized cluster is removed again only to clear whatever was left
+  # beside it, so that alone is not counted as a change. The check after it is
+  # what makes all of this safe to rely on.
+
+  - name: Remove this zone's cluster from the configuration store
+    shell:
+      cmd: >-
+        printf '%s\n%s\n%s\n'
+        '{{ patroni_scope }}' 'Yes I am aware' '{{ ansible_hostname }}' |
+        {{ patronictl_cmd }} remove {{ patroni_scope }}
+    changed_when: wipe_dcs_uninitialized not in wipe_dcs_before.stdout
+    become: true
+    become_user: postgres
+
+  - name: Ensure the configuration store no longer holds this zone's cluster
+    command:
+      cmd: "{{ patronictl_cmd }} list -e {{ patroni_scope }}"
+    register: wipe_dcs_after
+    changed_when: false
+    check_mode: false
+    failed_when: wipe_dcs_uninitialized not in wipe_dcs_after.stdout
+    become: true
+    become_user: postgres
+    when: not ansible_check_mode
+
+  always:
+  - name: Remove the temporary patronictl configuration
+    file:
+      path: "{{ wipe_temp_config.path }}"
+      state: absent
+    changed_when: false
+    check_mode: false
+    become: true
+    when: wipe_temp_config.path is defined
+
+  vars:
+    wipe_dcs_title: "Cluster: {{ patroni_scope }} ("
+    wipe_dcs_uninitialized: "Cluster: {{ patroni_scope }} (uninitialized)"
+  when:
+  - not patroni_dcs_managed | bool
+  - inventory_hostname == first_node_in_zone

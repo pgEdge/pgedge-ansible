@@ -1,0 +1,97 @@
+---
+
+# Ask the repository what this stanza already holds. Every decision below reads
+# this, so the command is deliberately allowed to fail the play: the expensive
+# mistake is concluding "no backups here" from a repository that could not be
+# read, because a moment of SSH trouble or a mistyped S3 credential would then
+# expire a good backup. A repository that has never been written reports an
+# empty list rather than an error, so a genuine first run still passes.
+#
+# The exit status only covers a failure to run at all. An unreachable repository
+# host, an unreadable path or a cipher it cannot decrypt still exits 0, with the
+# stanza's status code at 99 and its backup list empty; an interrupted
+# stanza-create exits 0 with code 3. Only codes 0, 1 and 2 -- ok, no stanza yet,
+# no backups yet -- describe a repository info actually looked inside, so the
+# play refuses anything else rather than read it as empty.
+
+- name: Ask the repository what this stanza already holds
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - "--output=json"
+    - info
+  register: backrest_info
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ os_user }}"
+
+- name: Record what the repository reports for this stanza
+  set_fact:
+    backrest_stanza: >-
+      {{ backrest_info.stdout | from_json |
+         selectattr('name', 'eq', backup_stanza) | first | default({}) }}
+
+- name: Ensure the repository could be read
+  assert:
+    that:
+    - backrest_stanza.status.code | default(-1) | int in [0, 1, 2]
+    fail_msg: >-
+      pgbackrest could not read stanza {{ backup_stanza }} from
+      {{ inventory_hostname }}:
+      {{ backrest_stanza.repo | default([]) |
+         map(attribute='status.message') | join('; ') }}
+      {% if backrest_stanza.status.code | default(-1) | int == 3 %}
+      The stanza's directories exist but its info files do not, which is
+      what an interrupted stanza-create leaves behind -- or what is left of
+      a stanza whose info files were deleted. Inspect the repository before
+      going further: if it holds nothing worth keeping, remove the stanza's
+      directories so that the next run creates it afresh.
+      {% else %}
+      A repository that cannot be read cannot be told apart from an empty
+      one, and treating it as empty is how a good backup gets expired. Fix
+      the access or the configuration before running this again.
+      {% endif %}
+
+# A stanza that has been through stanza-upgrade holds backups of more than one
+# cluster: one db entry per cluster it has described, and each backup tagged
+# with the entry it was taken from. Only backups of the cluster the newest entry
+# describes are backups of the cluster running now. The others belong to a
+# cluster that was replaced -- the old cluster of a zone a recovery rebuilt --
+# and restoring one would bring that cluster back, not this one. So a stanza
+# holding only those has no recovery point for this cluster, however many
+# backups it lists.
+#
+# Matched by system identifier rather than by entry. A zone restored to a
+# cluster the stanza described earlier gets a new entry for it, and the backups
+# it was restored from still carry the old one.
+
+- name: Record which of those backups belong to the cluster running now
+  set_fact:
+    backrest_current_backups: >-
+      {{ backrest_stanza.backup | default([]) |
+         selectattr('database.id', 'in', current_db_ids) | list }}
+  vars:
+    newest_db: >-
+      {{ backrest_stanza.db | default([]) | sort(attribute='id') | last |
+         default({}) }}
+    current_db_ids: >-
+      {{ backrest_stanza.db | default([]) |
+         selectattr('system-id', 'eq', newest_db['system-id'] | default(-1)) |
+         map(attribute='id') | list }}
+
+# A backup of this cluster can still be one it cannot be restored from. After a
+# point-in-time recovery the cluster runs on a new timeline that branched from
+# an earlier point than the newest backups reached, and those backups lie on
+# the timeline it abandoned. PgBackRest restores the newest backup by default,
+# and Postgres cannot follow the new timeline from it. So the newest backup has
+# to lie on the cluster's own history: on its current timeline, or on an
+# earlier one that it left only after the backup had finished.
+#
+# A failover changes the timeline too, but it branches at the end of the old
+# one, after every backup, so it never leaves a backup behind.
+
+- name: Check the newest backup against this cluster's timeline history
+  include_tasks: timeline.yaml
+  when: backrest_current_backups | length > 0

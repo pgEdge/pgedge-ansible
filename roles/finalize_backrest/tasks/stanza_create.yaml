@@ -1,0 +1,21 @@
+---
+
+# Create the stanza only when the repository does not already have one. Status
+# code 1 is PgBackRest's "missing stanza path", and an absent entry means the
+# repository has never been written at all; both mean there is work to do.
+#
+# Creating one that already exists is not merely redundant. If the stanza
+# describes a different cluster, stanza-create fails with an identifier
+# mismatch -- which is a useful thing to be told, but it is told earlier and far
+# more clearly by the repository identity check, so there is nothing to gain by
+# provoking it here.
+
+- name: Bootstrap the repository with the PgBackRest metadata
+  command:
+    argv:
+    - pgbackrest
+    - "--stanza={{ backup_stanza }}"
+    - stanza-create
+  become: true
+  become_user: "{{ os_user }}"
+  when: backrest_stanza.status.code | default(1) | int == 1

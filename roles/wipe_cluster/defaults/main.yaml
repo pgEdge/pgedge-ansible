@@ -1,0 +1,15 @@
+---
+
+# This role stops every component of the cluster and erases its configuration
+# and its data, and nothing about an inventory says whether that is wanted. So
+# it refuses to start until something says so explicitly. Pass it on the
+# command line -- -e wipe_confirm=true -- rather than writing it into an
+# inventory, where it would sit waiting for the next unrelated run.
+
+wipe_confirm: false
+
+# A cluster none of whose zones holds a backup of it would lose its data for
+# good, so the role refuses to wipe it. Set this when that data is not worth
+# keeping: a deployment that failed before its first backup, or a test cluster.
+
+wipe_without_backup: false

@@ -4,7 +4,7 @@
   group:
     name: "{{ backup_repo_user }}"
   become: true
-  when: backup_repo_user != ansible_user_id
+  when: backup_repo_user != connection_user
 
 - name: Ensure the database repo OS user exists on the server
   user:
@@ -14,7 +14,7 @@
     home: "{{ backup_repo_path }}"
     shell: /bin/bash
   become: true
-  when: backup_repo_user != ansible_user_id
+  when: backup_repo_user != connection_user
 
 # With the user created, Set up the SSH keys for it.
 

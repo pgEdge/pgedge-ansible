@@ -44,7 +44,17 @@ bootstrap:
         ssl_key_file: "{{ pg_data }}/server.key"
         listen_addresses: "0.0.0.0"
         archive_mode: "on"
+{% if backup_repo_configured | bool %}
+        # Rendered here rather than patched into the configuration store after
+        # the fact. A patch lives only in the store, and a recovery wipes the
+        # store and writes this section into it again -- which silently put the
+        # placeholder below back and stopped a freshly recovered cluster from
+        # archiving anything at all.
+        archive_command: "pgbackrest --stanza={{ backup_stanza }} archive-push %p"
+        restore_command: "pgbackrest --stanza={{ backup_stanza }} archive-get %f %p"
+{% else %}
         archive_command: "/bin/true"
+{% endif %}
         TimeZone: "UTC"
         wal_level: "logical"
         max_worker_processes: 12
@@ -71,9 +81,39 @@ bootstrap:
       plugin: spock_output
 
 postgresql:
+  # Patroni walks this list in order and keeps the first method that succeeds,
+  # so the entries after the first are fallbacks. basebackup is Patroni's
+  # built-in and needs no configuration; it is named explicitly only where
+  # something precedes it.
+{% if replica_from_backup | bool %}
+  create_replica_methods:
+    - pgbackrest
 {% if ansible_os_family == 'Debian' %}
-  create_replica_method:
     - pg_clonecluster
+{% endif %}
+    - basebackup
+  # The restore runs through a script that first asks the leader whether the
+  # newest backup can become its replica, and fails without restoring when it
+  # cannot -- after a point-in-time recovery, the newest backup can lie past
+  # where the leader's timeline branched -- so the next method takes over. It
+  # needs the leader's connection string, so Patroni passes its parameters. On
+  # Debian a restore also leaves no postgresql.conf in
+  # /etc/postgresql/<version>/<cluster>, and Patroni fails to start a replica
+  # without it, so there the script creates the configuration directory
+  # afterwards.
+  pgbackrest:
+    command: {{ patroni_pgbackrest_replica_script }}
+    keep_data: true
+{% elif ansible_os_family == 'Debian' %}
+  create_replica_methods:
+    - pg_clonecluster
+{% endif %}
+{% if ansible_os_family == 'Debian' %}
+  # Debian keeps postgresql.conf in /etc/postgresql/<version>/<cluster>, which
+  # basebackup does not create, and Patroni fails to start a replica without
+  # it. pg_clonecluster_patroni runs pg_createcluster before pg_basebackup, so
+  # on Debian it has to come ahead of basebackup in every list above. Every
+  # method ahead of basebackup on Debian has to create that directory too.
   pg_clonecluster:
     command: /usr/share/patroni/pg_clonecluster_patroni
 {% endif %}

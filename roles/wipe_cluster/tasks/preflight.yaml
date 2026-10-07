@@ -1,0 +1,137 @@
+---
+
+- name: Ensure the wipe was asked for explicitly
+  assert:
+    that:
+    - wipe_confirm | bool
+    fail_msg: >-
+      This role stops Postgres, Patroni, pgBouncer and etcd on every pgEdge
+      node and erases their configuration and data. Backup repositories are
+      left alone, but nothing else it removes can be recovered from the
+      cluster. Re-run with -e wipe_confirm=true once that is what you mean to
+      do.
+  run_once: true
+
+# Once wiped, the cluster's data survives only in the backup repositories, so
+# refuse to wipe a cluster none of whose zones holds a backup of what is in it.
+# One zone is enough: every zone holds the same data, replicated across Spock.
+# That is also what lets a recovery be retried. Until it is committed, the
+# zones it rebuilt have no backup of their own, but the zone it restored has
+# the backups it was restored from.
+#
+# Every pgEdge node is asked, through its own pgbackrest.conf, which reaches
+# the repository however its zone is configured. Asking only a zone's first
+# node is not enough: a first node that has lost its disk holds no cluster,
+# while the node Patroni failed over to holds the zone's live data. info exits
+# 0 even for a repository it could not read, so the stanza's status code is
+# what says it looked inside: 0, 1 and 2 are the codes that mean it did. A
+# backup counts only if it was taken of the cluster on that node: a stanza a
+# recovery upgraded also lists backups of the cluster it replaced, under an
+# older db entry, and those cannot bring this one back.
+#
+# A zone is then judged by the nodes in it that hold a cluster, wherever
+# Patroni has put it, and counts as backed up when any of them is. A zone none
+# of whose nodes holds a cluster has nothing to lose.
+
+- block:
+  - name: Check whether this node holds a cluster
+    stat:
+      path: "{{ pg_data }}/global/pg_control"
+    register: wipe_pg_control
+    become: true
+
+  - name: Read the system identifier of the cluster this node holds
+    command:
+      argv:
+      - "{{ pg_path }}/bin/pg_controldata"
+      - "-D"
+      - "{{ pg_data }}"
+    register: wipe_control_data
+    changed_when: false
+    check_mode: false
+    become: true
+    become_user: postgres
+    when: wipe_pg_control.stat.exists
+
+  - name: Ask the repository what it holds for this node's zone
+    command:
+      argv:
+      - pgbackrest
+      - "--stanza={{ backup_stanza }}"
+      - "--output=json"
+      - info
+    register: wipe_repo_info
+    changed_when: false
+    check_mode: false
+    failed_when: false
+    become: true
+    become_user: postgres
+    when:
+    - wipe_pg_control.stat.exists
+    - backup_repo_configured | bool
+
+  - name: Record whether the repository holds a backup of this node's cluster
+    set_fact:
+      wipe_node_state: >-
+        {{ 'empty' if not wipe_pg_control.stat.exists
+           else 'backed up' if wipe_backups | length > 0
+           else 'unreadable' if backup_repo_configured | bool
+                                and wipe_stanza.status.code | default(-1) | int
+                                    not in [0, 1, 2]
+           else 'not backed up' }}
+    vars:
+      wipe_stanza: >-
+        {{ (wipe_repo_info.stdout | from_json |
+            selectattr('name', 'eq', backup_stanza) | first | default({}))
+           if wipe_repo_info.rc | default(1) == 0 else {} }}
+      wipe_system_id: >-
+        {{ (wipe_control_data.stdout_lines | default([]) |
+            select('search', 'Database system identifier') | first |
+            default(':')).split(':') | last | trim }}
+      wipe_db_ids: >-
+        {{ wipe_stanza.db | default([]) |
+           selectattr('system-id', 'eq', wipe_system_id | int(-1)) |
+           map(attribute='id') | list }}
+      wipe_backups: >-
+        {{ wipe_stanza.backup | default([]) |
+           selectattr('database.id', 'in', wipe_db_ids) | list }}
+
+  - name: Judge this zone by the nodes in it that hold a cluster
+    set_fact:
+      wipe_zone_state: >-
+        {{ 'empty' if wipe_zone_node_states | length == 0
+           else 'backed up' if 'backed up' in wipe_zone_node_states
+           else 'unreadable' if 'unreadable' in wipe_zone_node_states
+           else 'not backed up' }}
+    vars:
+      wipe_zone_node_states: >-
+        {{ nodes_in_zone | map('extract', hostvars) |
+           map(attribute='wipe_node_state', default='empty') |
+           reject('eq', 'empty') | unique | list }}
+    when: inventory_hostname == first_node_in_zone
+
+  when: inventory_hostname in groups.pgedge
+
+- name: Ensure some zone's repository holds a backup of the cluster
+  assert:
+    that: >-
+      'backed up' in zone_states.values() or
+      zone_states.values() | reject('eq', 'empty') | list | length == 0
+    fail_msg: >-
+      No zone's backup repository holds a backup of the cluster running in it,
+      so wiping the cluster would lose its data for good. Nothing has been
+      touched. What each zone reports:
+      {{ zone_states | dict2items | map(attribute='key') |
+         zip(zone_states.values()) | map('join', ': ') | join(', ') }}.
+      Take a backup first, or re-run with -e wipe_without_backup=true if the
+      data is not worth keeping.
+  vars:
+    zone_states: >-
+      {{ dict(groups.pgedge | map('extract', hostvars) |
+              selectattr('wipe_zone_state', 'defined') |
+              map(attribute='zone') | map('string') |
+              zip(groups.pgedge | map('extract', hostvars) |
+                  selectattr('wipe_zone_state', 'defined') |
+                  map(attribute='wipe_zone_state'))) }}
+  run_once: true
+  when: not wipe_without_backup | bool

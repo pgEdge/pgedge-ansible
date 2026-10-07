@@ -1,0 +1,29 @@
+# Commit to a recovery made with playbook.yaml beside this file.
+#
+# Until this runs, every backup the repositories held before the recovery is
+# still usable, and the recovery can be repeated to another target or from
+# another zone. This takes a full backup wherever a zone has no backup of the
+# cluster now in it, and installs the backup schedule again. Under the default
+# retention a new full backup expires the one before it, so run this only once
+# the recovered cluster is the one to keep.
+#
+#   ansible-playbook commit-restore.yaml -i inventory.yaml
+#
+# CHECK the README for how these roles work
+---
+
+# Gather facts everywhere first: finalize_backrest reads other hosts' addresses
+# out of hostvars, which exist only for hosts some play has gathered.
+
+- hosts: all
+  gather_facts: true
+  tasks: []
+
+- hosts: pgedge:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - finalize_backrest

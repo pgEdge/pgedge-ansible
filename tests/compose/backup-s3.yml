@@ -1,0 +1,60 @@
+# Overlay adding an S3-compatible object store, MinIO, to the test network.
+# Layer it onto a base compose file; it does not stand alone:
+#
+#   docker compose -f tests/compose/ultra-ha-rocky9.yml \
+#                  -f tests/compose/backup-s3.yml up -d
+#
+# Like Consul in dcs-consul.yml, MinIO is NOT an Ansible inventory host. It
+# stands in for a store the collection does not manage, reached only through
+# backup_repo_params in tests/vars/backup-s3.yml.
+#
+# Served over TLS from a certificate authority the container makes for itself
+# on first start, because PgBackRest speaks only HTTPS to an object store and
+# because a privately signed endpoint is the case storage_ca_file exists for.
+# Everything is generated inside the container rather than mounted from the
+# checkout: under act, the workflow's files live in the job container, and a
+# bind mount would resolve against a host path that does not exist.
+# tests/prepare-s3.sh reads the CA back out with docker compose exec.
+#
+# The image is Bitnami's frozen build of MinIO. MinIO no longer publishes its
+# own images, and this one carries openssl and mc alongside the server, so one
+# container can make its certificate, serve, and create its bucket.
+
+services:
+  minio:
+    image: bitnamilegacy/minio:2025.5.24
+    hostname: minio
+    # Root, because the certificates and the data are written outside the
+    # Bitnami user's home, and because the image's own entrypoint is bypassed.
+    user: "0"
+    environment:
+      MINIO_ROOT_USER: pgedge-test
+      MINIO_ROOT_PASSWORD: TestS3Secret987
+    entrypoint: ["/bin/bash", "-ec"]
+    # The SAN carries the service name, which is the endpoint the nodes use.
+    # PgBackRest matches the endpoint against the certificate's DNS names, so
+    # an IP address alone would not verify.
+    command:
+      - |
+        mkdir -p /certs /data
+        cd /certs
+        if [ ! -f public.crt ]; then
+          openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+            -subj "/CN=pgEdge test S3 CA" -keyout ca.key -out ca.crt
+          openssl req -newkey rsa:2048 -nodes -subj "/CN=minio" \
+            -keyout private.key -out minio.csr
+          echo "subjectAltName=DNS:minio,IP:192.168.6.21" > san.ext
+          openssl x509 -req -in minio.csr -CA ca.crt -CAkey ca.key \
+            -CAcreateserial -days 30 -extfile san.ext -out public.crt
+        fi
+        minio server /data --address :9000 --certs-dir /certs &
+        until mc --insecure alias set local https://127.0.0.1:9000 \
+            pgedge-test TestS3Secret987 >/dev/null 2>&1; do
+          sleep 1
+        done
+        mc --insecure mb --ignore-existing local/pgbackrest-test
+        touch /tmp/s3-ready
+        wait
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.21

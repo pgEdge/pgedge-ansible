@@ -1,0 +1,531 @@
+---
+# Verify a cluster that was rebuilt from its backup repository.
+#
+# The question this answers is the one no structural check can: did the data
+# come back? An empty cluster satisfies every other assertion in the suite --
+# Patroni has a leader, Spock has a mesh, the repository has a stanza -- so the
+# marker rows seeded before the recovery are what separates a restore from a
+# rebuild. They exist only in archived WAL, never in a backup.
+#
+# Rows alone do not show how they came back, though: Spock would refill a zone
+# that was rebuilt rather than restored just as well. So each zone's system
+# identifier and timeline are compared with what seed-recovery.yml recorded
+# before the wipe. And a targeted pass seeds a second batch after its target,
+# which has to be missing afterwards.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    pg_port: 5432
+    marker_rows: 25
+    # When the wipe started, in epoch seconds, from run-recovery-test.sh.
+    recovery_started: 0
+    # The file seed-recovery.yml wrote before the wipe, from
+    # run-recovery-test.sh: each zone's system identifier and timeline, and
+    # the target a targeted pass seeded. Empty skips the checks that need it.
+    recovery_state_file: ""
+    recovery_state: >-
+      {{ lookup('file', recovery_state_file) | from_json
+         if recovery_state_file > '' else {} }}
+    # The recovery's own arguments, passed through by run-recovery-test.sh.
+    recovery_node: ""
+    recovery_target_type: ""
+    recovery_target: ""
+    zone_count: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      map(attribute='zone') | unique | list | length }}
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+    patroni_svc: >-
+      {{ 'patroni@17-demo' if ansible_os_family == 'Debian' else 'patroni' }}
+    patroni_cfg: >-
+      {{ '/etc/patroni/17-demo.yml' if ansible_os_family == 'Debian'
+         else '/etc/patroni/patroni.yml' }}
+    # The node every zone-wide check below runs against: the one Patroni names
+    # as the zone's leader. The fallback is only there because delegate_to is
+    # templated even on the nodes that skip the task.
+    zone_primary: >-
+      {{ hostvars[first_node_in_zone].zone_leader | default('', true)
+         or first_node_in_zone }}
+
+  tasks:
+  - name: Check Patroni is running on every node
+    command: systemctl is-active {{ patroni_svc }}
+    changed_when: false
+
+  # Each zone's checks run once, on the node Patroni says leads it, rather than
+  # on whichever nodes happen to answer that they are not in recovery. Asking
+  # every node and skipping the replicas passes a zone that has no primary at
+  # all -- every check is skipped there and nothing reports it -- and runs the
+  # checks twice in a zone that has two.
+
+  - name: Ask Patroni which node leads this zone
+    become_user: postgres
+    command: patronictl -c {{ patroni_cfg }} list -f json
+    register: zone_members
+    changed_when: false
+    failed_when: false
+    retries: 30
+    delay: 5
+    until: >-
+      zone_members.rc == 0 and
+      (zone_members.stdout | default('[]', true) | from_json
+       | selectattr('Role', 'eq', 'Leader')
+       | selectattr('State', 'eq', 'running') | list | length) == 1
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Note this zone's leaders
+    set_fact:
+      zone_leaders: >-
+        {{ (zone_members.stdout | default('[]', true) | from_json
+            if zone_members.rc | default(1) == 0 else [])
+           | selectattr('Role', 'eq', 'Leader')
+           | selectattr('State', 'eq', 'running')
+           | map(attribute='Host') | map('regex_replace', ':[0-9]+$', '')
+           | list }}
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Ask the leader whether it is accepting writes
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c "SELECT NOT pg_is_in_recovery()"
+    register: leader_is_primary
+    changed_when: false
+    failed_when: false
+    delegate_to: "{{ zone_leaders | first | default(first_node_in_zone) }}"
+    when:
+    - inventory_hostname == first_node_in_zone
+    - zone_leaders | length == 1
+
+  - name: Assert this zone has exactly one primary
+    assert:
+      that:
+      - zone_leaders | length == 1
+      - zone_leaders | first in nodes_in_zone
+      - leader_is_primary.stdout | default('') | trim == 't'
+      fail_msg: >-
+        Zone {{ zone }} has {{ zone_leaders | length }} running Patroni leaders
+        ({{ zone_leaders | join(', ') or 'none' }}) among
+        {{ nodes_in_zone | join(', ') }}, and the leader answered
+        '{{ leader_is_primary.stdout | default('') | trim or 'nothing' }}' when
+        asked whether it accepts writes. Every check below is of a zone's
+        primary, so a zone without exactly one cannot be verified at all.
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Keep the leader as this zone's primary
+    set_fact:
+      zone_leader: "{{ zone_leaders | first }}"
+    when: inventory_hostname == first_node_in_zone
+
+  # And every zone has to have answered. A zone whose first node never ran the
+  # tasks above -- unreachable, say -- has no leader on record, and its checks
+  # would be skipped below rather than failed.
+
+  - name: Assert every zone named its primary
+    vars:
+      zones: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | map(attribute='zone') | unique | list }}
+      named: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('zone_leader', 'defined')
+           | map(attribute='zone') | unique | list }}
+    assert:
+      that: zones | difference(named) | length == 0
+      fail_msg: >-
+        Zones {{ zones | difference(named) | join(', ') }} reported no primary,
+        so nothing below would check them.
+    run_once: true
+
+  # The restored zone came back through PITR, which keeps the system identifier
+  # the cluster was created with and ends on a new timeline when it promotes.
+  # Every other zone was initialized empty, which mints a new identifier. A
+  # restored zone with a new identifier was rebuilt rather than restored, and
+  # one on its old timeline never replayed and promoted; a rebuilt zone with its
+  # old identifier was never wiped. The marker rows cannot tell any of these
+  # apart, because Spock refills an empty zone just as well.
+
+  - name: Read what this zone is now
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -F'|' -c
+      "SELECT system_identifier,
+              pg_walfile_name(pg_current_wal_lsn())
+         FROM pg_control_system()"
+    register: zone_identity
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when:
+    - inventory_hostname == first_node_in_zone
+    - recovery_state_file > ''
+
+  - name: Assert the restored zone was restored and the others rebuilt
+    vars:
+      before: "{{ recovery_state.zones[zone | string] }}"
+      now_fields: "{{ zone_identity.stdout | trim | split('|') }}"
+      now_id: "{{ now_fields[0] }}"
+      now_tli: "{{ now_fields[1][:8] | int(base=16) }}"
+      restored_zone: "{{ hostvars[recovery_node].zone | string }}"
+    assert:
+      that: >-
+        (zone | string == restored_zone and
+         now_id | string == before.system_identifier | string and
+         now_tli | int > before.timeline | int) or
+        (zone | string != restored_zone and
+         now_id | string != before.system_identifier | string)
+      fail_msg: >-
+        Zone {{ zone }} has system identifier {{ now_id }} on timeline
+        {{ now_tli }}; before the wipe it was {{ before.system_identifier }} on
+        timeline {{ before.timeline }}.
+        {% if zone | string == restored_zone %}
+        This is the zone restored from its repository, so it should have kept
+        its identifier and moved to a later timeline. A new identifier means it
+        was initialized rather than restored; the same timeline means it never
+        replayed the archive and promoted.
+        {% else %}
+        This zone was rebuilt empty and refilled across Spock, so it should
+        have a new identifier. Keeping the old one means it was never wiped.
+        {% endif %}
+      success_msg: >-
+        Zone {{ zone }}:
+        {{ 'restored, same identifier, timeline ' ~ before.timeline ~ ' -> '
+           ~ now_tli if zone | string == restored_zone
+           else 'rebuilt, new identifier' }}.
+    when:
+    - inventory_hostname == first_node_in_zone
+    - recovery_state_file > ''
+
+  # The assertion the whole exercise exists for. On the restored zone these rows
+  # came back through WAL replay; on every other zone they arrived across Spock,
+  # because those zones were rebuilt empty on purpose. Both paths have to work
+  # or the recovery only looked successful.
+  #
+  # The rows a targeted pass wrote after its target are counted apart, so that
+  # they are not mistaken for the first batch and can be asserted absent.
+
+  - name: Count the marker rows this zone came back with
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -F'|' -c
+      "SELECT count(*) FILTER (WHERE id <= {{ marker_rows }}),
+              count(*) FILTER (WHERE id > {{ marker_rows }})
+         FROM recovery_marker"
+    register: marker
+    changed_when: false
+    retries: 60
+    delay: 5
+    until: >-
+      marker.rc == 0 and
+      (marker.stdout | trim | split('|') | first | int) == marker_rows | int
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert the recovery returned the data rather than an empty cluster
+    vars:
+      before_target: "{{ marker.stdout | trim | split('|') | first }}"
+    assert:
+      that: before_target | int == marker_rows | int
+      fail_msg: >-
+        Zone {{ zone }} has {{ before_target }} marker rows, expected
+        {{ marker_rows }}. These rows were written after the last backup and
+        exist only in archived WAL, so a restored zone gets them by replaying
+        the archive and a rebuilt zone gets them across Spock. Zero rows with
+        the table present means the zone was rebuilt but never refilled; no
+        table at all means the restore produced an empty cluster.
+      success_msg: >-
+        Zone {{ zone }} came back with all {{ marker_rows }} marker rows.
+    when: inventory_hostname == first_node_in_zone
+
+  # A targeted pass also wrote a second batch after the target and archived the
+  # WAL holding it, so the repository could replay it. Its absence is what shows
+  # the restore stopped where it was told to rather than at the end of the
+  # archive. Checked only when the recovery was given the very target the seed
+  # recorded: any other target says nothing about where these rows fall.
+
+  - name: Assert the recovery stopped at its target
+    vars:
+      target: "{{ recovery_state.target | default({}) }}"
+      after_target: "{{ marker.stdout | trim | split('|') | last }}"
+    assert:
+      that: after_target | int == 0
+      fail_msg: >-
+        Zone {{ zone }} has {{ after_target }} of the rows written after
+        {{ target.lsn }} on timeline {{ target.timeline }}, which the recovery
+        was told to stop at. Their WAL was in the repository, so the restore
+        replayed past its target: check that recover_postgres passed
+        --type={{ target.type }} and --target to pgbackrest restore.
+      success_msg: >-
+        Zone {{ zone }} holds nothing written after {{ target.lsn }}.
+    when:
+    - inventory_hostname == first_node_in_zone
+    - target.lsn is defined
+    - recovery_target_type == target.type
+    - recovery_target == target.lsn
+
+  # The restored zone kept its own Spock node and had every other zone's entry
+  # stripped before the mesh was rebuilt; the rebuilt zones created theirs from
+  # nothing. Either way each zone should end with one node entry per zone and a
+  # subscription to every zone but itself. A count that is short means a
+  # subscription was never recreated; one that is over means stale metadata from
+  # before the recovery survived, which is the failure that silently diverges.
+
+  - name: Read this zone's Spock catalog
+    become_user: postgres
+    command: >
+      psql -d demo -t -A -F'|' -c
+      "SELECT (SELECT count(*) FROM spock.node),
+              (SELECT count(*) FROM spock.subscription),
+              (SELECT count(*) FROM pg_replication_origin
+                WHERE left(roname, 3) <> 'pg_')"
+    register: spock_state
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert the replication mesh was rebuilt exactly
+    vars:
+      counts: "{{ spock_state.stdout | trim | split('|') }}"
+    assert:
+      that:
+      - counts[0] | int == zone_count | int
+      - counts[1] | int == (zone_count | int) - 1
+      - counts[2] | int == (zone_count | int) - 1
+      fail_msg: >-
+        Zone {{ zone }} has {{ counts[0] }} Spock node entries,
+        {{ counts[1] }} subscriptions and {{ counts[2] }} replication origins.
+        Expected {{ zone_count }}, {{ (zone_count | int) - 1 }} and
+        {{ (zone_count | int) - 1 }}. Too many means metadata from before the
+        recovery survived, and a subscription that resumes against a stale
+        origin acknowledges changes it never applied.
+    when: inventory_hostname == first_node_in_zone
+
+  # A rebuilt zone carries a system identifier its stanza never saw, so
+  # recover_postgres ran stanza-upgrade on it. If that did not take, archiving
+  # is refused and pg_wal keeps every segment until the disk fills.
+
+  - name: Read the archiver's history
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -F'|' -c
+      "SELECT archived_count,
+              CASE
+                WHEN last_archived_time IS NULL THEN 'never archived'
+                WHEN last_failed_time IS NULL THEN 'healthy'
+                WHEN last_archived_time > last_failed_time THEN 'healthy'
+                ELSE 'failing'
+              END
+         FROM pg_stat_archiver"
+    register: archiver
+    changed_when: false
+    retries: 12
+    delay: 5
+    until: (archiver.stdout | trim | split('|'))[1] == 'healthy'
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert the zone can archive again after the recovery
+    vars:
+      fields: "{{ archiver.stdout | trim | split('|') }}"
+    assert:
+      that: fields[1] == 'healthy'
+      fail_msg: >-
+        WAL archiving on zone {{ zone }} is {{ fields[1] }} after the recovery.
+        A zone rebuilt from an empty data directory carries a system identifier
+        its stanza has never seen, and PgBackRest refuses to archive until
+        stanza-upgrade records it. Check recover_postgres's stanza step for
+        this zone.
+    when: inventory_hostname == first_node_in_zone
+
+  # The recovery takes no backups, so that it can be tried again to another
+  # target or from another zone with every backup still in place. Anything
+  # finished since the wipe began was taken by the recovery -- or by a
+  # schedule the wipe should have removed -- and under the default retention
+  # it has already expired the backup the recovery restored from.
+  #
+  # Named, because the repository may hold more than this zone's stanza: every
+  # zone shares an S3 bucket, and an unnamed info lists all of them.
+
+  - name: Ask the repository what it holds for this zone
+    become_user: postgres
+    command: pgbackrest --output=json --stanza=pgedge-demo-{{ zone }} info
+    register: repo_info
+    changed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert the recovery took no backup
+    vars:
+      stanza: "{{ repo_info.stdout | from_json | first }}"
+      taken: >-
+        {{ stanza.backup | default([]) |
+           selectattr('timestamp.stop', 'ge', recovery_started | int) |
+           map(attribute='label') | list }}
+    assert:
+      that: taken | length == 0
+      fail_msg: >-
+        Stanza {{ stanza.name }} holds backups finished after the wipe began:
+        {{ taken | join(', ') }}. The recovery must leave the repositories as
+        it found them until commit-restore.yaml runs; a backup taken before
+        then expires the one the recovery restored from.
+      success_msg: >-
+        Zone {{ zone }}'s repository holds only the backups it had before the
+        recovery.
+    when: inventory_hostname == first_node_in_zone
+
+# Every replica should have rebuilt from its own zone's leader.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+    patroni_cfg: >-
+      {{ '/etc/patroni/17-demo.yml' if ansible_os_family == 'Debian'
+         else '/etc/patroni/patroni.yml' }}
+
+  tasks:
+  # Waited for, not sampled. A replica rebuilds by cloning its zone's leader,
+  # and in a recovery that leader holds the whole refilled dataset rather than
+  # the nearly-empty one a fresh deployment starts from, so the clone takes real
+  # time. A single reading taken the moment the playbook finishes catches the
+  # zone mid-build and calls it broken.
+
+  - name: Wait for every node in the zone to come back
+    become_user: postgres
+    command: >
+      patronictl -c {{ patroni_cfg }} list -f json
+    register: patroni_list
+    changed_when: false
+    failed_when: false
+    retries: 120
+    delay: 10
+    until: >-
+      patroni_list.rc == 0 and
+      (patroni_list.stdout | default('[]', true) | from_json |
+       selectattr('State', 'in', ['running', 'streaming']) | list | length)
+      == (nodes_in_zone | length)
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert every node in the zone came back
+    vars:
+      members: "{{ patroni_list.stdout | from_json }}"
+      running: >-
+        {{ members | selectattr('State', 'in', ['running', 'streaming']) | list }}
+    assert:
+      that:
+      - members | length == nodes_in_zone | length
+      - running | length == nodes_in_zone | length
+      - members | selectattr('Role', 'eq', 'Leader') | list | length == 1
+      fail_msg: >-
+        Zone {{ zone }} has {{ members | length }} Patroni members of
+        {{ nodes_in_zone | length }} expected, {{ running | length }} of them
+        running or streaming, after waiting twenty minutes. Members report:
+        {{ members | map(attribute='Host') | zip(members | map(attribute='State'))
+           | map('join', '=') | join(', ') }}.
+        A member stuck in "creating replica" is still cloning and needs longer;
+        one that is "stopped" or missing altogether means Patroni could not
+        rebuild it from the recovered leader -- check its journal.
+      success_msg: >-
+        Zone {{ zone }}: {{ running | length }} members running, one leader.
+    when: inventory_hostname == first_node_in_zone
+
+# Every zone's writes have to reach every other zone, and nothing above shows
+# that. The marker rows reached the rebuilt zones through the initial copy, not
+# through streaming, and the mesh counts say the subscriptions exist, not that
+# anything flows through them. The direction most at risk is out of a rebuilt
+# zone: its Spock node is new, so its replication set holds only what was added
+# to it, and its tables arrived by synchronize_structure rather than by DDL
+# anyone ran there. A table missing from that set replicates nothing, silently.
+#
+# So each zone's leader changes a marker row of its own -- the row whose id is
+# its zone number, so the count the first play checks stays the same and a
+# re-run still passes -- and every other zone waits to see the change. The note
+# carries the time it was written, so a value left by an earlier run cannot
+# stand in for this one.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    marker_wait_retries: 60
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    first_node_in_zone: "{{ nodes_in_zone | first }}"
+    # The leader the first play found and asserted for each zone.
+    zone_primary: >-
+      {{ hostvars[first_node_in_zone].zone_leader | default('', true)
+         or first_node_in_zone }}
+
+  tasks:
+  - name: Change this zone's own marker row
+    become_user: postgres
+    command: >
+      psql -d demo -q -t -A -v ON_ERROR_STOP=1 -c
+      "UPDATE recovery_marker
+          SET note = format('written on zone %s after the recovery at %s',
+                            {{ zone | int }}, clock_timestamp())
+        WHERE id = {{ zone | int }}
+       RETURNING note"
+    register: writeback
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Wait for every other zone's change to arrive here
+    become_user: postgres
+    vars:
+      writers: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('writeback.stdout', 'defined')
+           | rejectattr('zone', 'eq', zone) | list }}
+      expected: >-
+        {{ writers | map(attribute='zone') | map('int')
+           | zip(writers | map(attribute='writeback.stdout') | map('trim'))
+           | map('join', '|') | sort | list }}
+    command: >
+      psql -d demo -t -A -F'|' -c
+      "SELECT id, note FROM recovery_marker
+        WHERE id IN ({{ writers | map(attribute='zone') | map('int')
+                        | join(', ') }})
+        ORDER BY id"
+    register: writeback_seen
+    changed_when: false
+    retries: "{{ marker_wait_retries }}"
+    delay: 5
+    until: writeback_seen.stdout_lines | sort == expected
+    failed_when: false
+    delegate_to: "{{ zone_primary }}"
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Assert writes made after the recovery reach every zone
+    vars:
+      writers: >-
+        {{ groups['pgedge'] | map('extract', hostvars)
+           | selectattr('writeback.stdout', 'defined')
+           | rejectattr('zone', 'eq', zone) | list }}
+      expected: >-
+        {{ writers | map(attribute='zone') | map('int')
+           | zip(writers | map(attribute='writeback.stdout') | map('trim'))
+           | map('join', '|') | sort | list }}
+    assert:
+      that: writeback_seen.stdout_lines | sort == expected
+      fail_msg: >-
+        Zone {{ zone }} did not receive every other zone's change after
+        {{ marker_wait_retries | int * 5 }} seconds. Expected {{ expected }},
+        found {{ writeback_seen.stdout_lines }}. A change missing from a rebuilt
+        zone means that zone's Spock node is not publishing recovery_marker:
+        check spock.replication_set_table on it, since its tables arrived by
+        synchronize_structure rather than by DDL run there.
+      success_msg: >-
+        Zone {{ zone }} received the changes made on every other zone after
+        the recovery.
+    when: inventory_hostname == first_node_in_zone

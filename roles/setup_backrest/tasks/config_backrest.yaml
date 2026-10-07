@@ -8,13 +8,147 @@
     group: "{{ os_user }}"
   become: true
 
+# Rewriting pgbackrest.conf on a running cluster takes effect at once: the
+# next archive-push reads the new file. A wrong value there -- a mistyped
+# object-store secret, or the one backup_repo_cipher an upgraded multi-zone
+# cluster set for every zone when each zone's repository has its own -- breaks
+# archiving on a live primary the moment the file lands, and nothing in this
+# role would notice.
+# The repository checks that do notice come much later in the deployment, after
+# Patroni and Spock have been reconfigured on top of it.
+#
+# So when a configuration already exists and the new one differs, the new one
+# is rendered beside it first and both are asked to read the stanza. A current
+# file that reads it and a candidate that cannot is a change that would break a
+# working repository, and it is refused before the real file is touched.
+#
+# Everything else passes. A fresh node has no current file. A current file that
+# cannot read the repository either -- an SSH repository whose backup server has
+# not yet authorized this node, an earlier mistake being corrected -- has
+# nothing to protect. A stanza that does not exist yet reads as status 1, which
+# the candidate reports too, so a new repository is not mistaken for a broken
+# one. And an identical candidate needs no asking, so a re-run asks nothing.
+#
+# The candidate holds the same secrets as the real file, so it gets the same
+# owner and mode and is always removed. Check mode skips the comparison; it
+# would have to write the candidate to make it.
+
+- name: Check for an existing PgBackRest configuration
+  stat:
+    path: /etc/pgbackrest/pgbackrest.conf
+  register: backrest_current_conf
+  become: true
+
+- name: Ensure a new configuration can still read the repository
+  when:
+  - backrest_current_conf.stat.exists
+  - not ansible_check_mode
+  block:
+  - name: Render the new PgBackRest configuration beside the current one
+    template:
+      src: templates/pgbackrest.conf.j2
+      dest: /etc/pgbackrest/pgbackrest.conf.candidate
+      mode: "0600"
+    become: true
+    become_user: "{{ os_user }}"
+    diff: false
+    # A scratch file made and removed on every run is not a change.
+    changed_when: false
+
+  - name: Compare the new PgBackRest configuration with the current one
+    stat:
+      path: /etc/pgbackrest/pgbackrest.conf.candidate
+    register: backrest_candidate_conf
+    become: true
+
+  - name: Compare what each configuration can read
+    when: >-
+      backrest_candidate_conf.stat.checksum
+      != backrest_current_conf.stat.checksum
+    block:
+    # Info exits 0 for a repository it could not read and says so only in the
+    # stanza's status code, so the code is what is compared: 0, 1 and 2 are a
+    # repository that was looked inside, anything else is one that was not.
+    # Neither command line carries a secret; the files do.
+
+    - name: Ask the repository for the stanza through each configuration
+      command:
+        argv:
+        - pgbackrest
+        - "--config=/etc/pgbackrest/{{ item }}"
+        - "--stanza={{ backup_stanza }}"
+        - "--output=json"
+        - info
+      loop:
+      - pgbackrest.conf
+      - pgbackrest.conf.candidate
+      register: backrest_conf_info
+      changed_when: false
+      failed_when: false
+      become: true
+      become_user: "{{ os_user }}"
+
+    - name: Record what each configuration reports for the stanza
+      set_fact:
+        backrest_conf_reports: >-
+          {{ (backrest_conf_reports if ansible_loop.index0 > 0 else []) +
+             [(item.stdout | from_json |
+               selectattr('name', 'eq', backup_stanza) | first | default({}))
+              if item.rc == 0 else {}] }}
+      loop: "{{ backrest_conf_info.results }}"
+      loop_control:
+        extended: true
+        label: "{{ item.item }}"
+
+    - name: Ensure the new configuration does not lose the repository
+      assert:
+        that:
+        - >-
+          backrest_conf_reports[0].status.code | default(-1) | int
+          not in [0, 1, 2]
+          or backrest_conf_reports[1].status.code | default(-1) | int
+          in [0, 1, 2]
+        fail_msg: >-
+          The PgBackRest configuration this run would write on
+          {{ inventory_hostname }} cannot read stanza {{ backup_stanza }}, and
+          the configuration already there can, so writing it would break
+          archiving and backups on this node at once. PgBackRest reported:
+          {{ (backrest_conf_reports[1].repo | default([]) |
+              map(attribute='status.message') | join('; '))
+             or backrest_conf_reports[1].status.message | default('')
+             or (backrest_conf_info.results[1].stderr | default('')) }}.
+          The usual causes are a backup_repo_cipher that is not the one this
+          zone's repository is encrypted with -- an upgraded multi-zone cluster
+          needs each zone's own -- or a wrong object-store key in
+          backup_repo_params. The current /etc/pgbackrest/pgbackrest.conf is
+          unchanged. If the repository is meant to move somewhere this node
+          cannot reach yet, remove that file and run again.
+
+  always:
+  - name: Remove the rendered candidate configuration
+    file:
+      path: /etc/pgbackrest/pgbackrest.conf.candidate
+      state: absent
+    become: true
+    changed_when: false
+
+# The previous file is kept on every change, so a mistake the comparison above
+# could not see -- an SSH repository this node cannot reach to ask -- is one
+# copy away from undone. Ansible keeps the copy's owner and mode, so it is as
+# private as the original, but it holds the old secrets too: remove the copies
+# after rotating a key that leaked.
+
 - name: Create configuration file for PgBackRest
   template:
     src: templates/pgbackrest.conf.j2
     dest: /etc/pgbackrest/pgbackrest.conf
     mode: "0600"
+    backup: true
   become: true
   become_user: "{{ os_user }}"
+  # The file holds the repository cipher passphrase and any object-store
+  # secret key, and --diff would print both.
+  diff: false
 
 - name: Create a log folder for PgBackRest
   file:

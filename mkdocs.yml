@@ -59,6 +59,7 @@ nav:
       - Tutorial - Deploying an Ultra-HA Cluster: ultra_ha.md
       - Customizing a Playbook: configure_playbook.md
   - Using the pgEdge Ansible Collection: usage.md
+  - Recovering a Cluster from Backup: recovery.md
   - Configuration Reference:
       - Configuration Overview: configuration.md
       - Inventory Structure: configuration/inventory.md
@@ -88,6 +89,9 @@ nav:
       - setup_haproxy: roles/setup_haproxy.md
       - setup_pgedge: roles/setup_pgedge.md
       - setup_backrest: roles/setup_backrest.md
+      - finalize_backrest: roles/finalize_backrest.md
+      - wipe_cluster: roles/wipe_cluster.md
+      - recover_postgres: roles/recover_postgres.md
   - Troubleshooting:
       - Troubleshooting: troubleshooting.md
       - Installation Issues: troubleshooting/installation.md
@@ -100,5 +104,8 @@ nav:
       - pgBouncer Issues: troubleshooting/pgbouncer.md
       - Spock Replication Issues: troubleshooting/spock.md
       - PgBackRest Issues: troubleshooting/backup.md
+  - Release Notes:
+      - Release Notes: release_notes.md
+      - Unreleased: release_notes/unreleased.md
   - Changelog: CHANGELOG.md
   - License: LICENSE.md

@@ -1,0 +1,51 @@
+---
+
+# Find the zone's Patroni leader. Anything that writes to the cluster or backs
+# it up has to run there, and after a failover that is no longer the zone's
+# first node. In S3 mode a node's pgbackrest.conf names only its own Postgres as
+# pg1, so stanza-create and backup run anywhere else fail with "unable to find
+# primary cluster". The archive-command wait in config_postgres_ha needs the
+# leader too, because only the leader archives. The replicas are no good for
+# any of this: setup_patroni waits for the primary and not for them, so on a
+# fresh deployment a replica can still be cloning when this runs and has no
+# Postgres to ask.
+#
+# Any member can answer, so the zone's first node asks and the others read its
+# answer through hostvars.
+#
+# patronictl shows Host as host:port once any member runs on a port other than
+# 5432 (or two members share a host), so the port is stripped before the name
+# is compared with the inventory. pipefail keeps a patronictl failure from
+# passing as an empty list.
+
+- name: Find this zone's leader
+  shell: |-
+    set -o pipefail
+    {{ ctl }} list {{ patroni_scope }} -f json \
+        | jq -r '.[] | select(.Role == "Leader") | .Host | sub(":[0-9]+$"; "")'
+  args:
+    executable: /bin/bash
+  vars:
+    ctl: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
+  register: zone_leader
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: inventory_hostname == first_node_in_zone
+
+# Without a leader every task gated on it would match no host and skip, and the
+# role would carry on without a stanza or a backup instead of saying why.
+
+- name: Ensure this zone has exactly one leader among its nodes
+  assert:
+    that:
+    - zone_leader.stdout_lines | length == 1
+    - zone_leader.stdout | trim in nodes_in_zone
+    fail_msg: >-
+      Patroni cluster {{ patroni_scope }} should have one leader among
+      {{ nodes_in_zone | join(', ') }}, but patronictl list reported
+      {{ zone_leader.stdout_lines | join(', ') if zone_leader.stdout_lines
+         else 'none' }}. The repository cannot be written to until the cluster
+      has a leader; see 'patronictl list {{ patroni_scope }}' on
+      {{ inventory_hostname }}.
+  when: inventory_hostname == first_node_in_zone

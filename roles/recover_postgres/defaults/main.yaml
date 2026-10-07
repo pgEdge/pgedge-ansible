@@ -1,0 +1,40 @@
+---
+
+# The pgEdge node the cluster is restored from, by its inventory hostname. It
+# has to be the first node of its zone. That zone is restored from its
+# repository; every other zone is built empty and copied from it across Spock,
+# because zones restored from their own repositories would come back to
+# independent moments with no common position to replicate forward from.
+
+recovery_node: ""
+
+# Which point in the repository's history to restore to. Left unset, PgBackRest
+# restores the newest backup and replays every WAL segment the repository holds,
+# which is what a recovery from a lost cluster wants. recovery_target_type takes
+# one of PgBackRest's --type values -- time, xid, lsn, name, or immediate -- and
+# recovery_target the value it applies to. Immediate, like an empty type, takes
+# none.
+#
+# recovery_target_timeline is PgBackRest's --target-timeline. Leave it empty to
+# follow the newest timeline. A second point-in-time recovery to a later moment
+# than the first has to name the timeline the first one started from, or it
+# follows the timeline the first one created instead.
+#
+# recovery_backup_set names a specific backup to restore, as `pgbackrest info`
+# labels them. Leave it empty to take the newest backup that can reach the
+# target.
+
+recovery_target_type: ""
+recovery_target: ""
+recovery_target_timeline: ""
+recovery_backup_set: ""
+
+# How long to wait for the restored node to finish replaying WAL. Not a retry
+# count: how long recovery takes is a property of the database. The wait gives
+# up only when nothing has moved for recovery_stall_minutes; recovery_max_hours
+# is a backstop against a wait that never returns, and also bounds the restore
+# itself.
+
+recovery_stall_minutes: 15
+recovery_poll_seconds: 30
+recovery_max_hours: 24

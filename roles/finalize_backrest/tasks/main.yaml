@@ -1,0 +1,42 @@
+---
+
+# This role is everything about a backup repository that needs a live Postgres
+# cluster to be talking to: the backup role, the archive commands of a non-HA
+# cluster, the stanza, the first backup and the schedule that follows it.
+# setup_backrest writes the configuration files and runs early, before Patroni
+# starts Postgres; this runs last, once the cluster is wired together and has
+# something in it worth capturing.
+#
+# The split matters because of what "the first backup" means on a cluster that
+# is not new. A deployment run against hosts whose repository has been
+# collecting backups for months must not add one of its own, and this role is
+# the only place that decides.
+
+# Asked again here even though setup_postgres asks it before initializing a data
+# directory, because that earlier check is allowed to skip a repository it
+# cannot reach and this one is not. This is where the decision to write is made.
+
+- name: Ensure this cluster is the one the repository describes
+  include_role:
+    name: role_config
+    tasks_from: repo_identity
+  when:
+  - inventory_hostname in groups.pgedge
+  - backup_repo_configured | bool
+  - inventory_hostname == first_node_in_zone
+
+# Backup "clients" are any pgedge node. Every node needs the backup role to
+# exist, but only the zone's first node speaks for the repository.
+
+- include_tasks: setup_client.yaml
+  when:
+  - inventory_hostname in groups.pgedge
+  - backup_repo_configured | bool
+
+# A dedicated backup server drives the repository itself in SSH mode, so the
+# stanza and the first backup are taken from there rather than from the node.
+
+- include_tasks: setup_server.yaml
+  when:
+  - groups.backup is defined
+  - inventory_hostname in groups.backup

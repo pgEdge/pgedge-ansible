@@ -2,7 +2,7 @@
 
 The `install_backrest` role installs PgBackRest, a modern backup and restore
 solution for Postgres. The role also installs the cron service so the
-`setup_backrest` role can schedule automated backups.
+`finalize_backrest` role can schedule automated backups.
 
 The role performs the following tasks on inventory hosts:
 
@@ -63,13 +63,17 @@ The PgBackRest package installs:
 - The log directory at `/var/log/pgbackrest/`.
 
 !!! note "Backup Configuration"
-    This role only installs PgBackRest. The `setup_backrest` role handles
-    backup configuration, repository setup, and scheduling.
+    This role only installs PgBackRest. The `setup_backrest` role writes the
+    backup configuration, and the `finalize_backrest` role creates the
+    repository stanza, takes the first backup, and schedules backups.
 
 ## Usage Examples
 
 In the following example, the playbook installs PgBackRest as part of a
-complete pgEdge deployment with backup configuration:
+complete pgEdge deployment with backup configuration. `setup_backrest` writes
+configuration only, so it runs before `setup_postgres`; `finalize_backrest`
+needs a running cluster, so it runs last, on the pgEdge nodes and the backup
+server together:
 
 ```yaml
 - hosts: pgedge
@@ -80,8 +84,24 @@ complete pgEdge deployment with backup configuration:
     - install_repos
     - install_pgedge
     - install_backrest
-    - setup_postgres
     - setup_backrest
+    - setup_postgres
+    - setup_pgedge
+
+- hosts: backup
+  collections:
+    - pgedge.platform
+  roles:
+    - init_server
+    - install_repos
+    - install_backrest
+    - setup_backrest
+
+- hosts: pgedge:backup
+  collections:
+    - pgedge.platform
+  roles:
+    - finalize_backrest
 ```
 
 ## Artifacts
@@ -103,4 +123,5 @@ Vixie cron support. Both distributions install the `pgedge-pgbackrest` package.
 ## Idempotency
 
 This role is idempotent and safe to re-run on inventory hosts. The role
-may update packages to the latest available version when newer versions exist.
+installs packages that are missing and leaves installed packages at their
+current version.

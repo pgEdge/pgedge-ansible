@@ -32,4 +32,30 @@ documentation: https://github.com/pgEdge/pgedge-ansible/blob/main/README.md
 
 issues: https://github.com/pgEdge/pgedge-ansible/issues
 
-build_ignore: []
+# ansible-galaxy builds from every file in the tree and ignores .gitignore, so
+# anything a local run leaves behind would ship in the tarball unless it is
+# listed here. That includes private keys: the sample playbooks write the etcd
+# CA, per-node etcd and Postgres keys under tls/ and SSH host keys under
+# host-keys/, and the test harness writes its SSH key to tests/.ssh and its
+# object-store credentials to tests/.s3.
+#
+# Each pattern is matched with fnmatch against the path relative to this
+# directory, and a matching directory is skipped whole. A bare name matches only
+# at the top level; the "*/" form catches the same name at any depth below it,
+# because fnmatch's "*" also matches "/".
+#
+# tests/ is left out entirely. It holds the Docker harness, inventories and
+# checks run from a checkout, and nothing in an installed collection reads it.
+build_ignore:
+- tests
+- .github
+- .claude
+- .ansible
+- site
+- tls
+- '*/tls'
+- host-keys
+- '*/host-keys'
+- '*.key'
+- '*.pem'
+- '*.tar.gz'

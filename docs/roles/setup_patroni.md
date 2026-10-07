@@ -1,4 +1,4 @@
-⎈# setup_patroni
+# setup_patroni
 
 The `setup_patroni` role configures and starts Patroni for high availability
 Postgres cluster management. The role generates the Patroni configuration file
@@ -10,6 +10,9 @@ The role performs the following tasks on inventory hosts:
 
 - Generate TLS certificates for communicating with etcd, when the cluster uses
   an etcd store.
+- Install the replica method that restores from the backup repository, when
+  `patroni_replica_from_backup` is enabled and a backup repository is
+  configured.
 - Generate the `patroni.yaml` configuration file from a template.
 - Disable the native Postgres systemd service so Patroni takes control.
 - Start Patroni on the primary node first, then on all replica nodes.
@@ -66,6 +69,7 @@ This role uses the following parameters from the inventory file:
 | `patroni_tls_dir` | Directory for Patroni TLS certificate files. |
 | `patroni_dcs` | Distributed configuration store type and connection settings. |
 | `patroni_namespace` | Key prefix Patroni uses within the store. Set one per zone when a single store spans zones and the prefix is what must differ. |
+| `patroni_replica_from_backup` | Rebuild replicas with a PgBackRest delta restore before cloning from the leader. |
 | `patroni_scope` | Cluster name Patroni uses within the store. Set one per zone when a single store spans zones. |
 | `synchronous_mode` | Enable synchronous replication mode. |
 | `synchronous_mode_strict` | Require a synchronous replica for all commits. |
@@ -169,6 +173,7 @@ This role generates the following files on inventory hosts:
 | `{{ patroni_tls_dir }}/patroni.key` | New | Private key for encrypting traffic to etcd. Created for etcd stores only. |
 | `{{ patroni_tls_dir }}/patroni.crt` | New | Certificate for communicating with etcd as a client. Created for etcd stores only. |
 | `{{ pg_home }}/.patroni_pgpass` | New | Password file for Patroni database connections with mode 600. |
+| `/usr/local/bin/patroni_pgbackrest_replica` | New | Replica method that restores from the backup repository when the newest backup can become a replica of the leader, and on Debian then creates the `/etc/postgresql` configuration directory. Installed only when `patroni_replica_from_backup` is enabled and a backup repository is configured. |
 
 ## Platform-Specific Behavior
 
@@ -176,6 +181,14 @@ On Debian-based systems, the configuration file is named
 `{{ pg_version }}-{{ cluster_name }}.yml`. For example, the default settings
 produce a file named `/etc/patroni/17-demo.yml`. On RHEL-based systems, the
 configuration file is named `patroni.yml`.
+
+Debian keeps `postgresql.conf` in `/etc/postgresql/<version>/<cluster>`, which
+neither `pg_basebackup` nor a PgBackRest restore creates, and Patroni cannot
+start a replica without it. Debian replicas are therefore built with
+`pg_clonecluster`, which creates the directory before it clones. With
+`patroni_replica_from_backup` enabled, the restore runs first through
+`/usr/local/bin/patroni_pgbackrest_replica`, which creates the directory after
+restoring, and `pg_clonecluster` is the fallback.
 
 ## Idempotency
 

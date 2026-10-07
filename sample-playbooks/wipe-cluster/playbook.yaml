@@ -1,0 +1,27 @@
+# Tear down a pgEdge cluster so it can be deployed or recovered again.
+#
+# This stops Postgres, Patroni, pgBouncer and the collection's etcd on every
+# pgEdge node, removes the cluster from any other configuration store, and
+# erases their configuration and data. It also removes the scheduled backups.
+# It never touches a backup repository: what it erases survives only in the
+# backups, so it refuses to wipe a cluster that no zone holds a backup of.
+#
+# Run it with the inventory the cluster was deployed with:
+#
+#   ansible-playbook playbook.yaml -i ../ultra-ha/inventory.yaml \
+#     -e wipe_confirm=true
+#
+# Then deploy again, or recover from the repository with the playbook in
+# ../ultra-ha-recover/.
+#
+# CHECK the README for how these roles work
+---
+
+- hosts: pgedge:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - wipe_cluster

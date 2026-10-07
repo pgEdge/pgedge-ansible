@@ -1,0 +1,51 @@
+---
+
+# The zone restored from its repository. Guarded against an unset or misspelled
+# recovery_node so that validation can report it, rather than failing while
+# Ansible is still gathering variables.
+
+recovery_zone: >-
+  {{ hostvars[recovery_node].zone
+     if recovery_node in (groups['pgedge'] | default([])) else '' }}
+
+# Computed from the inventory rather than read out of the restored node's own
+# variables: nodes_in_zone is a role variable, and those never cross hosts.
+
+recovery_zone_first_node: >-
+  {{ groups['pgedge'] | map('extract', hostvars) |
+     selectattr('zone', 'eq', recovery_zone) |
+     map(attribute='inventory_hostname') | list | first | default('') }}
+
+# The restore, as an argument list, so an unset option contributes nothing.
+#
+# --delta because setup_postgres has already initialized the data directory;
+# the restore replaces what is there and removes the rest.
+#
+# --target-action=promote leaves Postgres promoted at the target rather than
+# paused there. An immediate target needs it too: Postgres treats reaching
+# consistency as reaching a target, and PgBackRest's default action is pause.
+
+recovery_restore_args: >-
+  {{ ['--stanza=' + backup_stanza, '--delta'] +
+     (['--set=' + recovery_restore_set] if recovery_restore_set > '' else []) +
+     (['--type=' + recovery_target_type] if recovery_target_type > '' else []) +
+     (['--target=' + recovery_target] if recovery_target > '' else []) +
+     (['--target-timeline=' + recovery_target_timeline | string]
+      if recovery_target_timeline | string > '' else []) +
+     (['--target-action=promote'] if recovery_target_type > '' else []) +
+     ['restore'] }}
+
+# Where the restored node logs while it replays WAL outside Patroni.
+
+recovery_log: "{{ pg_home }}/recover_postgres.log"
+
+# Archive to the repository while the restored node runs outside Patroni. The
+# node's own configuration may not say to -- on Debian it is the one
+# setup_postgres just wrote, with a placeholder -- and the WAL and timeline
+# history written at promotion have to reach the repository, or no later
+# restore can follow the timeline this one creates.
+
+recovery_postgres_options: >-
+  -c config_file={{ pg_config_dir }}/postgresql.conf
+  -c archive_mode=on
+  -c 'archive_command=pgbackrest --stanza={{ backup_stanza }} archive-push %p'

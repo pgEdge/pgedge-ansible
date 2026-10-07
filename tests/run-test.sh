@@ -5,10 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
-  echo "Usage: $0 <scenario> <os> [dcs] [--keep]"
+  echo "Usage: $0 <scenario> <os> [dcs] [backup] [--keep]"
   echo "  scenario: simple-cluster | ultra-ha"
   echo "  os:       debian12 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
+  echo "  backup:   ssh (default) | s3 -- the repository; s3 is ultra-ha only"
   echo "  --keep:   don't tear down containers after test"
   exit 1
 }
@@ -16,16 +17,17 @@ usage() {
 SCENARIO="${1:-}"
 OS="${2:-}"
 DCS="etcd3"
+BACKUP="ssh"
 KEEP=false
 
-if [ -n "${3:-}" ] && [ "$3" != "--keep" ]; then
-  DCS="$3"
-fi
-
-for arg in "$@"; do
-  if [ "$arg" = "--keep" ]; then
-    KEEP=true
-  fi
+# Everything after the OS is recognised by its value, so the DCS and the backup
+# type can each be given without the other.
+for arg in "${@:3}"; do
+  case "$arg" in
+    --keep) KEEP=true ;;
+    ssh|s3) BACKUP="$arg" ;;
+    *) DCS="$arg" ;;
+  esac
 done
 
 if [ -z "$SCENARIO" ] || [ -z "$OS" ]; then
@@ -75,6 +77,34 @@ if [ "$DCS" != "etcd3" ]; then
   PROJECT_NAME="${PROJECT_NAME}-${DCS}"
 fi
 
+# The repository. SSH layers the backup servers onto the inventory; S3 adds the
+# MinIO container and the variables pointing at it, and has no backup servers,
+# which init_server would refuse in an S3 zone. A scenario without an SSH layer
+# deploys no backup servers at all, which is the simple cluster's normal case.
+SSH_INVENTORY="$SCRIPT_DIR/inventories/${SCENARIO}-ssh.yml"
+INVENTORY_ARGS=(-i "$INVENTORY")
+
+case "$BACKUP" in
+  ssh)
+    if [ -f "$SSH_INVENTORY" ]; then
+      INVENTORY_ARGS+=(-i "$SSH_INVENTORY")
+    fi
+    ;;
+  s3)
+    if [ "$SCENARIO" != "ultra-ha" ]; then
+      echo "ERROR: an S3 repository is only tested with ultra-ha"
+      exit 1
+    fi
+    COMPOSE_ARGS+=(-f "$SCRIPT_DIR/compose/backup-s3.yml")
+    EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/backup-s3.yml")
+    PROJECT_NAME="${PROJECT_NAME}-s3"
+    ;;
+  *)
+    echo "ERROR: unknown backup type: $BACKUP"
+    usage
+    ;;
+esac
+
 cleanup() {
   if [ "$KEEP" = false ]; then
     echo "==> Tearing down containers..."
@@ -91,6 +121,8 @@ trap cleanup EXIT
 # deploy, in particular a cluster with pgbouncer_enabled unset.
 echo "==> Step 0: Checking rendered templates..."
 python3 "$SCRIPT_DIR/render/check-haproxy.py"
+python3 "$SCRIPT_DIR/render/check-patroni.py"
+python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
 
 # Step 1: Generate SSH keypair and copy to Docker build context
 echo "==> Step 1: Ensuring SSH keypair exists..."
@@ -113,8 +145,9 @@ docker compose -p "$PROJECT_NAME" "${COMPOSE_ARGS[@]}" up -d
 
 # Step 4: Wait for SSH
 echo "==> Step 4: Waiting for SSH on all containers..."
-# Extract IPs from inventory
-HOSTS=$(grep -oP '192\.168\.6\.\d+' "$INVENTORY" | sort -u)
+# Extract IPs from the inventories in use
+HOSTS=$(ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" \
+  ansible all "${INVENTORY_ARGS[@]}" --list-hosts | tail -n +2)
 MAX_WAIT=60
 
 for host in $HOSTS; do
@@ -151,10 +184,17 @@ if [ "$DCS" = "consul" ]; then
   echo "    Consul leader elected"
 fi
 
+# Step 4c: Wait for the object store and hand its CA to the nodes
+if [ "$BACKUP" = "s3" ]; then
+  echo "==> Step 4c: Preparing the S3 repository..."
+  "$SCRIPT_DIR/prepare-s3.sh" "$PROJECT_NAME" "${COMPOSE_ARGS[@]}" -- \
+    "${INVENTORY_ARGS[@]}" --private-key "$SCRIPT_DIR/.ssh/id_ed25519"
+fi
+
 # Step 5: Build and install Ansible collection
 echo "==> Step 5: Building and installing Ansible collection..."
 cd "$PROJECT_DIR"
-make install
+make clean install
 
 # Step 6: Install Galaxy dependencies
 echo "==> Step 6: Installing Galaxy dependencies..."
@@ -165,7 +205,7 @@ ansible-galaxy collection install -r "$PROJECT_DIR/galaxy.template.yml" --force 
 echo "==> Step 7: Running playbook: $PLAYBOOK"
 ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
   "$PLAYBOOK" \
-  -i "$INVENTORY" \
+  "${INVENTORY_ARGS[@]}" \
   --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
   "${EXTRA_VARS[@]}" \
   -v
@@ -175,6 +215,7 @@ echo "==> Step 7b: Checking the pooler roles are idempotent..."
 "$SCRIPT_DIR/check-idempotence.sh" \
   "$INVENTORY" \
   "$PLAYBOOK" \
+  "${INVENTORY_ARGS[@]:2}" \
   --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
   "${EXTRA_VARS[@]}"
 
@@ -183,7 +224,7 @@ if [ -f "$VERIFY_PLAYBOOK" ]; then
   echo "==> Step 8: Running verification playbook..."
   ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
     "$VERIFY_PLAYBOOK" \
-    -i "$INVENTORY" \
+    "${INVENTORY_ARGS[@]}" \
     --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
     "${EXTRA_VARS[@]}" \
     -v
@@ -193,5 +234,5 @@ fi
 
 echo ""
 echo "========================================="
-echo "  TEST PASSED: ${SCENARIO} on ${OS}"
+echo "  TEST PASSED: ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP})"
 echo "========================================="

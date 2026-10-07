@@ -46,6 +46,83 @@ spock_exception_behaviour: >-
 
 backup_type: "{{ backup_repo_type if backup_repo_type in ('ssh', 's3') else 'ssh' }}"
 
+# The S3 repository, with whatever the inventory gave in backup_repo_params laid
+# over these. uri_style, storage_ca_file, storage_port and storage_verify_tls
+# are empty so that the configuration omits them and PgBackRest keeps its own
+# defaults -- virtual-host addressing, the system CA bundle, port 443 and a
+# verified certificate -- which are what AWS S3 itself wants. An S3-compatible
+# store such as MinIO typically needs uri_style "path", often a port of its own,
+# and a storage_ca_file when its certificate comes from a private authority.
+# storage_ca_file is a path on the pgEdge nodes; nothing here copies it there.
+# storage_verify_tls is a boolean, and false is for test environments only: it
+# accepts any certificate at all.
+
+default_repo_params:
+  region: "us-east-1"
+  endpoint: "s3.amazonaws.com"
+  bucket: "pgbackrest"
+  access_key: ""
+  secret_key: ""
+  uri_style: ""
+  storage_ca_file: ""
+  storage_port: ""
+  storage_verify_tls: ""
+
+backup_params: "{{ default_repo_params | combine(backup_repo_params) }}"
+
+# The account Ansible logs in to these hosts as, which is what the backup
+# repository belongs to by default.
+#
+# ansible_user first, because it is a connection variable and says who Ansible
+# connects as. ansible_user_id is a *fact*, and a fact records who the setup
+# module ran as -- so a play that gathers facts under become records root, and
+# every host in that run then believes the repository belongs to root. Fact
+# caching spreads it: gathering is smart by default, so one play with
+# play-level become poisons the value for every later play in the same run.
+# PgBackRest refuses to run as root, which is the only reason this ever
+# surfaces rather than silently building a repository in /home/root.
+#
+# ansible_user is undefined when neither the inventory nor remote_user names a
+# user, so the fact remains the fallback -- no worse than before, and correct
+# wherever the login user is actually configured, which every inventory in this
+# collection does.
+
+connection_user: "{{ ansible_user | default(ansible_user_id) }}"
+
+# The pgBackRest stanza this zone reads and writes. Every zone keeps its own,
+# because a stanza describes one physical cluster and the zones are independent
+# ones. Derived here rather than repeated at each use: it names the directory a
+# recovery restores from, so a value that differs between the archive command
+# and the restore command is a cluster that cannot be recovered, and nothing
+# would say so until the day it mattered.
+
+backup_stanza: "pgedge-{{ cluster_name }}-{{ zone }}"
+
+# Whether PgBackRest encrypts the repository itself, as opposed to leaving it to
+# the storage underneath. "none" is PgBackRest's own spelling for the latter.
+# Read by the configuration template and by init_server's validation, which have
+# to agree: a repository configured to encrypt with no password is one
+# PgBackRest refuses to write, and a password supplied where nothing encrypts is
+# a false sense of one.
+
+backup_repo_encrypted: "{{ backup_repo_cipher_type != 'none' }}"
+
+# Whether this cluster has a backup repository to speak of, which decides
+# whether Postgres archives WAL to pgBackRest and whether a recovery is possible
+# at all. An S3 repository needs nothing but the setting, since the repository is
+# the object store; an SSH repository is only reachable if some host offers it,
+# which is backup_host or a member of the 'backup' group in this zone.
+#
+# setup_backrest gates its client configuration on this rather than on a backup
+# server being named, which is what it used to do -- and what made an S3
+# repository silently do nothing, since S3 mode has no server to name.
+
+backup_repo_configured: >-
+  {{ backup_type == 's3' or backup_host > '' or backups_in_zone | length > 0 }}
+
+replica_from_backup: >-
+  {{ patroni_replica_from_backup | bool and backup_repo_configured | bool }}
+
 pg_service_name: >-
   {{ 
     'pgedge-postgres-' + pg_version|string if ansible_facts['os_family'] == 'RedHat' else
@@ -136,6 +213,15 @@ patroni_config_file: >-
     pg_version|string + '-' + cluster_name + '.yml' if ansible_facts['os_family'] == 'Debian'
     else 'patroni.yml'
   }}
+
+# Whether Patroni's store is the etcd this collection hosts on the pgEdge nodes:
+# an etcd type with no parameters of its own, which the template fills in with
+# the local member below. Any other store -- an external etcd, Consul -- is
+# somebody else's, and is only ever asked to forget this cluster.
+
+patroni_dcs_managed: >-
+  {{ patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3') and
+     patroni_dcs.parameters is not defined }}
 
 # Set default Patroni DCS values here since many of them depend on inventory
 # settings. The template will substitute user dcs values if provided.

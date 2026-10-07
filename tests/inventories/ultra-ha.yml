@@ -5,6 +5,19 @@ all:
     debug_pgedge: false
     disable_selinux: false
     manage_host_file: false
+    # Set on 'all' rather than on 'pgedge', because the backup servers render
+    # the same repository configuration and have to arrive at the same value.
+    # A repository whose nodes and server disagree about the cipher is one
+    # neither can read.
+    backup_repo_cipher: TestCipher987
+    # No scheduled backups. set_cron installs nothing for a schedule that is not
+    # five fields, and the default of 00:10 is one a CI run can cross: the
+    # verify playbook would find a second backup where it asserts exactly one,
+    # and a backup taken after the recovery test seeds its marker rows would
+    # restore them itself, so the test would no longer prove WAL replay. Set on
+    # 'all' because both the nodes and the backup servers install the jobs.
+    full_backup_schedule: ""
+    diff_backup_schedule: ""
     # The pooler enforces its own HBA rules, which name the cluster's nodes,
     # this zone's proxies and the node's loopback -- and nothing else. The client
     # node is none of those, so the pooled endpoint has to be opened to it here.
@@ -48,12 +61,11 @@ haproxy:
     192.168.6.17:
       zone: 2
 
-backup:
-  hosts:
-    192.168.6.18:
-      zone: 1
-    192.168.6.19:
-      zone: 2
+# The repository is chosen by what is layered on top of this file: the
+# ultra-ha-ssh.yml inventory adds the 'backup' group for an SSH repository, and
+# tests/vars/backup-s3.yml points the cluster at an object store instead. The
+# 'backup' group cannot live here, because init_server refuses a backup server
+# in a zone whose repository is S3.
 
 # A client with no deployment role at all: not in pgedge, haproxy or backup, and
 # named by no pg_hba rule. Phase 4's whole point — the access gates cannot be

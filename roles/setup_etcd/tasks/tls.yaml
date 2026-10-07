@@ -3,11 +3,34 @@
 # All certificate generation is delegated to the Ansible controller so the
 # cryptography Python package is only required there, not on remote nodes.
 
+# An inventory-supplied authority is put in place first, and the three CA
+# generation tasks below then skip themselves whenever a certificate is staged,
+# supplied or left by an earlier run. Relying on the modules to leave a staged
+# authority alone is not enough: openssl_privatekey rewrites a key whose size is
+# not the 4096 it asks for, or creates one that is missing, and
+# x509_certificate re-issues a self-signed certificate that does not match the
+# CSR it builds here, so any staged authority with another subject or key size,
+# or without its key, would be replaced by a generated one. stage_etcd_ca has
+# already refused a certificate without its key or with the wrong one, so a
+# staged certificate here is a usable authority.
+
+- name: Stage an inventory-supplied certificate authority
+  include_role:
+    name: role_config
+    tasks_from: stage_etcd_ca
+
 - name: Create local TLS staging directory
   file:
     path: "tls/etcd"
     state: directory
     mode: '0700'
+  delegate_to: localhost
+  run_once: true
+
+- name: Check whether a certificate authority is staged
+  stat:
+    path: "tls/etcd/ca.crt"
+  register: etcd_ca_staged
   delegate_to: localhost
   run_once: true
 
@@ -17,6 +40,7 @@
     size: 4096
   delegate_to: localhost
   run_once: true
+  when: not etcd_ca_staged.stat.exists
 
 - name: Generate CA certificate signing request
   community.crypto.openssl_csr:
@@ -33,6 +57,7 @@
     key_usage_critical: true
   delegate_to: localhost
   run_once: true
+  when: not etcd_ca_staged.stat.exists
 
 - name: Generate CA self-signed certificate
   community.crypto.x509_certificate:
@@ -43,6 +68,7 @@
     selfsigned_not_after: "+{{ tls_validity_days }}d"
   delegate_to: localhost
   run_once: true
+  when: not etcd_ca_staged.stat.exists
 
 - name: Generate peer private key for {{ inventory_hostname }}
   community.crypto.openssl_privatekey:
