@@ -28,7 +28,60 @@
     owner: "{{ etcd_user }}"
     group: "{{ etcd_group }}"
   become: true
-  register: etcd_config
+
+# Start a member that is not running before restarting any that are. Starting
+# one reads the new file, so it needs no restart of its own, and it must be up
+# before the restarts below: they each refuse to go ahead while any member of the
+# zone is down. The members are started together rather than in turn, because
+# etcd reports itself started only once it has a quorum, so a zone with all
+# its members down could never start the first.
+
+- name: Enable and start the etcd service
+  service:
+    name: etcd
+    enabled: true
+    state: started
+  become: true
+  register: etcd_started
+
+# Whether a running member has to be restarted is decided by what it last
+# started with, not by whether this run changed the file. A run that writes the
+# file and then fails to restart the member -- refused while the zone was
+# degraded, or stopped short by a failure partway through the members -- would
+# otherwise leave the next run finding nothing changed, and the member on its
+# old configuration for good. So each start and restart the role makes keeps a
+# copy of the file it started etcd with, and a member is restarted while its
+# file differs from that copy. A member with no copy, one deployed by an
+# earlier release, is restarted once.
+
+- name: Record the configuration etcd was started with
+  copy:
+    src: "{{ etcd_config_dir }}/etcd.yaml"
+    dest: "{{ etcd_applied_config }}"
+    remote_src: true
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+  become: true
+  when:
+  - etcd_started.changed
+  # Check mode writes no configuration to copy, and starts nothing.
+  - not ansible_check_mode
+
+- name: Compare the configuration with the one etcd was started with
+  stat:
+    path: "{{ item }}"
+    checksum_algorithm: sha256
+  loop:
+  - "{{ etcd_config_dir }}/etcd.yaml"
+  - "{{ etcd_applied_config }}"
+  register: etcd_config_files
+  become: true
+
+- name: Note whether etcd is running on an older configuration
+  set_fact:
+    etcd_restart_pending: >-
+      {{ etcd_config_files.results[0].stat.checksum | default('')
+         != etcd_config_files.results[1].stat.checksum | default('') }}
 
 # etcd reads its configuration only at startup and has no reload: SIGHUP kills
 # it outright. A running member whose file changed has to be restarted, and
@@ -45,14 +98,6 @@
   vars:
     etcd_restart_hosts: >-
       {{ ansible_play_hosts | map('extract', hostvars)
-         | selectattr('etcd_config', 'defined')
-         | selectattr('etcd_data.stat.exists')
-         | selectattr('etcd_config.changed')
+         | selectattr('etcd_restart_pending', 'defined')
+         | selectattr('etcd_restart_pending')
          | map(attribute='inventory_hostname') | list }}
-
-- name: Enable and start the etcd service
-  service:
-    name: etcd
-    enabled: true
-    state: started
-  become: true

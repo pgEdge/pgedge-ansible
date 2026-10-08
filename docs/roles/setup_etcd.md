@@ -10,8 +10,8 @@ The role performs the following tasks on inventory hosts:
 - Generate TLS certificates for etcd peer and client communication on nodes
   that do not yet have etcd data.
 - Generate the etcd configuration file listing all zone nodes as cluster peers.
-- Restart existing members one at a time when their configuration changes.
-- Start the etcd systemd service.
+- Start the etcd systemd service on any node where it is not running.
+- Restart running members one at a time when their configuration changes.
 
 ## Role Dependencies
 
@@ -66,10 +66,13 @@ The role configures etcd for distributed consensus within each zone.
 3. Generate the etcd configuration file at `{{ etcd_config_dir }}/etcd.yaml`
    with node identity, cluster membership for all nodes in the same zone, and
    network endpoints for client (port 2379) and peer (port 2380) communication.
-4. Restart each existing member whose configuration changed, one at a time.
-   Before each restart the role checks that every member of the zone is
-   healthy, and after it waits until they are again.
-5. Start and enable the etcd service.
+4. Enable the etcd service and start it on every node where it is not
+   running. A member started here reads the new configuration, and the role
+   records it as the configuration that member runs.
+5. Restart each running member whose configuration differs from the one it
+   was last started with, one at a time. Before each restart the role checks
+   that every member of the zone is healthy, and after it waits until they are
+   again, then records the configuration the member now runs.
 
 !!! info "Zone Isolation"
     Each zone maintains its own independent etcd cluster for Patroni
@@ -133,6 +136,7 @@ This role generates the following files on inventory hosts:
 | File | New / Modified | Explanation |
 |------|----------------|-------------|
 | `{{ etcd_config_dir }}/etcd.yaml` | New | etcd configuration file with cluster membership and network settings. |
+| `{{ etcd_config_dir }}/etcd.yaml.applied` | New | Copy of the configuration etcd was last started with by this role. |
 | `{{ etcd_tls_dir }}/ca.crt` | New | Certificate authority for validating etcd server certificates. |
 | `{{ etcd_tls_dir }}/peer.key` | New | Private key for encrypting peer-to-peer etcd traffic. |
 | `{{ etcd_tls_dir }}/peer.crt` | New | Certificate for etcd node-to-node communication. |
@@ -145,9 +149,15 @@ This role generates the following files on inventory hosts:
 This role renders the etcd configuration on every run, so a changed parameter
 reaches a running cluster with the next deployment. etcd reads its
 configuration only at startup and cannot reload it, so the role restarts each
-member whose file changed. It restarts them one at a time, so the zone keeps
-its quorum and Patroni keeps its leader lock. A run that changes nothing
-restarts nothing.
+member whose file differs from the configuration it was last started with. It
+restarts them one at a time, so the zone keeps its quorum and Patroni keeps its
+leader lock. A run that changes nothing restarts nothing.
+
+The role compares against `etcd.yaml.applied`, the copy it keeps of the file
+each member was last started with, rather than against whether the run
+changed the file. If a run writes a member's new file but never restarts the
+member, because the run was refused or stopped partway, the next run restarts
+it. A member deployed by an earlier release has no copy and is restarted once.
 
 The bootstrap settings in the file (`initial-cluster`, `initial-cluster-state`
 and `initial-cluster-token`) are read only when a member starts with an empty
@@ -159,8 +169,10 @@ keeps the certificates it was built with.
 !!! warning "Degraded zones"
     The role refuses to restart a member while any member of its zone is
     unhealthy, because taking a second member down can cost the zone its
-    quorum. The new configuration is still written and takes effect when etcd
-    next starts. Restore the zone to health and run the deployment again.
+    quorum. The new configuration is still written, and the next run restarts
+    the member to apply it. Restore the zone to health and run the deployment
+    again. A member that is stopped does not count against its zone here: the
+    role starts it into the new configuration before restarting the others.
 
 !!! warning "Configuration Changes"
     Changing etcd cluster membership after initial setup requires special

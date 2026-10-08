@@ -204,7 +204,8 @@ restarts every etcd member to apply them. The restarts happen one member at a
 time, and each waits until the whole zone is healthy again, so the zone keeps
 its quorum and Patroni keeps its leader. The role refuses to restart any member
 while another member of its zone is unhealthy. Run the deployment while the
-cluster is healthy.
+cluster is healthy. A member whose restart was refused, or that a failed run
+never reached, is restarted by the next deployment.
 
 ### Gather facts for every host first
 
@@ -429,9 +430,11 @@ same play to the top:
   (EE-42)
 - New `tests/playbooks/etcd-reconfigure.yml` applies a changed etcd
   configuration to the deployed cluster and checks that every member restarts
-  into it, every zone keeps its Patroni leader, and a second, unchanged run
-  restarts nothing. Run by the Ultra-HA workflow and `tests/run-test.sh` for
-  the etcd3 store. (EE-42)
+  to apply it, every zone keeps its Patroni leader, a member whose new file was
+  written without a restart is restarted by the next run, a stopped member
+  starts with the new configuration, and a second, unchanged run restarts
+  nothing. Run by the Ultra-HA workflow and `tests/run-test.sh` for the etcd3
+  store. (EE-42)
 
 ### Changed
 
@@ -441,8 +444,11 @@ same play to the top:
   configuration it was built with. Each member whose file changed is restarted,
   one at a time, after checking that every member of its zone is healthy and
   before waiting until they are again; the role refuses the restart while the
-  zone is degraded. Certificates are still issued only to a node being built.
-  (EE-42)
+  zone is degraded. A member that is stopped is started with the new
+  configuration first, rather than blocking the rest. The role keeps a copy of
+  the file each member was last started with, `etcd.yaml.applied`, so a member
+  whose restart was refused or never reached is restarted by the next run.
+  Certificates are still issued only to a node being built. (EE-42)
 - `setup_backrest` no longer replaces a `pgbackrest.conf` that can read the
   stanza with one that cannot. A wrong `backup_repo_cipher` or object-store key
   used to be written straight over a working file, which broke archiving on the

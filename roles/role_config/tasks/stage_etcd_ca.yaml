@@ -145,13 +145,13 @@
 
 # Whatever authority the controller now holds -- supplied, staged by an earlier
 # run, or about to be generated because there is none -- has to be the one the
-# cluster's running etcd already trusts. setup_etcd's own guard is per host: it
-# skips a node whose etcd data exists and builds one whose data does not. So a
-# node being added or rebuilt passes that guard, and from a controller without
-# the authority it would mint a new one, sign the new node against it, and then
-# setup_patroni would reissue every node's client certificate against it too --
-# while the members still running trust only the old one. Nothing would fail
-# until Patroni lost the store everywhere at once.
+# cluster's running etcd already trusts. setup_etcd's certificate guard is per
+# host: it issues none to a node whose etcd data exists, and issues them to one
+# whose data does not. So a node being added or rebuilt passes that guard, and
+# from a controller without the authority it would mint a new one, sign the new
+# node against it, and then setup_patroni would reissue every node's client
+# certificate against it too -- while the members still running trust only the
+# old one. Nothing would fail until Patroni lost the store everywhere at once.
 #
 # The members are asked directly, on every pgEdge host rather than the play's,
 # so a run limited to the node being added still sees the rest of the cluster.

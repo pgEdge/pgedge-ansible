@@ -2,7 +2,8 @@
 
 # Restart one existing member to apply a changed configuration. Included once
 # per member by setup.yaml, on every host, and run only by the member whose
-# turn it is.
+# turn it is. Once the zone is healthy again the member's file is recorded as
+# the one it runs, which is what stops the next run restarting it.
 #
 # The health checks ask for the whole zone with --cluster, through this
 # member's own server certificate, which etcd also accepts as a client one.
@@ -59,3 +60,11 @@
     retries: 30
     delay: 2
     until: etcd_health_after.rc == 0
+
+  - name: Record the configuration etcd was restarted with
+    copy:
+      src: "{{ etcd_config_dir }}/etcd.yaml"
+      dest: "{{ etcd_applied_config }}"
+      remote_src: true
+      owner: "{{ etcd_user }}"
+      group: "{{ etcd_group }}"
