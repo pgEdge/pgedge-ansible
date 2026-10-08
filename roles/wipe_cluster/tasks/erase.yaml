@@ -39,8 +39,7 @@
     {{ ([pg_config_dir] if pg_config_dir != pg_data else []) +
        [patroni_config_dir ~ '/' ~ patroni_config_file, patroni_tls_dir] +
        wipe_pgbouncer_files +
-       ([etcd_config_dir ~ '/etcd.yaml', etcd_config_dir ~ '/etcd.yaml.applied',
-         etcd_tls_dir]
+       ([etcd_config_dir ~ '/etcd.yaml', etcd_tls_dir]
         if patroni_dcs_managed | bool else []) }}
   register: wipe_config
   become: true

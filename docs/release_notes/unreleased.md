@@ -445,9 +445,9 @@ same play to the top:
   one at a time, after checking that every member of its zone is healthy and
   before waiting until they are again; the role refuses the restart while the
   zone is degraded. A member that is stopped is started with the new
-  configuration first, rather than blocking the rest. The role keeps a copy of
-  the file each member was last started with, `etcd.yaml.applied`, so a member
-  whose restart was refused or never reached is restarted by the next run.
+  configuration first, rather than blocking the rest. A member is restarted
+  whenever its file is newer than the etcd process, so a member whose restart
+  was refused or never reached is restarted by the next run.
   Certificates are still issued only to a node being built. (EE-42)
 - `setup_backrest` no longer replaces a `pgbackrest.conf` that can read the
   stanza with one that cannot. A wrong `backup_repo_cipher` or object-store key

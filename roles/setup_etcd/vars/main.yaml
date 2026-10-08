@@ -1,7 +1,0 @@
----
-
-# A copy of the configuration file etcd was last started with by this role,
-# which tells a later run whether a running member still has to be restarted to
-# read the file beside it. wipe_cluster erases it with the file itself.
-
-etcd_applied_config: "{{ etcd_config_dir }}/etcd.yaml.applied"

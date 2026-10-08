@@ -136,7 +136,6 @@ This role generates the following files on inventory hosts:
 | File | New / Modified | Explanation |
 |------|----------------|-------------|
 | `{{ etcd_config_dir }}/etcd.yaml` | New | etcd configuration file with cluster membership and network settings. |
-| `{{ etcd_config_dir }}/etcd.yaml.applied` | New | Copy of the configuration etcd was last started with by this role. |
 | `{{ etcd_tls_dir }}/ca.crt` | New | Certificate authority for validating etcd server certificates. |
 | `{{ etcd_tls_dir }}/peer.key` | New | Private key for encrypting peer-to-peer etcd traffic. |
 | `{{ etcd_tls_dir }}/peer.crt` | New | Certificate for etcd node-to-node communication. |
@@ -153,11 +152,12 @@ member whose file differs from the configuration it was last started with. It
 restarts them one at a time, so the zone keeps its quorum and Patroni keeps its
 leader lock. A run that changes nothing restarts nothing.
 
-The role compares against `etcd.yaml.applied`, the copy it keeps of the file
-each member was last started with, rather than against whether the run
-changed the file. If a run writes a member's new file but never restarts the
-member, because the run was refused or stopped partway, the next run restarts
-it. A member deployed by an earlier release has no copy and is restarted once.
+The role restarts a member whose file is newer than the etcd process, which it
+reads from etcd's `process_start_time_seconds` metric, rather than only a member
+whose file the run changed. If a run writes a member's new file but never
+restarts the member, because the run was refused or stopped partway, the next
+run restarts it. A member restarted by hand after its file changed counts as
+running the new configuration.
 
 The bootstrap settings in the file (`initial-cluster`, `initial-cluster-state`
 and `initial-cluster-token`) are read only when a member starts with an empty
