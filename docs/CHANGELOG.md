@@ -40,6 +40,11 @@ in full.
 - New `etcd_ca_cert` and `etcd_ca_key` parameters supply the etcd certificate
   authority from Ansible Vault. (EE-39)
 - New render, recovery and backup checks in the test suite. (EE-39)
+- New `etcd_auto_compaction_mode`, `etcd_auto_compaction_retention` and
+  `etcd_quota_backend_bytes` parameters. etcd now compacts key history older
+  than an hour, where before it kept every revision until it reached its quota
+  and stopped accepting writes. (EE-42)
+- New etcd reconfiguration check in the test suite. (EE-42)
 - New `uri_style`, `storage_ca_file`, `storage_port` and `storage_verify_tls`
   keys in `backup_repo_params` for S3-compatible stores such as MinIO. (EE-39)
 - `init_server` validates S3 repository settings and refuses a backup server in
@@ -47,6 +52,8 @@ in full.
 
 ### Changed
 
+- `setup_etcd` applies a changed configuration to a running cluster, restarting
+  one etcd member at a time. (EE-42)
 - The first backup is taken only when the repository holds none that can
   restore the cluster. (EE-39)
 - `setup_backrest` writes files only and runs before `setup_postgres`. (EE-39)

@@ -90,6 +90,57 @@ In the following example, the inventory specifies a custom TLS directory:
 etcd_tls_dir: /etc/ssl/etcd
 ```
 
+## etcd_auto_compaction_mode
+
+- Type: String
+- Default: `periodic`
+- Description: This parameter specifies how etcd interprets
+  `etcd_auto_compaction_retention`. Use `periodic` to keep a span of time, or
+  `revision` to keep a number of revisions.
+
+## etcd_auto_compaction_retention
+
+- Type: String
+- Default: `1h`
+- Description: This parameter specifies how much key history etcd keeps before
+  compacting it. In `periodic` mode, the value is a duration such as `30m` or
+  `1h`; a bare number means hours. In `revision` mode, it is the number of
+  revisions to keep. A value of `0` disables compaction.
+
+etcd keeps every revision of every key until it is compacted, and compacts
+nothing unless this is set. Patroni rewrites its leader key every `loop_wait`,
+so without compaction the store grows until it reaches
+`etcd_quota_backend_bytes`. etcd then raises a `NOSPACE` alarm and refuses all
+writes, Patroni can no longer renew its leader lock, and the zone's primary is
+demoted.
+
+In the following example, the inventory keeps the last 10,000 revisions
+instead of the last hour:
+
+```yaml
+etcd_auto_compaction_mode: revision
+etcd_auto_compaction_retention: "10000"
+```
+
+## etcd_quota_backend_bytes
+
+- Type: Integer
+- Default: `2147483648` (2 GiB)
+- Description: This parameter specifies the size, in bytes, at which etcd
+  raises a `NOSPACE` alarm and stops accepting writes. A value of `0` uses
+  etcd's own default, which is also 2 GiB. etcd recommends no more than 8 GiB.
+
+Compaction frees space inside the database file for reuse, but does not shrink
+the file. With compaction enabled, a Patroni workload stays far below the
+default quota. To return the space to the filesystem, run `etcdctl defrag` on
+one member at a time.
+
+In the following example, the inventory raises the quota to 4 GiB:
+
+```yaml
+etcd_quota_backend_bytes: 4294967296
+```
+
 ## patroni_tls_dir
 
 - Type: String

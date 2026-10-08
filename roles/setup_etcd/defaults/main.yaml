@@ -6,3 +6,21 @@ etcd_install_dir: "/usr/local/etcd"
 etcd_config_dir: "/etc/etcd"
 etcd_data_dir: "/var/lib/etcd"
 etcd_tls_dir: "/etc/etcd/tls"
+
+# Keyspace maintenance. etcd keeps every revision of every key until something
+# compacts it, and does no compaction of its own unless told to. Patroni rewrites
+# its leader key every loop_wait, so an uncompacted store grows without end until
+# it reaches the backend quota. etcd then raises a NOSPACE alarm and refuses
+# every write, Patroni can no longer renew its leader lock, and the zone's
+# primary is demoted.
+#
+# The retention is read according to the mode: a duration such as "1h" or "30m"
+# for periodic (a bare number means hours), or a count of revisions to keep for
+# revision. "0" disables compaction.
+#
+# A quota of 0 is etcd's own default of 2 GiB, which is set explicitly here so
+# that it is visible. etcd recommends no more than 8 GiB.
+
+etcd_auto_compaction_mode: periodic
+etcd_auto_compaction_retention: "1h"
+etcd_quota_backend_bytes: 2147483648

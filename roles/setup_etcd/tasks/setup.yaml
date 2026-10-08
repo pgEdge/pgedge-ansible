@@ -8,7 +8,18 @@
     group: "{{ etcd_group }}"
   become: true
 
+# Certificates are issued only to a node being built. A member already running
+# keeps the ones it has: reissuing them would rotate every member's keys on
+# each deployment, from whichever controller ran it.
+
 - include_tasks: tls.yaml
+  when: not etcd_data.stat.exists
+
+# The configuration is rendered on every run, so a change to the inventory
+# reaches members that are already running. The bootstrap keys in it --
+# initial-cluster and its state and token -- are read only when the data
+# directory is empty, so re-rendering them against an existing member changes
+# nothing.
 
 - name: Create configuration file for etcd node
   template:
@@ -17,6 +28,27 @@
     owner: "{{ etcd_user }}"
     group: "{{ etcd_group }}"
   become: true
+  register: etcd_config
+
+# etcd reads its configuration only at startup and has no reload: SIGHUP kills
+# it outright. A running member whose file changed has to be restarted, and
+# restarting a zone's members together drops its quorum, which costs Patroni
+# its leader lock. So they go one at a time, each waiting for the zone to be
+# healthy before and after. Every host includes the file once per member to
+# restart and acts only on its own turn, which keeps the steps for one member
+# together and the members in order.
+
+- include_tasks: restart.yaml
+  loop: "{{ etcd_restart_hosts }}"
+  loop_control:
+    loop_var: etcd_restart_host
+  vars:
+    etcd_restart_hosts: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('etcd_config', 'defined')
+         | selectattr('etcd_data.stat.exists')
+         | selectattr('etcd_config.changed')
+         | map(attribute='inventory_hostname') | list }}
 
 - name: Enable and start the etcd service
   service:

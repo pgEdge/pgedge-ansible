@@ -123,6 +123,7 @@ echo "==> Step 0: Checking rendered templates..."
 python3 "$SCRIPT_DIR/render/check-haproxy.py"
 python3 "$SCRIPT_DIR/render/check-patroni.py"
 python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
+python3 "$SCRIPT_DIR/render/check-etcd.py"
 
 # Step 1: Generate SSH keypair and copy to Docker build context
 echo "==> Step 1: Ensuring SSH keypair exists..."
@@ -230,6 +231,18 @@ if [ -f "$VERIFY_PLAYBOOK" ]; then
     -v
 else
   echo "==> Step 8: No verification playbook found, skipping"
+fi
+
+# Step 9: A changed etcd configuration reaches a running cluster by rolling
+# restart, without costing any zone its leader.
+if [ "$SCENARIO" = "ultra-ha" ] && [ "$DCS" = "etcd3" ]; then
+  echo "==> Step 9: Checking a changed etcd configuration is applied..."
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/playbooks/etcd-reconfigure.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
 fi
 
 echo ""

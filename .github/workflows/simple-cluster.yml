@@ -55,6 +55,7 @@ jobs:
           python3 tests/render/check-haproxy.py
           python3 tests/render/check-patroni.py
           python3 tests/render/check-pgbackrest.py
+          python3 tests/render/check-etcd.py
 
       - name: Generate SSH keypair
         run: |

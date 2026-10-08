@@ -7,7 +7,7 @@
 # Patroni client certificate is generated once, on the controller, into a
 # directory Ansible resolves against the playbook's own location -- and it is
 # gitignored, because it holds a private key. Nothing regenerates it: setup_etcd
-# creates it, and setup_etcd skips itself entirely once the etcd data directory
+# creates it, and setup_etcd issues no certificates once the etcd data directory
 # exists. So on a live cluster the authority cannot be recreated, and a
 # controller that has lost that directory can no longer add a replica, rebuild a
 # node, or re-run the deployment. The checks in this file stop it there, before

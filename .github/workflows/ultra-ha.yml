@@ -107,6 +107,7 @@ jobs:
           python3 tests/render/check-haproxy.py
           python3 tests/render/check-patroni.py
           python3 tests/render/check-pgbackrest.py
+          python3 tests/render/check-etcd.py
 
       - name: Generate SSH keypair
         run: |
@@ -195,6 +196,16 @@ jobs:
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
+
+      # After the verification, because it restarts every etcd member: the
+      # cluster has to come through that with each zone's leader where it was.
+      - name: Check a changed etcd configuration is applied by rolling restart
+        if: ${{ matrix.dcs == 'etcd3' }}
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/etcd-reconfigure.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            --private-key tests/.ssh/id_ed25519
 
       # Last, because it wipes the cluster the steps above just verified.
       # The deployment is what produces the backups this restores from, so the
