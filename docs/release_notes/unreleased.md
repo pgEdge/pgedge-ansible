@@ -438,6 +438,13 @@ same play to the top:
 
 ### Changed
 
+- The playbook documentation now states that every play applying the
+  collection's roles must use the default `linear` strategy over all of its
+  hosts at once, without `strategy: free` or `serial`. The roles have always
+  depended on it: they coordinate steps across hosts, such as issuing
+  certificates from one shared authority, restarting a zone's etcd members in
+  turn and seeding zones before building the replication mesh. See
+  [Execution Strategy](../configure_playbook.md#execution-strategy). (EE-42)
 - `setup_etcd` renders the etcd configuration on every run, so a changed
   parameter reaches a running cluster at the next deployment. Previously the
   role did nothing at all on a node with etcd data, and a cluster kept the
