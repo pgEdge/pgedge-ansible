@@ -104,6 +104,11 @@ play.
     complete, or may deploy partially in ways that pass health checks but are
     otherwise invalid.
 
+Check mode (`--check`) is not supported. The roles avoid failing under it where
+they can, but a check-mode run does not predict what a real run would change:
+many steps act on what an earlier step installed, wrote or started, and in check
+mode that earlier step did nothing.
+
 ## Customizing the Configuration
 
 The following examples demonstrate some common configuration overrides you may want to incorporate into 

@@ -75,9 +75,9 @@
     return_content: true
   register: etcd_metrics
   become: true
-  # Only reads, and check mode needs the answer to report the restarts it
-  # would make. A member check mode found stopped was not started, so there is
-  # nothing to read; a real run would start it with the file it has.
+  # Only reads, so it runs in check mode too. A member check mode found stopped
+  # was not started, so there is nothing to read, and asking would fail the
+  # run.
   check_mode: false
   when: not (ansible_check_mode and etcd_started.changed)
 

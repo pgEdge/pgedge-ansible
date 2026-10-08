@@ -443,7 +443,9 @@ same play to the top:
   hosts at once, without `strategy: free` or `serial`. The roles have always
   depended on it: they coordinate steps across hosts, such as issuing
   certificates from one shared authority, restarting a zone's etcd members in
-  turn and seeding zones before building the replication mesh. See
+  turn and seeding zones before building the replication mesh. It also states
+  that check mode (`--check`) is not supported: a check-mode run does not
+  predict what a real run would change. See
   [Execution Strategy](../configure_playbook.md#execution-strategy). (EE-42)
 - `setup_etcd` renders the etcd configuration on every run, so a changed
   parameter reaches a running cluster at the next deployment. Previously the
