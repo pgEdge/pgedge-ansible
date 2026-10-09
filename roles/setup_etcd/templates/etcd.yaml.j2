@@ -16,6 +16,9 @@ listen-peer-urls: https://{{ ansible_default_ipv4.address }}:2380
 dial-timeout: 20s
 read-timeout: 20s
 write-timeout: 20s
+auto-compaction-mode: {{ etcd_auto_compaction_mode }}
+auto-compaction-retention: "{{ etcd_auto_compaction_retention }}"
+quota-backend-bytes: {{ etcd_quota_backend_bytes }}
 
 client-transport-security:
   client-cert-auth: true

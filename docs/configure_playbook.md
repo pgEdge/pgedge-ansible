@@ -81,6 +81,34 @@ Alternatively, run `init_server` against `all` as the first play, as shown
 in the Ultra-HA sample playbook.
 
 
+## Execution Strategy
+
+Every play that applies the collection's roles must use Ansible's default
+`linear` strategy, over all of the play's hosts at once. Do not set
+`strategy: free`, in a play or in `ansible.cfg`, and do not set `serial` on a
+play.
+
+!!! danger "`free` strategy or `serial` plays may deploy an inoperable cluster"
+    These roles coordinate the hosts of a play with each other, and depend on
+    every host finishing a task before any host starts the next. Hosts read
+    facts and task results from each other throughout a deployment, and act on
+    them in a fixed order.
+
+    The `free` strategy lets each host run ahead of the others, causing race
+    conditions that violate these assumptions. `serial` runs a play over a few
+    hosts at a time rather than all of the play's hosts at once, so each batch
+    sees only its own hosts, and steps meant for the whole cluster act on part
+    of it.
+
+    Either can leave the cluster in an inconsistent state. Some steps may never
+    complete, or may deploy partially in ways that pass health checks but are
+    otherwise invalid.
+
+Check mode (`--check`) is not supported. The roles avoid failing under it where
+they can, but a check-mode run does not predict what a real run would change:
+many steps act on what an earlier step installed, wrote or started, and in check
+mode that earlier step did nothing.
+
 ## Customizing the Configuration
 
 The following examples demonstrate some common configuration overrides you may want to incorporate into 

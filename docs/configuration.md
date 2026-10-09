@@ -251,4 +251,7 @@ values are sufficient for most deployments.
 | etcd_config_dir | /etc/etcd | Directory for etcd configuration files. |
 | etcd_data_dir | /var/lib/etcd | Directory for etcd data storage. |
 | etcd_tls_dir | /etc/etcd/tls | Directory for etcd TLS certificates and keys. |
+| etcd_auto_compaction_mode | periodic | How etcd reads `etcd_auto_compaction_retention`: `periodic` or `revision`. |
+| etcd_auto_compaction_retention | 1h | Key history etcd keeps before compacting it. `0` disables compaction. |
+| etcd_quota_backend_bytes | 2147483648 | Database size at which etcd stops accepting writes. |
 | patroni_tls_dir | /etc/patroni/tls | Directory for Patroni TLS certificates. |

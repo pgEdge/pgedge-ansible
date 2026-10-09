@@ -1,0 +1,208 @@
+---
+# Apply a changed etcd configuration to a running cluster, then apply it again.
+#
+# setup_etcd renders its configuration on every run, and a member whose file
+# changed has to be restarted to read it: etcd has no reload. Restarting a
+# zone's members together would drop its quorum and cost Patroni its leader
+# lock, so the role restarts them one at a time. This checks what that promises:
+#
+#   - every member restarts, after its new file is in place,
+#   - the zone's etcd is healthy afterwards,
+#   - Patroni's leader in each zone is the one it had before,
+#   - a member whose new file is in place but which was never restarted to
+#     apply it -- a run refused while its zone was degraded, or one that stopped
+#     partway through the members -- is restarted by the next run, though that
+#     run changes nothing in the file,
+#   - a member that is stopped starts with the new configuration rather than
+#     blocking the restart of the rest of its zone,
+#   - and applying the same configuration again restarts nothing.
+#
+# The changed setting is the compaction retention, which every member renders
+# identically, so each pass that changes it restarts all six.
+#
+# Only meaningful where the collection deploys etcd; the caller skips it for any
+# other store.
+
+- hosts: pgedge
+  any_errors_fatal: true
+  become: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    # Anything other than the role default of 1h.
+    etcd_auto_compaction_retention: "30m"
+    etcd_start_command: >-
+      systemctl show etcd --property=ActiveEnterTimestampMonotonic --value
+
+  tasks:
+  - name: Record when etcd last started
+    command: "{{ etcd_start_command }}"
+    register: etcd_start_before
+    changed_when: false
+
+  - name: Record each zone's Patroni leader
+    uri:
+      url: "http://127.0.0.1:8008/cluster"
+      return_content: true
+    register: patroni_before
+
+  - name: Apply the changed configuration
+    include_role:
+      name: setup_etcd
+
+  - name: Read when etcd last started
+    command: "{{ etcd_start_command }}"
+    register: etcd_start_after
+    changed_when: false
+
+  - name: Read the configuration etcd was restarted with
+    slurp:
+      src: /etc/etcd/etcd.yaml
+    register: etcd_config_file
+
+  - name: Assert every member was restarted with the new configuration
+    assert:
+      that:
+      - etcd_start_after.stdout | int > etcd_start_before.stdout | int
+      - (etcd_config_file.content | b64decode | from_yaml)['auto-compaction-retention'] == '30m'
+      fail_msg: >-
+        etcd on {{ inventory_hostname }} was not restarted with the new
+        configuration (started at {{ etcd_start_before.stdout }} before the
+        role and {{ etcd_start_after.stdout }} after it).
+
+  - name: Check every etcd member in the zone is healthy
+    command: >-
+      /usr/local/etcd/etcdctl
+      --endpoints=https://127.0.0.1:2379
+      --cacert=/etc/etcd/tls/ca.crt
+      --cert=/etc/etcd/tls/server.crt
+      --key=/etc/etcd/tls/server.key
+      endpoint health --cluster
+    changed_when: false
+
+  - name: Read each zone's Patroni leader again
+    uri:
+      url: "http://127.0.0.1:8008/cluster"
+      return_content: true
+    register: patroni_after
+
+  - name: Assert the restarts did not cost any zone its leader
+    vars:
+      leader_before: >-
+        {{ patroni_before.json.members | selectattr('role', 'eq', 'leader')
+           | map(attribute='name') | list }}
+      leader_after: >-
+        {{ patroni_after.json.members | selectattr('role', 'eq', 'leader')
+           | map(attribute='name') | list }}
+    assert:
+      that:
+      - leader_before | length == 1
+      - leader_after == leader_before
+      fail_msg: >-
+        The zone's Patroni leader was {{ leader_before }} before etcd was
+        restarted and {{ leader_after }} after. A restart that keeps the zone's
+        quorum should leave the leader lock where it was.
+
+  # A run that wrote the file but never restarted etcd to apply it. The role, run
+  # again with the same setting, finds the file unchanged and has to restart
+  # every member regardless.
+
+  - name: Write a changed configuration without restarting etcd
+    replace:
+      path: /etc/etcd/etcd.yaml
+      regexp: '^auto-compaction-retention: .*$'
+      replace: 'auto-compaction-retention: "45m"'
+
+  - name: Record when etcd last started
+    command: "{{ etcd_start_command }}"
+    register: etcd_start_before
+    changed_when: false
+
+  - name: Apply the configuration that is already written
+    include_role:
+      name: setup_etcd
+    vars:
+      etcd_auto_compaction_retention: "45m"
+
+  - name: Read when etcd last started
+    command: "{{ etcd_start_command }}"
+    register: etcd_start_after
+    changed_when: false
+
+  - name: Assert every member was restarted to apply the file already written
+    assert:
+      that: etcd_start_after.stdout | int > etcd_start_before.stdout | int
+      fail_msg: >-
+        etcd on {{ inventory_hostname }} was left running a configuration older
+        than its file, because the run that wrote the file did not restart it.
+
+  # A stopped member, with a changed configuration for the whole zone. It has
+  # to be started with the new file, and the members still running restarted
+  # one at a time once it is up -- not refused because it was down.
+
+  - name: Stop etcd on one member
+    service:
+      name: etcd
+      state: stopped
+    when: inventory_hostname == ansible_play_hosts | first
+
+  - name: Record when etcd last started
+    command: "{{ etcd_start_command }}"
+    register: etcd_start_before
+    changed_when: false
+
+  - name: Apply a changed configuration with a member stopped
+    include_role:
+      name: setup_etcd
+    vars:
+      etcd_auto_compaction_retention: "15m"
+
+  - name: Read when etcd last started
+    command: "{{ etcd_start_command }}"
+    register: etcd_start_after
+    changed_when: false
+
+  - name: Read whether etcd is running
+    command: systemctl is-active etcd
+    register: etcd_active
+    changed_when: false
+
+  - name: Assert every member is running the new configuration
+    assert:
+      that:
+      - etcd_active.stdout == 'active'
+      - etcd_start_after.stdout | int > etcd_start_before.stdout | int
+      fail_msg: >-
+        etcd on {{ inventory_hostname }} is {{ etcd_active.stdout }} and was
+        not started with the new configuration after a member of its zone was
+        found stopped.
+
+  - name: Check every etcd member in the zone is healthy
+    command: >-
+      /usr/local/etcd/etcdctl
+      --endpoints=https://127.0.0.1:2379
+      --cacert=/etc/etcd/tls/ca.crt
+      --cert=/etc/etcd/tls/server.crt
+      --key=/etc/etcd/tls/server.key
+      endpoint health --cluster
+    changed_when: false
+
+  - name: Apply the same configuration again
+    include_role:
+      name: setup_etcd
+    vars:
+      etcd_auto_compaction_retention: "15m"
+
+  - name: Read when etcd last started
+    command: "{{ etcd_start_command }}"
+    register: etcd_start_again
+    changed_when: false
+
+  - name: Assert an unchanged configuration restarts nothing
+    assert:
+      that: etcd_start_again.stdout == etcd_start_after.stdout
+      fail_msg: >-
+        etcd on {{ inventory_hostname }} was restarted by a run that changed
+        nothing in its configuration.

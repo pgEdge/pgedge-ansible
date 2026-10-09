@@ -147,6 +147,7 @@ echo "==> Recovering ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP}," \
 echo "==> Step 0: Checking rendered templates..."
 python3 "$SCRIPT_DIR/render/check-patroni.py"
 python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
+python3 "$SCRIPT_DIR/render/check-etcd.py"
 
 # Build and install the collection, exactly as run-test.sh does.
 #

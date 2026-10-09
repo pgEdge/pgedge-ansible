@@ -7,4 +7,3 @@
   become: true
 
 - include_tasks: setup.yaml
-  when: not etcd_data.stat.exists

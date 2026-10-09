@@ -8,7 +8,18 @@
     group: "{{ etcd_group }}"
   become: true
 
+# Certificates are issued only to a node being built. A member already running
+# keeps the ones it has: reissuing them would rotate every member's keys on
+# each deployment, from whichever controller ran it.
+
 - include_tasks: tls.yaml
+  when: not etcd_data.stat.exists
+
+# The configuration is rendered on every run, so a change to the inventory
+# reaches members that are already running. The bootstrap keys in it --
+# initial-cluster and its state and token -- are read only when the data
+# directory is empty, so re-rendering them against an existing member changes
+# nothing.
 
 - name: Create configuration file for etcd node
   template:
@@ -18,9 +29,88 @@
     group: "{{ etcd_group }}"
   become: true
 
-- name: Enable and start the etcd service
+# Start a member that is not running before restarting any that are. Starting
+# one reads the new file, so it needs no restart of its own, and it must be up
+# before the restarts below: they each refuse to go ahead while any member of the
+# zone is down. The members are started together rather than in turn, because
+# etcd reports itself started only once it has a quorum, so a zone with all
+# its members down could never start the first.
+
+- name: Enable the etcd service
   service:
     name: etcd
     enabled: true
+  become: true
+
+- name: Start the etcd service
+  service:
+    name: etcd
     state: started
   become: true
+  register: etcd_started
+
+# Whether a running member has to be restarted is decided by when etcd last
+# started, not by whether this run changed the file. A run that writes the file
+# and then fails to restart the member -- refused while the zone was degraded,
+# or stopped short by a failure partway through the members -- would otherwise
+# leave the next run finding nothing changed, and the member on its old
+# configuration for good. etcd cannot report the configuration it runs with,
+# but its metrics report when the process started, and the template writes the
+# file only when its contents change, so a file newer than the process is one
+# etcd has not read. A member this run just started is no exception: it started
+# after its file was written, so the comparison finds nothing to do.
+#
+# The start time is the kernel's boot time, in whole seconds, plus the process's
+# age, so it can read up to a second early. Allowing that second keeps a member
+# started just after its file was written from looking stale; a file written in
+# the second after a start is never one the role wrote, since it always writes
+# before it starts.
+
+- name: Read when etcd started
+  uri:
+    url: https://127.0.0.1:2379/metrics
+    ca_path: "{{ etcd_tls_dir }}/ca.crt"
+    client_cert: "{{ etcd_tls_dir }}/server.crt"
+    client_key: "{{ etcd_tls_dir }}/server.key"
+    return_content: true
+  register: etcd_metrics
+  become: true
+  # Only reads, so it runs in check mode too. A member check mode found stopped
+  # was not started, so there is nothing to read, and asking would fail the
+  # run.
+  check_mode: false
+  when: not (ansible_check_mode and etcd_started.changed)
+
+- name: Read when the configuration was written
+  stat:
+    path: "{{ etcd_config_dir }}/etcd.yaml"
+  register: etcd_config_file
+  become: true
+
+- name: Note whether etcd is running on an older configuration
+  set_fact:
+    etcd_restart_pending: >-
+      {{ etcd_metrics is not skipped
+         and etcd_config_file.stat.mtime
+             > (etcd_metrics.content
+                | regex_findall('(?m)^process_start_time_seconds (.*)$')
+                | first | float) + 1 }}
+
+# etcd reads its configuration only at startup and has no reload: SIGHUP kills
+# it outright. A running member whose file changed has to be restarted, and
+# restarting a zone's members together drops its quorum, which costs Patroni
+# its leader lock. So they go one at a time, each waiting for the zone to be
+# healthy before and after. Every host includes the file once per member to
+# restart and acts only on its own turn, which keeps the steps for one member
+# together and the members in order.
+
+- include_tasks: restart.yaml
+  loop: "{{ etcd_restart_hosts }}"
+  loop_control:
+    loop_var: etcd_restart_host
+  vars:
+    etcd_restart_hosts: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('etcd_restart_pending', 'defined')
+         | selectattr('etcd_restart_pending')
+         | map(attribute='inventory_hostname') | list }}

@@ -158,9 +158,9 @@ patroni_tls_dir: "/etc/patroni/tls"
 # Supply them -- from Ansible Vault, beside the passwords -- when the authority
 # should be managed rather than left in a gitignored directory beside the
 # playbook. It is the one artifact there that nothing can recreate: setup_etcd
-# creates it and then skips itself forever after, so a controller that loses it
-# can no longer add a replica, rebuild a node, or re-run the deployment against
-# that cluster.
+# creates it once, on the first deployment, and signs every node built after
+# that against it, so a controller that loses it can no longer add a replica,
+# rebuild a node, or re-run the deployment against that cluster.
 #
 # Set them together or not at all, and do not change them on a live cluster: the
 # nodes trust the authority their etcd was built with, and signing against a

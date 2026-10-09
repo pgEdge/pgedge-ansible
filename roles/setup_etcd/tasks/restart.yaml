@@ -1,0 +1,63 @@
+---
+
+# Restart one existing member to apply a changed configuration. Included once
+# per member by setup.yaml, on every host, and run only by the member whose
+# turn it is. The restart leaves etcd started after its file was written,
+# which is what stops the next run restarting it.
+#
+# The health checks ask for the whole zone with --cluster, through this
+# member's own server certificate, which etcd also accepts as a client one.
+# They run in check mode too, since they only read.
+
+- when: inventory_hostname == etcd_restart_host
+  become: true
+  vars:
+    etcd_health_command: >-
+      {{ etcd_install_dir }}/etcdctl
+      --endpoints=https://127.0.0.1:2379
+      --cacert={{ etcd_tls_dir }}/ca.crt
+      --cert={{ etcd_tls_dir }}/server.crt
+      --key={{ etcd_tls_dir }}/server.key
+      endpoint health --cluster
+  block:
+
+  # Taking a member down while another is already out can leave a zone of three
+  # without quorum for as long as the restart takes, which is what this
+  # restart is ordered to avoid.
+
+  - name: Ensure every etcd member in the zone is healthy before restarting one
+    command: "{{ etcd_health_command }}"
+    register: etcd_health_before
+    changed_when: false
+    check_mode: false
+    failed_when: false
+
+  - name: Refuse to restart etcd on {{ etcd_restart_host }} while the zone is degraded
+    fail:
+      msg: >-
+        The etcd configuration on this node changed and etcd must be restarted
+        to apply it, but not every member of the zone is healthy, and restarting
+        this one now could cost the zone its quorum. The new configuration is
+        written and takes effect at the next restart. Bring the zone back to
+        health and run the deployment again. etcdctl reported:
+        {{ etcd_health_before.stdout }} {{ etcd_health_before.stderr }}
+    when: etcd_health_before.rc != 0
+
+  # Type=notify: etcd reports itself started only once the member has rejoined
+  # the cluster, so the restart returns with the member back. The wait after it
+  # confirms that for the whole zone rather than relying on it.
+
+  - name: Restart etcd to apply its new configuration
+    service:
+      name: etcd
+      state: restarted
+
+  - name: Wait for every etcd member in the zone to be healthy again
+    command: "{{ etcd_health_command }}"
+    register: etcd_health_after
+    changed_when: false
+    check_mode: false
+    retries: 30
+    delay: 2
+    until: etcd_health_after.rc == 0
+

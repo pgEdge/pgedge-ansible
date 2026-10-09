@@ -195,6 +195,18 @@ pgEdge host in the inventory is unreachable, naming that host, even under
 carried on. Bring the host back, or remove it from the inventory if it has left
 the cluster for good.
 
+### etcd restarts when its configuration changes
+
+`setup_etcd` now renders the etcd configuration on every run instead of only
+when it builds a node. The first deployment with this release therefore adds
+the new compaction and quota settings to a cluster deployed with v1.1.0, and
+restarts every etcd member to apply them. The restarts happen one member at a
+time, and each waits until the whole zone is healthy again, so the zone keeps
+its quorum and Patroni keeps its leader. The role refuses to restart any member
+while another member of its zone is unhealthy. Run the deployment while the
+cluster is healthy. A member whose restart was refused, or that a failed run
+never reached, is restarted by the next deployment.
+
 ### Gather facts for every host first
 
 Roles read other hosts' addresses from the facts gathered for those hosts, so
@@ -357,6 +369,10 @@ same play to the top:
   both cipher types and for SSH and S3 repositories, including the
   S3-compatible settings. Run by both workflows and both local
   harnesses. (EE-39)
+- New `tests/render/check-etcd.py` renders the etcd configuration offline and
+  checks that the compaction retention reaches etcd as a string, which it
+  must be even when an inventory gives a bare number of hours or revisions.
+  Run by both workflows and both local harnesses. (EE-42)
 - New `tests/run-recovery-test.sh`, `tests/playbooks/seed-recovery.yml`,
   `tests/verify/verify-recovery.yml` and `tests/verify/verify-commit.yml`
   exercise a recovery against a cluster the end-to-end harness has already
@@ -399,9 +415,49 @@ same play to the top:
   the `backup` group. A backup server only serves an SSH repository, and in S3
   mode no SSH keys are exchanged, so the server failed partway through the
   deployment trying to reach nodes it was never given access to. (EE-39)
+- New `etcd_auto_compaction_mode`, `etcd_auto_compaction_retention` and
+  `etcd_quota_backend_bytes` parameters set etcd's `auto-compaction-mode`,
+  `auto-compaction-retention` and `quota-backend-bytes`. etcd compacts nothing
+  unless told to, and the collection never told it to, so every revision of
+  every key Patroni wrote was kept. Patroni rewrites its leader key every
+  `loop_wait`, so the store grew until it reached etcd's 2 GiB quota, and then
+  etcd refused all writes, Patroni could not renew its leader lock, and the
+  zone's primary was demoted. Clusters now compact key history older than an
+  hour, and the quota, which is unchanged, is set explicitly so it is visible.
+  An existing cluster takes the new settings at its next deployment; see
+  [etcd restarts when its configuration changes](#etcd-restarts-when-its-configuration-changes). See
+  [etcd_auto_compaction_retention](../configuration/etcd.md#etcd_auto_compaction_retention).
+  (EE-42)
+- New `tests/playbooks/etcd-reconfigure.yml` applies a changed etcd
+  configuration to the deployed cluster and checks that every member restarts
+  to apply it, every zone keeps its Patroni leader, a member whose new file was
+  written without a restart is restarted by the next run, a stopped member
+  starts with the new configuration, and a second, unchanged run restarts
+  nothing. Run by the Ultra-HA workflow and `tests/run-test.sh` for the etcd3
+  store. (EE-42)
 
 ### Changed
 
+- The playbook documentation now states that every play applying the
+  collection's roles must use the default `linear` strategy over all of its
+  hosts at once, without `strategy: free` or `serial`. The roles have always
+  depended on it: they coordinate steps across hosts, such as issuing
+  certificates from one shared authority, restarting a zone's etcd members in
+  turn and seeding zones before building the replication mesh. It also states
+  that check mode (`--check`) is not supported: a check-mode run does not
+  predict what a real run would change. See
+  [Execution Strategy](../configure_playbook.md#execution-strategy). (EE-42)
+- `setup_etcd` renders the etcd configuration on every run, so a changed
+  parameter reaches a running cluster at the next deployment. Previously the
+  role did nothing at all on a node with etcd data, and a cluster kept the
+  configuration it was built with. Each member whose file changed is restarted,
+  one at a time, after checking that every member of its zone is healthy and
+  before waiting until they are again; the role refuses the restart while the
+  zone is degraded. A member that is stopped is started with the new
+  configuration first, rather than blocking the rest. A member is restarted
+  whenever its file is newer than the etcd process, so a member whose restart
+  was refused or never reached is restarted by the next run.
+  Certificates are still issued only to a node being built. (EE-42)
 - `setup_backrest` no longer replaces a `pgbackrest.conf` that can read the
   stanza with one that cannot. A wrong `backup_repo_cipher` or object-store key
   used to be written straight over a working file, which broke archiving on the
