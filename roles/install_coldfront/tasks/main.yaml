@@ -1,0 +1,38 @@
+---
+
+- name: Check that pg_version has ColdFront packages available
+  assert:
+    that: pg_version in coldfront_supported_pg_versions
+    fail_msg: >-
+      ColdFront packages are only published for Postgres
+      {{ coldfront_supported_pg_versions | join(', ') }}; pg_version is
+      {{ pg_version }}.
+    quiet: true
+
+# The Postgres extension package depends on the base Postgres package
+# install_pgedge already installed, plus pg_duckdb and the patched
+# DuckDB extensions. Its name differs by OS family: Debian nests the
+# version between "postgresql" and the extension name; RHEL suffixes
+# the version onto the extension name instead — confirmed against the
+# package lists on apt.pgedge.com and dnf.pgedge.com.
+
+- name: Install ColdFront and PostgreSQL packages
+  package:
+    name:
+    - >-
+      {{ 'pgedge-coldfront_' ~ pg_version
+         if ansible_facts['os_family'] == 'RedHat'
+         else 'pgedge-postgresql-' ~ pg_version ~ '-coldfront' }}
+    # Archiver, partitioner and compactor.
+    - pgedge-coldfront
+    # Needed by the community.postgresql modules setup_coldfront uses.
+    - pgedge-python3-psycopg2
+    # Lets Ansible hand temporary files to an unprivileged become_user
+    # such as postgres.
+    - acl
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true

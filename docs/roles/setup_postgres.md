@@ -81,7 +81,9 @@ When `is_ha_cluster` is `false`, the role performs the following steps:
    snowflake, pg_stat_statements), and Spock conflict resolution settings.
 4. Configure `pg_hba.conf` with least-privilege rules for all known users
    and databases. Apply any additional rules from `custom_hba_rules`.
-5. Start and enable the Postgres service.
+5. Start and enable the Postgres service, restarting it instead when step 3
+   changed the configuration, or reloading it when only step 4 changed
+   `pg_hba.conf`.
 6. Create the admin user (`db_user`) and the pgEdge user (`pgedge_user`).
 7. Create all databases listed in `db_names` and install the Spock and
    Snowflake extensions in each.
@@ -100,8 +102,12 @@ and additionally:
   replication rules.
 
 !!! note "Shared Preload Libraries"
-    This role modifies `shared_preload_libraries`. If this is a pre-existing
-    instance, a Postgres restart is required for the change to take effect.
+    This role modifies `shared_preload_libraries`, which only takes effect
+    when Postgres starts. Without HA, the role restarts Postgres whenever it
+    changes the managed block in `postgresql.conf`, so a pre-existing
+    instance picks up the change. With HA, the role leaves an instance that
+    Patroni is already running alone, so a restart through Patroni is still
+    required there.
 
 ### Logical Decoding Output Plugins
 
@@ -172,7 +178,7 @@ This role generates and modifies the following files on inventory hosts:
 | `{{ pg_data }}/server.key` | New | SSL private key with mode 600. |
 | `~postgres/.pgpass` | New | Password file for automated database connections. |
 | `{{ pg_config_dir }}/postgresql.conf` | Modified | Postgres settings configured for pgEdge deployment. |
-| `{{ pg_data }}/pg_hba.conf` | Modified | Authentication rules configured for users and nodes. |
+| `{{ pg_config_dir }}/pg_hba.conf` | Modified | Authentication rules configured for users and nodes. |
 
 ## Platform-Specific Behavior
 
@@ -201,9 +207,16 @@ service name is `postgresql-{{ pg_version }}`.
 This role is idempotent and safe to re-run on inventory hosts. The role
 initializes the data directory only when the directory is missing, preserves
 existing SSL certificates, and creates users and databases only when they do
-not exist. The role updates configuration blocks in `postgresql.conf` and
-`pg_hba.conf` to match the current inventory settings.
+not exist. The role adds or updates the rules it manages in `pg_hba.conf`,
+and updates the managed block in `postgresql.conf` to match the current
+inventory settings. Without HA, it restarts Postgres only when that block
+actually changed, and reloads it when only `pg_hba.conf` changed.
 
 !!! tip "Configuration Management"
-    Postgres configuration uses the Ansible `blockinfile` module, which
-    preserves manual changes made outside the managed block.
+    `postgresql.conf` is managed with the Ansible `blockinfile` module,
+    which preserves manual changes made outside the managed block.
+    `pg_hba.conf` is managed rule by rule with the
+    `community.postgresql.postgresql_pg_hba` module, which leaves rules
+    the role does not manage in place. Rules are only added and updated,
+    never removed, so a rule for a host dropped from the inventory must
+    be deleted by hand.

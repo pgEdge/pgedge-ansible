@@ -28,6 +28,8 @@ apply across roles unless noted otherwise.
   PgBackRest repository.
 - [Spock Configuration Parameters](#spock-configuration-parameters) - Control
   logical replication exception handling.
+- [ColdFront Configuration Parameters](#coldfront-configuration-parameters) -
+  Enable the tiered-storage add-on and its Lakekeeper catalog.
 - [Path Override Parameters](#path-override-parameters) - Override default
   PostgreSQL installation paths.
 - [Internal Variables](#internal-variables) - Computed variables available for
@@ -205,6 +207,28 @@ replication behavior:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | exception_behaviour | transdiscard | How Spock handles replication exceptions. Accepted values are discard, transdiscard, and sub_disable. See the [pgEdge exception documentation](https://docs.pgedge.com/platform/exception#spockexception_behaviour) for details. |
+
+## ColdFront Configuration Parameters
+
+The following table describes parameters that control the ColdFront
+tiered-storage add-on and its Lakekeeper catalog:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| lakekeeper_host | (none) | Address the Lakekeeper catalog is reached at. |
+| lakekeeper_port | 8181 | Port the Iceberg REST catalog and management API listen on. |
+| lakekeeper_warehouse | wh | Name of the Iceberg warehouse ColdFront writes through. |
+| coldfront_s3_endpoint | "" | Full URL of the S3-compatible object store. Left empty, AWS's own endpoint resolution is used. |
+| coldfront_s3_bucket | iceberg | Bucket the cold tier's Parquet data and Iceberg metadata live in. |
+| coldfront_s3_access_key | "" | Access key for the object store. |
+| coldfront_s3_secret_key | "" | Secret key for the object store. |
+| coldfront_db | coldfront | Name of the additional database ColdFront's tiered storage lives in. |
+| coldfront_mesh | false | Whether this node coordinates cold-tier commits with other nodes over Spock, or uses a local advisory lock. |
+| pgedge_preload_libraries | [spock, snowflake, pg_stat_statements] | Base shared_preload_libraries list setup_coldfront extends rather than overwrites. |
+
+See the [ColdFront Configuration](configuration/coldfront.md) document for
+the complete parameter list, including the remaining Lakekeeper and object
+store settings.
 
 ## Path Override Parameters
 

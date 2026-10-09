@@ -1,0 +1,277 @@
+---
+
+# install_lakekeeper already ensured the Postgres cluster exists and is
+# running, via role_config's ensure_postgres_cluster.
+#
+# Creating a warehouse below makes Lakekeeper write to the bucket to
+# prove the credentials work, so the store has to be reachable from here
+# rather than merely running. An empty coldfront_s3_endpoint means AWS's
+# own endpoint resolution, which has nothing local to wait for.
+
+- name: Check that the object store is reachable from this host
+  wait_for:
+    host: "{{ coldfront_s3_reachable_host }}"
+    port: "{{ coldfront_s3_reachable_port }}"
+    timeout: 30
+  when: coldfront_s3_endpoint | length > 0
+
+- name: Create the Lakekeeper database role
+  community.postgresql.postgresql_user:
+    name: "{{ lakekeeper_db_user }}"
+    password: "{{ lakekeeper_db_password }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: Create the Lakekeeper catalog database
+  community.postgresql.postgresql_db:
+    name: "{{ lakekeeper_db }}"
+    owner: "{{ lakekeeper_db_user }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+# The migration creates these itself, but only if the role may run
+# CREATE EXTENSION. Creating them as the superuser here keeps the
+# Lakekeeper role unprivileged.
+
+- name: Create the extensions Lakekeeper's migration needs
+  community.postgresql.postgresql_ext:
+    name: "{{ item }}"
+    db: "{{ lakekeeper_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  loop:
+  - uuid-ossp
+  - pgcrypto
+  - pg_trgm
+  - btree_gin
+  - btree_gist
+  become: true
+  become_user: postgres
+
+# Generated once and kept: it encrypts the credentials Lakekeeper
+# stores, so a new key makes existing warehouse secrets unreadable.
+
+- name: Generate the Lakekeeper encryption key
+  shell: >-
+    set -o pipefail &&
+    umask 077 &&
+    openssl rand -base64 32 > /etc/lakekeeper/encryption.key
+  args:
+    executable: /bin/bash
+    creates: /etc/lakekeeper/encryption.key
+  become: true
+
+- name: Restrict the Lakekeeper encryption key
+  file:
+    path: /etc/lakekeeper/encryption.key
+    owner: root
+    group: lakekeeper
+    mode: "0640"
+  become: true
+
+- name: Read the Lakekeeper encryption key
+  slurp:
+    src: /etc/lakekeeper/encryption.key
+  register: lakekeeper_key
+  become: true
+
+# The file holds the catalog database password and the encryption key,
+# so --diff leaves it out.
+
+- name: Write the Lakekeeper environment file
+  template:
+    src: lakekeeper.env.j2
+    dest: /etc/lakekeeper/lakekeeper.env
+    owner: root
+    group: lakekeeper
+    mode: "0640"
+  register: lakekeeper_env_file
+  diff: false
+  become: true
+
+# Idempotent, so it runs on every pass rather than being guarded.
+
+- name: Migrate the Lakekeeper catalog database
+  command: /usr/bin/lakekeeper migrate
+  environment: "{{ lakekeeper_env }}"
+  changed_when: false
+  become: true
+  become_user: lakekeeper
+
+# The unit is Type=exec, so systemd reports a successful start before
+# the process binds its port. A Lakekeeper that then failed to bind
+# restarts until it trips the start limit, and systemd refuses to start
+# it again until that is cleared. Clearing it is a no-op on a healthy
+# unit.
+
+- name: Clear any failed Lakekeeper unit state
+  command: systemctl reset-failed lakekeeper
+  changed_when: false
+  failed_when: false
+  become: true
+
+# Only restart Lakekeeper on subsequent runs if the environment file
+# changed. Otherwise, just make sure it's up and running.
+
+- name: Start and enable Lakekeeper
+  systemd:
+    name: lakekeeper
+    state: "{{ 'restarted' if lakekeeper_env_file.changed else 'started' }}"
+    enabled: true
+  become: true
+
+# /health is checked rather than the port alone, because a port that
+# merely accepts connections proves nothing: another service holding
+# this port would otherwise be mistaken for Lakekeeper and every call
+# below would fail somewhere less obvious. A body other than
+# {"health": "ok", ...} means whatever answered is not Lakekeeper —
+# check "ss -lntp | grep {{ lakekeeper_port }}" and
+# "journalctl -u lakekeeper".
+
+- name: Wait for Lakekeeper to report itself healthy
+  uri:
+    url: "{{ lakekeeper_url }}/health"
+    method: GET
+    status_code: 200
+  register: lakekeeper_health
+  retries: 30
+  delay: 2
+  until:
+  - lakekeeper_health is success
+  - (lakekeeper_health.json.health | default('')) == 'ok'
+
+# A first bootstrap answers 204. A repeat answers 400 with type
+# CatalogAlreadyBootstrapped, which is the only 400 accepted here; any
+# other 400 fails the play. Asking /management/v1/info whether a
+# bootstrap is needed would be tidier, but that route does not exist on
+# every build.
+
+- name: Bootstrap Lakekeeper
+  uri:
+    url: "{{ lakekeeper_url }}/management/v1/bootstrap"
+    method: POST
+    body_format: json
+    body:
+      accept-terms-of-use: true
+    status_code: [204, 400]
+  register: lakekeeper_bootstrap
+  changed_when: lakekeeper_bootstrap.status == 204
+  failed_when:
+  - lakekeeper_bootstrap.status == 400
+  - >-
+    (lakekeeper_bootstrap.json.error.type | default(''))
+    != 'CatalogAlreadyBootstrapped'
+
+- name: List the existing Lakekeeper warehouses
+  uri:
+    url: "{{ lakekeeper_url }}/management/v1/warehouse"
+    method: GET
+    status_code: 200
+  register: lakekeeper_warehouses
+
+- name: Create the Lakekeeper warehouse over the object store
+  uri:
+    url: "{{ lakekeeper_url }}/management/v1/warehouse"
+    method: POST
+    body_format: json
+    body:
+      warehouse-name: "{{ lakekeeper_warehouse }}"
+      storage-profile: >-
+        {{ lakekeeper_storage_profile
+           | combine(lakekeeper_storage_endpoint) }}
+      # Field names come from the management API of the packaged
+      # Lakekeeper 0.13.1 (lakekeeper management-openapi:
+      # S3AccessKeyCredential). ColdFront's own setup notes use the
+      # older aws-access-key-id / aws-secret-access-key spelling, which
+      # this version does not accept.
+      storage-credential:
+        type: s3
+        credential-type: access-key
+        access-key-id: "{{ coldfront_s3_access_key }}"
+        secret-access-key: "{{ coldfront_s3_secret_key }}"
+    status_code: [200, 201]
+    # Lakekeeper explains a rejected profile in the response body, which
+    # is only returned when the content is kept.
+    return_content: true
+  # Lakekeeper 0.13.1 reads endpoint as an optional URL (S3Profile in
+  # crates/lakekeeper/src/service/storage/s3.rs). Left out, the region
+  # determines the endpoint, which is what AWS S3 needs; an empty string
+  # is not a URL, and the whole request fails with a 422. The flavor
+  # only changes behaviour once STS is enabled, which it is not here,
+  # but aws is Lakekeeper's own name for AWS S3.
+  vars:
+    lakekeeper_storage_profile:
+      type: s3
+      bucket: "{{ coldfront_s3_bucket }}"
+      region: "{{ coldfront_s3_region }}"
+      path-style-access: "{{ coldfront_s3_path_style }}"
+      flavor: >-
+        {{ 's3-compat' if coldfront_s3_endpoint | length > 0 else 'aws' }}
+      sts-enabled: false
+      remote-signing-enabled: false
+    lakekeeper_storage_endpoint: >-
+      {{ {'endpoint': coldfront_s3_endpoint}
+         if coldfront_s3_endpoint | length > 0 else {} }}
+  register: lakekeeper_warehouse_create
+  # The request carries the object-store secret, which no_log keeps out
+  # of the output at every verbosity. That would hide Lakekeeper's
+  # explanation of a rejection as well, so this task records the outcome
+  # rather than failing, and the next one reports it.
+  no_log: true
+  failed_when: false
+  # Only runs when the warehouse doesn't exist yet (below), so whenever
+  # it succeeds it has created one.
+  changed_when: lakekeeper_warehouse_create.status | default(-1) in [200, 201]
+  when: >-
+    lakekeeper_warehouse not in (
+      lakekeeper_warehouses.json['warehouses'] | default([])
+      | map(attribute='name') | list
+    )
+
+- name: Report why Lakekeeper refused the warehouse
+  fail:
+    msg: >-
+      Creating warehouse {{ lakekeeper_warehouse }} got HTTP {{
+      lakekeeper_warehouse_create.status | default(-1) }}: {{
+      lakekeeper_warehouse_create.json.error
+      | default(lakekeeper_warehouse_create.content
+      | default(lakekeeper_warehouse_create.msg | default(''))) }}
+  when:
+  - lakekeeper_warehouse_create is not skipped
+  - lakekeeper_warehouse_create.status | default(-1) not in [200, 201]
+
+- name: Re-read the Lakekeeper warehouses
+  uri:
+    url: "{{ lakekeeper_url }}/management/v1/warehouse"
+    method: GET
+    status_code: 200
+  register: lakekeeper_warehouses
+
+- name: Record the warehouse id
+  set_fact:
+    lakekeeper_warehouse_id: >-
+      {{ lakekeeper_warehouses.json['warehouses']
+         | selectattr('name', 'eq', lakekeeper_warehouse)
+         | map(attribute='warehouse-id') | first }}
+
+# Decoupled (Iceberg-only) tables need the namespace to exist in its own
+# committed REST call: coldfront.create_iceberg_table() defers the
+# Iceberg CREATE SCHEMA to commit but POSTs the CREATE TABLE eagerly, so
+# without this the table create 404s.
+
+- name: Create the Iceberg namespace
+  uri:
+    url: >-
+      {{ lakekeeper_url }}/catalog/v1/{{ lakekeeper_warehouse_id
+      }}/namespaces
+    method: POST
+    body_format: json
+    body:
+      namespace: ["{{ lakekeeper_namespace }}"]
+    status_code: [200, 201, 409]
+  register: lakekeeper_ns
+  changed_when: lakekeeper_ns.status in [200, 201]

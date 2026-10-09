@@ -1,0 +1,202 @@
+---
+
+# Both are read at query time, not just at setup time: the cold tier
+# reads and writes the object store, and commits go through the
+# catalog. Checking here turns "the extension cannot commit" into a
+# named failure with an address attached. An empty coldfront_s3_endpoint
+# means AWS's own endpoint resolution, which has nothing local to wait
+# for.
+
+- name: Check that the object store is reachable from this host
+  wait_for:
+    host: "{{ coldfront_s3_reachable_host }}"
+    port: "{{ coldfront_s3_reachable_port }}"
+    timeout: 30
+  when: coldfront_s3_endpoint | length > 0
+
+- name: Check that the Iceberg catalog is reachable from this host
+  uri:
+    url: "{{ lakekeeper_url }}/health"
+    method: GET
+    status_code: 200
+  register: lakekeeper_health
+  retries: 15
+  delay: 2
+  until:
+  - lakekeeper_health is success
+  - (lakekeeper_health.json.health | default('')) == 'ok'
+
+- name: Create the role pg_duckdb gates DuckDB execution on
+  community.postgresql.postgresql_user:
+    name: "{{ coldfront_duckdb_role }}"
+    role_attr_flags: NOLOGIN
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: Create the ColdFront database
+  community.postgresql.postgresql_db:
+    name: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+# shared_preload_libraries and duckdb.extension_directory are read only
+# at server start, so this needs a restart, not a reload. Postgres is
+# already running by the time this role runs (setup_postgres started
+# it), so this only restarts on an actual change rather than also
+# taking on responsibility for starting the service.
+#
+# This appends to postgresql.conf directly, the same way setup_postgres
+# itself does (a distinct marker, not setup_postgres's own, so the two
+# blocks coexist) rather than writing a conf.d/*.conf file. On Debian,
+# pg_createcluster's include_dir 'conf.d' line sits inside the
+# original file, before setup_postgres's own EOF-appended block — so a
+# conf.d file, which loads at that include point, loads *before*
+# setup_postgres's block and gets its shared_preload_libraries silently
+# overridden by it. Appending here instead, after setup_postgres's own
+# task has already run, guarantees this block is the last word — and it
+# works on RHEL too, which has no conf.d at all.
+
+- name: Configure Postgres for ColdFront
+  blockinfile:
+    path: "{{ pg_config_dir }}/postgresql.conf"
+    marker: "# {mark} pgEdge ColdFront ANSIBLE MANAGED BLOCK"
+    insertafter: EOF
+    block: |
+      # Extends pgedge_preload_libraries rather than overwriting it, so
+      # enabling ColdFront never silently disables whatever that host
+      # already preloads (Spock and Snowflake, on a normal pgEdge
+      # Distributed Postgres node — see role_config's default).
+      shared_preload_libraries = '{{
+        (pgedge_preload_libraries + ["pg_duckdb", "coldfront"]) | join(",")
+        }}'
+
+      # Load the patched DuckDB extensions from
+      # pgedge-coldfront-duckdb-extensions instead of downloading
+      # upstream copies, per that package's own
+      # coldfront-duckdb-extensions.conf.sample. autoinstall MUST stay
+      # off: with it on, a missing extension file makes DuckDB silently
+      # fetch the unpatched upstream build, which 409s under
+      # concurrency and writes manifests strict Iceberg readers reject.
+      # autoload stays on so ATTACH lazily loads iceberg from the
+      # directory below.
+      duckdb.extension_directory = '/usr/lib/pgedge/coldfront/duckdb-extensions'
+      duckdb.allow_unsigned_extensions = true
+      duckdb.autoinstall_known_extensions = false
+      duckdb.autoload_known_extensions = true
+
+      # Role pg_duckdb gates DuckDB execution on. Superusers always
+      # qualify; members of this role reach the cold tier without
+      # superuser.
+      duckdb.postgres_role = '{{ coldfront_duckdb_role }}'
+
+      # Iceberg catalog this node writes through.
+      coldfront.warehouse = '{{ lakekeeper_warehouse }}'
+      coldfront.lakekeeper_endpoint = '{{ lakekeeper_url }}/catalog'
+
+      # Loopback DSN coldfront.ensure_pg_attached() uses to attach this
+      # instance into DuckDB as 'pglocal'. The backend opens it itself,
+      # running as the postgres OS user, so over the Unix socket only
+      # the postgres role passes peer authentication. Upstream's image
+      # likewise connects as its bootstrap superuser. A database other
+      # than coldfront_db needs its own setting, through ALTER DATABASE.
+      coldfront.local_pg_dsn = '{{ "host=/var/run/postgresql port=" ~ pg_port
+        ~ " dbname=" ~ coldfront_db
+        ~ " user=postgres application_name=coldfront_pglocal" }}'
+      {% if coldfront_mesh %}
+
+      # DSN the Ricart-Agrawala bakery's claim/release uses for its
+      # autonomous dblink connection when this node is part of a Spock
+      # mesh. Upstream's docker/entrypoint.sh sets this only in its
+      # "mesh" mode, alongside Spock and Snowflake; without it the
+      # bakery falls back to a local advisory lock, which is what
+      # upstream calls "vanilla" mode and what coldfront_mesh: false
+      # (the default here) means. The backend opens this connection
+      # too, so it connects as postgres for the same reason as
+      # coldfront.local_pg_dsn above.
+      coldfront.dblink_self = '{{ "host=/var/run/postgresql port=" ~ pg_port
+        ~ " dbname=" ~ coldfront_db
+        ~ " user=postgres application_name=coldfront_dblink" }}'
+      {% endif %}
+
+      # Asserts that the duckdb-iceberg in use carries ColdFront's
+      # bakery-aware commit-refresh patch, which the pgEdge
+      # coldfront-duckdb-extensions package ships. Do not set this
+      # against a stock duckdb-iceberg build.
+      coldfront.iceberg_bakery_patch = on
+      coldfront.iceberg_async_parquet = on
+    state: present
+  become: true
+  become_user: postgres
+  register: coldfront_conf
+
+- name: Restart Postgres if the ColdFront configuration changed
+  systemd:
+    name: "{{ pg_service_name }}"
+    state: restarted
+  become: true
+  when: coldfront_conf.changed
+
+- name: Create the ColdFront extensions
+  community.postgresql.postgresql_ext:
+    name: "{{ item }}"
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  loop:
+  - pg_duckdb
+  - coldfront
+  become: true
+  become_user: postgres
+
+# An upsert on coldfront.storage_secret, so running it every pass is
+# harmless and keeps the stored credential in step with the inventory.
+#
+# All six arguments are passed, because those left out default to
+# us-east-1, path style and plain HTTP. The region always reaches the
+# DuckDB secret, so a bucket in another Region would be signed for the
+# wrong one. ColdFront's object store docs call for a NULL endpoint on
+# AWS S3, which selects AWS's own per-Region addressing; the URL style
+# and SSL setting only apply once an endpoint is set.
+#
+# no_log hides the task's output, because the module returns the query
+# with the secret filled in and repeats the arguments in its error
+# message.
+
+- name: Point ColdFront at the object store
+  community.postgresql.postgresql_query:
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT coldfront.set_storage_secret(%(key)s, %(secret)s,
+      NULLIF(%(endpoint)s, ''), %(region)s, %(url_style)s,
+      %(use_ssl)s::boolean)
+    named_args:
+      key: "{{ coldfront_s3_access_key }}"
+      secret: "{{ coldfront_s3_secret_key }}"
+      endpoint: "{{ coldfront_s3_hostport }}"
+      region: "{{ coldfront_s3_region }}"
+      url_style: "{{ coldfront_s3_url_style }}"
+      use_ssl: "{{ coldfront_s3_endpoint.startswith('https') | lower }}"
+  changed_when: false
+  no_log: true
+  become: true
+  become_user: postgres
+
+# The file holds db_password and the object-store secret, so --diff
+# leaves it out.
+
+- name: Write the archiver, partitioner and compactor configuration
+  template:
+    src: coldfront-config.yaml.j2
+    dest: /etc/pgedge/coldfront/config.yaml
+    owner: coldfront
+    group: coldfront
+    mode: "0600"
+    backup: true
+  diff: false
+  become: true

@@ -6,7 +6,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
   echo "Usage: $0 <scenario> <os> [dcs] [backup] [--keep]"
-  echo "  scenario: simple-cluster | ultra-ha"
+  echo "  scenario: simple-cluster | ultra-ha | simple-cluster-coldfront"
   echo "  os:       debian12 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
   echo "  backup:   ssh (default) | s3 -- the repository; s3 is ultra-ha only"
@@ -105,6 +105,14 @@ case "$BACKUP" in
     ;;
 esac
 
+# A scenario's own extra vars, passed to every playbook run below. The
+# ColdFront scenario keeps its object store's address and bucket here,
+# and Step 4d reads them from this file to wait for the bucket.
+SCENARIO_VARS="$SCRIPT_DIR/vars/${SCENARIO}.yml"
+if [ -f "$SCENARIO_VARS" ]; then
+  EXTRA_VARS+=(-e "@$SCENARIO_VARS")
+fi
+
 cleanup() {
   if [ "$KEEP" = false ]; then
     echo "==> Tearing down containers..."
@@ -190,6 +198,32 @@ if [ "$BACKUP" = "s3" ]; then
   echo "==> Step 4c: Preparing the S3 repository..."
   "$SCRIPT_DIR/prepare-s3.sh" "$PROJECT_NAME" "${COMPOSE_ARGS[@]}" -- \
     "${INVENTORY_ARGS[@]}" --private-key "$SCRIPT_DIR/.ssh/id_ed25519"
+fi
+
+# Step 4d: Wait for the scenario's object store bucket
+# The compose stack creates the bucket from a side container, which can
+# still be running once every host answers SSH. setup_lakekeeper writes
+# to the bucket to prove the warehouse credentials work, and fails
+# rather than waits if the bucket is not there yet. Each check gives up
+# after 2s, so a filer that accepts the connection but never answers
+# cannot keep the loop waiting indefinitely.
+FILER=""
+if [ -f "$SCENARIO_VARS" ]; then
+  FILER=$(sed -n 's/^seaweedfs_filer: *//p' "$SCENARIO_VARS")
+fi
+if [ -n "$FILER" ]; then
+  BUCKET=$(sed -n 's/^coldfront_s3_bucket: *//p' "$SCENARIO_VARS")
+  echo "==> Step 4d: Waiting for the $BUCKET bucket..."
+  ELAPSED=0
+  until curl -sf --max-time 2 -o /dev/null "$FILER/buckets/$BUCKET/"; do
+    ELAPSED=$((ELAPSED + 2))
+    if [ $ELAPSED -ge 60 ]; then
+      echo "ERROR: Bucket $BUCKET did not appear within 60s"
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "    Bucket $BUCKET ready"
 fi
 
 # Step 5: Build and install Ansible collection

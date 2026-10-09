@@ -118,6 +118,56 @@ skips each check that already holds a value, so repeated inclusion costs
 nothing and an inventory may set a check directly when the binary is
 unreachable.
 
+### Standalone Postgres Instances
+
+Some roles need a plain Postgres instance of their own rather than a pgEdge
+Distributed Postgres node — a private catalog store, for example, with none
+of `setup_postgres`'s Spock, Snowflake, or cluster HBA configuration. The
+`ensure_postgres_cluster` task file creates and starts such an instance from
+`pg_version`, `cluster_name`, `pg_data` and `pg_service_name`, the same
+variables every other role reads. On Debian, whose server package creates
+and starts a `main` cluster on port 5432, it first stops and disables that
+cluster when the new instance needs the same port, as `setup_postgres`
+does:
+
+```yaml
+- name: Ensure the Postgres cluster exists
+  include_role:
+    name: role_config
+    tasks_from: ensure_postgres_cluster
+```
+
+Like `pg_feature_checks`, this does not run as a dependency, since not every
+role needs its own instance; roles that do include it explicitly.
+
+### ColdFront and Lakekeeper Settings
+
+The ColdFront tiered-storage add-on shares several settings with Lakekeeper,
+its Iceberg catalog, so they are defined here rather than in either role's
+own defaults:
+
+- `lakekeeper_host`, `lakekeeper_port`, and `lakekeeper_warehouse` locate the
+  Iceberg REST catalog and name the warehouse ColdFront writes through.
+- `lakekeeper_metrics_port` sets the port Lakekeeper serves Prometheus
+  metrics on. It lives here rather than in either Lakekeeper role because
+  `install_lakekeeper` checks it for collisions and `setup_lakekeeper`
+  writes it into the service environment.
+- `coldfront_s3_endpoint`, `coldfront_s3_region`, `coldfront_s3_bucket`,
+  `coldfront_s3_access_key`, `coldfront_s3_secret_key`, and
+  `coldfront_s3_path_style` locate and authenticate to the S3-compatible
+  object store behind the cold tier. This is deliberately generic: real AWS
+  S3, MinIO, and a self-hosted store are all equally valid backends, and
+  this collection deploys none of them. `coldfront_s3_endpoint` stays empty
+  to use AWS's own endpoint resolution; set it to point at another store
+  instead.
+- `pgedge_preload_libraries` lists the shared libraries `setup_postgres`
+  preloads on a pgEdge Distributed Postgres instance. `setup_coldfront`
+  extends this list (`pg_duckdb`, `coldfront`) instead of overwriting it,
+  so enabling ColdFront does not disable Spock or Snowflake.
+
+The AI DBA Workbench, a separate monitoring product, is out of scope for
+now; its settings will land here alongside its own roles.
+
 ### Platform-Specific Values
 
 The `pg_service_name` variable contains the appropriate service name for the

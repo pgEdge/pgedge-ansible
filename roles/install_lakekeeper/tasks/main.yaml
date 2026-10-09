@@ -1,0 +1,79 @@
+---
+
+# A SeaweedFS release from 4.x onward starts its own built-in Iceberg
+# catalog on 8181 whenever its S3 gateway is enabled, which is
+# Lakekeeper's default port too. Catch a collision before installing
+# anything rather than leave two services fighting over one port.
+
+- name: Check that no two services on this host want the same port
+  assert:
+    that: service_ports | count == service_ports | unique | count
+    fail_msg: >-
+      Two services are configured on the same port
+      ({{ service_ports | sort | join(', ') }}).
+    quiet: true
+  vars:
+    service_ports: >-
+      {{ [pg_port, lakekeeper_port, lakekeeper_metrics_port]
+         | map('int') | reject('eq', 0) | list }}
+
+# Lakekeeper needs its own Postgres instance for the catalog. The base
+# package name differs by OS family: Debian's pgedge-postgresql-<ver>
+# is the server itself, but on RHEL that same base name is client tools
+# only (psql, pg_dump, ...) and the server binaries (postgres, initdb,
+# pg_ctl) live in the separate pgedge-postgresql<ver>-server package —
+# confirmed against the packaged file lists on dnf.pgedge.com, since
+# RHEL's naming drops the hyphen version separator Debian uses.
+
+- name: Install Lakekeeper and PostgreSQL packages
+  package:
+    name:
+    - pgedge-lakekeeper
+    - >-
+      {{ 'pgedge-postgresql' ~ pg_version
+         if ansible_facts['os_family'] == 'RedHat'
+         else 'pgedge-postgresql-' ~ pg_version }}
+    # Needed by the community.postgresql modules setup_lakekeeper uses.
+    - pgedge-python3-psycopg2
+    # Lets Ansible hand temporary files to an unprivileged become_user
+    # such as postgres.
+    - acl
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Install the Postgres server package on RHEL systems
+  package:
+    name: "pgedge-postgresql{{ pg_version }}-server"
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+  when: ansible_facts['os_family'] == 'RedHat'
+
+# setup_lakekeeper creates pgcrypto, pg_trgm, btree_gin and btree_gist
+# for Lakekeeper's own migration, and all four ship in contrib rather
+# than the server package. RHEL does not pull contrib in as a
+# dependency, which is the same gap install_pgedge covers for a pgEdge
+# Distributed Postgres node.
+
+- name: Install the Postgres contrib package on RHEL systems
+  package:
+    name: "pgedge-postgresql{{ pg_version }}-contrib"
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Ensure the Postgres cluster exists
+  include_role:
+    name: role_config
+    tasks_from: ensure_postgres_cluster

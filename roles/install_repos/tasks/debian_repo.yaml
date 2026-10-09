@@ -1,5 +1,13 @@
 ---
 
+# update_cache here, not only on the task below that picks up the pgEdge
+# packages. A freshly provisioned Debian image can carry no package
+# lists at all, and this is the first task in the collection that
+# installs anything, so without it the run dies on "No package matching
+# 'curl' is available". init_server refreshes the cache and normally
+# runs first, but a play that only needs the repos, such as one setting
+# up a Lakekeeper host, has no reason to include it.
+
 - name: Install Debian-family prerequisite packages
   apt:
     name:
@@ -7,6 +15,7 @@
     - gnupg2
     - lsb-release
     state: present
+    update_cache: true
   retries: 5
   delay: 20
   register: result

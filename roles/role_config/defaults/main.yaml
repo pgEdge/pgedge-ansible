@@ -198,3 +198,45 @@ patroni_namespace: /db/
 patroni_dcs:
   type: etcd3
   # parameters: intentionally omitted to trigger default substitution
+
+# Settings the ColdFront tiered-storage add-on shares with Lakekeeper,
+# its Iceberg catalog. They live here, rather than in the role that
+# installs each service, because both setup_coldfront and
+# setup_lakekeeper need to agree on them: the archiver writes to the
+# object store directly, and Lakekeeper's warehouse points at the same
+# store to prove its credentials by writing to it. A setting only one
+# role reads belongs in that role's own defaults instead, the way
+# coldfront_db lives in setup_coldfront's.
+
+lakekeeper_host: ""
+lakekeeper_port: 8181
+lakekeeper_warehouse: wh
+
+# Lakekeeper also serves Prometheus metrics on a second port, and exits
+# at startup if that port is taken. Shared because install_lakekeeper
+# checks it for collisions and setup_lakekeeper writes it into the
+# service environment.
+lakekeeper_metrics_port: 9000
+
+# ColdFront's cold tier writes to any S3-compatible object store. Real
+# AWS S3, MinIO, and a self-hosted store are all equally valid, and
+# this collection deploys none of them. coldfront_s3_endpoint stays
+# empty to use AWS's own endpoint resolution; set it to point at
+# another store instead.
+
+coldfront_s3_endpoint: ""
+coldfront_s3_region: us-east-1
+coldfront_s3_bucket: iceberg
+coldfront_s3_access_key: ""
+coldfront_s3_secret_key: ""
+coldfront_s3_path_style: true
+
+# shared_preload_libraries for a pgEdge Distributed Postgres instance.
+# setup_postgres templates postgresql.conf from this list rather than a
+# literal string so setup_coldfront can extend it (pg_duckdb, coldfront)
+# without overwriting the entries pgEdge itself needs.
+
+pgedge_preload_libraries:
+- spock
+- snowflake
+- pg_stat_statements

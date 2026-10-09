@@ -1,0 +1,118 @@
+name: "E2E: Simple Cluster + ColdFront"
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Target OS
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - debian12
+          - rocky9
+      environment:
+        description: Package repository environment
+        type: choice
+        required: true
+        default: release
+        options:
+          - release
+          - staging
+
+jobs:
+  test:
+    name: Simple Cluster + ColdFront - ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ inputs.os == 'all' && fromJSON('["debian12","rocky9"]') || fromJSON(format('["{0}"]', inputs.os)) }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Increase inotify limits for systemd containers
+        run: sudo sysctl -w fs.inotify.max_user_instances=512
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Generate SSH keypair
+        run: |
+          mkdir -p tests/.ssh
+          ssh-keygen -t ed25519 -f tests/.ssh/id_ed25519 -N "" -q
+          cp tests/.ssh/id_ed25519.pub tests/docker/authorized_keys
+
+      - name: Build and install collection
+        run: make install VERSION=0.0.0-dev
+
+      - name: Start containers
+        run: |
+          docker compose -p e2e -f tests/compose/simple-cluster-coldfront-${{ matrix.os }}.yml up -d --build
+          sleep 5
+          docker compose -p e2e -f tests/compose/simple-cluster-coldfront-${{ matrix.os }}.yml ps
+
+      - name: Wait for SSH
+        run: |
+          for host in 192.168.6.10 192.168.6.11 192.168.6.30; do
+            for i in $(seq 1 30); do
+              ssh -i tests/.ssh/id_ed25519 \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=2 \
+                -o BatchMode=yes \
+                ansible@$host true 2>/dev/null && break
+              sleep 2
+            done
+          done
+
+      - name: Run playbook
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/simple-cluster-coldfront.yml \
+            -i tests/inventories/simple-cluster-coldfront.yml \
+            --private-key tests/.ssh/id_ed25519 \
+            -e @tests/vars/simple-cluster-coldfront.yml \
+            -e repo_environment=${{ inputs.environment }}
+
+      - name: Verify the cold tier round trip
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/verify/verify-simple-cluster-coldfront.yml \
+            -i tests/inventories/simple-cluster-coldfront.yml \
+            --private-key tests/.ssh/id_ed25519 \
+            -e @tests/vars/simple-cluster-coldfront.yml
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose -p e2e -f tests/compose/simple-cluster-coldfront-${{ matrix.os }}.yml logs
+
+      - name: Show systemd service status on failure
+        if: failure()
+        run: |
+          for host in 192.168.6.10 192.168.6.11 192.168.6.30; do
+            echo "::group::$host"
+            ssh -i tests/.ssh/id_ed25519 \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=2 \
+              -o BatchMode=yes \
+              ansible@$host \
+              'sudo systemctl status "pgedge-postgres-*" "postgresql@*" lakekeeper --no-pager -l; \
+               sudo journalctl -xeu "pgedge-postgres-*" -u "postgresql@*" -u lakekeeper --no-pager' \
+              || true
+            echo "::endgroup::"
+          done
+
+      - name: Teardown
+        if: always()
+        run: docker compose -p e2e -f tests/compose/simple-cluster-coldfront-${{ matrix.os }}.yml down -v --remove-orphans

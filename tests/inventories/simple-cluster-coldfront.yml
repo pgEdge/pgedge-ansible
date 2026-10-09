@@ -1,0 +1,26 @@
+all:
+  vars:
+    ansible_user: ansible
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    debug_pgedge: false
+    disable_selinux: false
+    manage_host_file: false
+
+# lakekeeper_host and the coldfront_s3_* settings both groups need are
+# in tests/vars/simple-cluster-coldfront.yml, not here. See the comment there.
+
+pgedge:
+  vars:
+    db_password: TestPass123
+    pgedge_password: TestPass456
+    replication_password: TestPass789
+    backup_password: TestBackup321
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 2
+
+lakekeeper:
+  hosts:
+    192.168.6.30:

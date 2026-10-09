@@ -1,0 +1,19 @@
+---
+
+lakekeeper_url: "http://{{ lakekeeper_bind_ip }}:{{ lakekeeper_port }}"
+
+# The user and password are percent-encoded, since a character such as
+# @, : or / in either would otherwise change how the URI is split.
+# urlencode leaves / alone, as it is meant for paths, so that is
+# replaced separately.
+lakekeeper_dsn: >-
+  postgresql://{{ lakekeeper_db_user | urlencode | replace('/', '%2F')
+  }}:{{ lakekeeper_db_password | urlencode | replace('/', '%2F')
+  }}@127.0.0.1:{{ pg_port }}/{{ lakekeeper_db }}
+
+# Referenced only after tasks/main.yaml has read the encryption key.
+lakekeeper_env:
+  LAKEKEEPER__PG_DATABASE_URL_WRITE: "{{ lakekeeper_dsn }}"
+  LAKEKEEPER__PG_DATABASE_URL_READ: "{{ lakekeeper_dsn }}"
+  LAKEKEEPER__PG_ENCRYPTION_KEY: >-
+    {{ lakekeeper_key.content | b64decode | trim }}

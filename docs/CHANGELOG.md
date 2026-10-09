@@ -49,6 +49,31 @@ in full.
   keys in `backup_repo_params` for S3-compatible stores such as MinIO. (EE-39)
 - `init_server` validates S3 repository settings and refuses a backup server in
   an S3 zone. (EE-39)
+- New `install_lakekeeper` and `setup_lakekeeper` roles build Lakekeeper, the
+  Iceberg REST catalog ColdFront's cold tier commits through, on its own
+  dedicated host with its own standalone PostgreSQL instance. (EE-40)
+- New `install_coldfront` and `setup_coldfront` roles add the ColdFront
+  tiered-storage extension to an existing pgEdge Distributed Postgres node.
+  Recent data stays in native PostgreSQL partitions; older data archives to
+  Iceberg on S3-compatible storage. (EE-40)
+- New `simple-cluster-coldfront` sample playbook sets up a pgEdge Distributed
+  Postgres cluster with ColdFront, and the Lakekeeper host its cold tier
+  commits through, in a single run. (EE-40)
+- New `coldfront_s3_*` parameters locate and authenticate to the S3-compatible
+  object store behind the cold tier. The setting is deliberately generic: real
+  AWS S3, MinIO, and a self-hosted store are all equally valid backends.
+  (EE-40)
+- `role_config` gained an `ensure_postgres_cluster` task file for roles that
+  need a standalone PostgreSQL instance rather than a pgEdge Distributed
+  Postgres node, used by `install_lakekeeper`. (EE-40)
+- `setup_postgres` now templates `shared_preload_libraries` from a new
+  `pgedge_preload_libraries` list rather than a literal string, so
+  `setup_coldfront` can extend it without overwriting Spock and Snowflake.
+  (EE-40)
+- New ColdFront end-to-end test builds two pgEdge nodes, a Lakekeeper host and
+  a SeaweedFS object store, then checks that the catalog serves its warehouse,
+  that the extensions are loaded beside Spock and Snowflake, and that a
+  decoupled Iceberg table accepts a write and returns it. (EE-40)
 
 ### Changed
 
@@ -86,6 +111,37 @@ in full.
   5432. (EE-39)
 - `make build` rebuilds the tarball when any shipped file changes or is
   deleted. (EE-39)
+- `setup_postgres` now restarts PostgreSQL when it changes the managed block in
+  `postgresql.conf`, and reloads it when it changes only `pg_hba.conf`, rather
+  than only making sure the service is running. An instance that was already
+  running kept its old settings, so with `cluster_name` set to `main` on
+  Debian, whose server package starts that cluster as it installs, Spock
+  failed to install with "spock is not in shared_preload_libraries". It also
+  kept its old access rules, so the nodes already in a cluster went on
+  refusing connections from a node added to it. HA clusters, where Patroni
+  runs PostgreSQL, are unchanged. (EE-40)
+- `setup_postgres` role documentation no longer attributes `pg_hba.conf`
+  management to the `blockinfile` module, which only handles `postgresql.conf`,
+  and now gives the path of `pg_hba.conf` as `pg_config_dir` rather than
+  `pg_data`, which named the wrong directory on Debian. (EE-40)
+- `setup_postgres` no longer rewrites `pg_hba.conf` down to a single rule on
+  every run after the first. One of several tasks writing that file used
+  `overwrite: true`, which compares its own rules against the entire file
+  rather than just the rules that task manages, so every run wiped whatever the
+  other tasks (and `custom_hba_rules`) had already added, then immediately
+  recreated it. All the rules now go through one task using the module's own
+  per-rule mode instead, matching how the role's own `primary_setup.yaml` and
+  `finalize_backrest` already write to the same file. (EE-40)
+- `setup_pgedge` no longer reports Spock node and subscription creation as
+  changed on every run. Both used a `DO $$ ... $$` block, which always reports
+  changed regardless of whether its `IF NOT FOUND` branch actually fired, since
+  PostgreSQL's own command tag for an anonymous block carries no row count.
+  Both the HA and non-HA task files now check for existence with a plain
+  `SELECT` first and only run the creation query when needed. (EE-40)
+- `install_repos` now refreshes the APT cache before installing its
+  prerequisite packages, so a play that includes it without `init_server` no
+  longer fails on a freshly provisioned Debian host with "No package matching
+  'curl' is available". (EE-40)
 
 ## v1.1.0
 

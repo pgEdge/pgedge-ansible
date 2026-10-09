@@ -1,0 +1,44 @@
+# This playbook will create a standard pgEdge cluster with the ColdFront
+# tiered-storage add-on
+#
+# Make sure all nodes are in the pgedge node group, and the host that
+# serves the Lakekeeper Iceberg catalog is in the lakekeeper group.
+#
+# This collection does not deploy an object store. Point
+# coldfront_s3_endpoint at whatever S3-compatible store you already
+# have, or leave it empty to use AWS S3.
+#
+# coldfront_mesh stays at its default of false, so each node serializes
+# only its own cold-tier commits. Write any one Iceberg table from a
+# single node.
+#
+# CHECK the README for how these roles work
+---
+
+# Set up Lakekeeper first. Every cold-tier commit goes through this
+# catalog, and setup_coldfront fails if the catalog is not already
+# answering.
+
+- hosts: lakekeeper
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_repos
+  - install_lakekeeper
+  - setup_lakekeeper
+
+- hosts: pgedge
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+  - install_repos
+  - install_pgedge
+  - setup_postgres
+  - setup_pgedge
+  - install_coldfront
+  - setup_coldfront
