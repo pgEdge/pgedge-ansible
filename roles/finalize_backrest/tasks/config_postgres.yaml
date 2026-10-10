@@ -1,32 +1,40 @@
 ---
 
 # The standard setup for PgBackRest is to transmit WAL files to the defined
-# repo endpoint. We also want to be able to pull WAL files from the backup
-# repo in case of restores. Put these in the Postgres config to ensure they
-# get loaded.
+# repo endpoint, and to pull them back from it for a restore. Both commands are
+# among the parameters setup_postgres writes, derived from the same backup
+# settings this role reads, so by now the running server should be using them.
+#
+# They used to be edited into postgresql.conf here, on a line setup_postgres
+# then wrote back to its placeholder on the next run, so every run changed the
+# file twice and left the cluster not archiving in between. This only checks
+# the result, so that a first backup is never started against a server whose
+# WAL goes nowhere.
 #
 # This is the non-HA path only. An HA cluster gets the same two commands from
 # the Patroni configuration template, because Patroni owns postgresql.conf on
 # those nodes and rewrites whatever is put here.
 
-- name: Configure cluster to integrate with PgBackRest
-  lineinfile:
-    path: "{{ pg_config_dir }}/postgresql.conf"
-    line: "{{ item.var }} = '{{ item.setting }}'"
-    regexp: "^{{ item.var }}[ =].*"
-  vars:
-    push_args: "--stanza={{ backup_stanza }} archive-push %p"
-    pull_args: "--stanza={{ backup_stanza }} archive-get %f %p"
-  loop:
-  - { var: "archive_mode", setting: "on" }
-  - { var: "archive_command", setting: "pgbackrest {{ push_args }}" }
-  - { var: "restore_command", setting: "pgbackrest {{ pull_args }}" }
+- name: Read the archive command Postgres is using
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: SHOW archive_command
+  register: live_archive_command
+  changed_when: false
   become: true
   become_user: postgres
 
-- name: Reload the Postgres service to incorporate changes
-  systemd_service:
-    name: "{{ pg_service_name }}"
-    state: reloaded
-    enabled: true
-  become: true
+- name: Ensure Postgres archives to the repository
+  assert:
+    that:
+    - live_archive_command.query_result[0].archive_command
+      == pg_required_parameters.archive_command
+    fail_msg: >-
+      Postgres on {{ inventory_hostname }} is archiving with
+      '{{ live_archive_command.query_result[0].archive_command }}', not
+      '{{ pg_required_parameters.archive_command }}'. setup_postgres writes the
+      archive command; run it before this role, in the same play or an
+      earlier one.
+    quiet: true

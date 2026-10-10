@@ -58,6 +58,8 @@ This role uses the following parameters from the inventory file:
 | `replication_password` | Password for the replication user. |
 | `zone` | Snowflake zone identifier for the server. |
 | `is_ha_cluster` | Enable high availability cluster configuration mode. |
+| `pg_parameters` | Postgres configuration parameters applied over the collection's defaults. |
+| `pg_allow_restart` | Restart Postgres when a changed parameter needs it. |
 
 See the [Configuration Reference](../configuration.md) for descriptions and
 defaults.
@@ -76,12 +78,17 @@ When `is_ha_cluster` is `false`, the role performs the following steps:
    auto-initializes the cluster.
 2. Generate a self-signed SSL certificate and key, stored in `pg_data` with
    secure permissions.
-3. Configure Postgres settings including port, listen addresses, WAL level
-   (`logical`), replication slots, shared preload libraries (spock,
-   snowflake, pg_stat_statements), and Spock conflict resolution settings.
+3. Write the Postgres configuration: the parameters the collection requires
+   (such as port, listen addresses, `wal_level` and the archive commands), the
+   collection's defaults, and the inventory's `pg_parameters`. See
+   [pg_parameters](../configuration/postgres.md#pg_parameters).
 4. Configure `pg_hba.conf` with least-privilege rules for all known users
    and databases. Apply any additional rules from `custom_hba_rules`.
-5. Start and enable the Postgres service.
+5. Start and enable the Postgres service. If the service was already running
+   and the configuration changed, reload it. If Postgres then reports
+   parameters waiting on a restart, restart it, or report them when
+   `pg_allow_restart` is `false`. Nodes restart one at a time, so the rest of
+   the cluster stays available.
 6. Create the admin user (`db_user`) and the pgEdge user (`pgedge_user`).
 7. Create all databases listed in `db_names` and install the Spock and
    Snowflake extensions in each.
@@ -99,9 +106,14 @@ and additionally:
 - Creates the Patroni `replication_user` and configures `pg_hba.conf`
   replication rules.
 
+On the first node of an HA zone, this role writes only the parameters Postgres
+needs to run before Patroni takes over. Patroni keeps the rest of the
+configuration in its store, which `setup_patroni` maintains.
+
 !!! note "Shared Preload Libraries"
-    This role modifies `shared_preload_libraries`. If this is a pre-existing
-    instance, a Postgres restart is required for the change to take effect.
+    A change to `shared_preload_libraries` only takes effect after a restart.
+    On a simple cluster this role restarts Postgres to apply it, unless
+    `pg_allow_restart` is `false`.
 
 ### Logical Decoding Output Plugins
 
@@ -206,4 +218,7 @@ not exist. The role updates configuration blocks in `postgresql.conf` and
 
 !!! tip "Configuration Management"
     Postgres configuration uses the Ansible `blockinfile` module, which
-    preserves manual changes made outside the managed block.
+    preserves manual changes made outside the managed block. The block itself
+    is rewritten on every run, so a parameter removed from `pg_parameters` is
+    removed from the file. Set parameters through `pg_parameters`, not by
+    editing the block.

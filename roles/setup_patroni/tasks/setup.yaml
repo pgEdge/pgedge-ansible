@@ -48,6 +48,7 @@
     enabled: true
     state: started
   become: true
+  register: patroni_takeover
   when: inventory_hostname == first_node_in_zone
 
 - include_tasks: wait_for_primary.yaml
@@ -66,21 +67,103 @@
 
 - include_tasks: wait_for_primary.yaml
 
-# Patroni should restart nodes with changes which require restart, but doesn't.
-# We use the patronictl tool because a direct Postgres restart won't change the
-# "Pending restart" flag in the Patroni cluster status.
+# The parameters in the zone's store may have changed since it bootstrapped.
 
-- name: Restart Postgres service to incorporate configuration changes
+- include_tasks: dcs_parameters.yaml
+
+# Patroni applies what it can with a reload, but leaves a parameter that needs
+# a restart pending and does not restart Postgres on its own. Restart through
+# patronictl rather than the service, because a direct Postgres restart does
+# not clear Patroni's "Pending restart" flag.
+#
+# Only members with a restart pending are restarted, and one at a time, so a
+# zone never has more than one member down. With pg_allow_restart off the
+# pending members are only reported, which leaves the restarts to a separate
+# rolling-restart playbook or a maintenance window.
+#
+# A first node whose Patroni this run started is restarted regardless. Patroni
+# took over the Postgres setup_postgres left running, configured only for
+# running outside Patroni, and may not have flagged it yet by the time it
+# reports the member running. Replicas need no such care: Patroni starts their
+# Postgres itself, with the zone's configuration.
+
+- name: Find the members waiting on a restart
+  include_tasks: pending_restart.yaml
+  vars:
+    restart_regardless: "{{ patroni_takeover is changed }}"
+
+# Replicas go first. Raising a parameter such as max_worker_processes or
+# max_connections on the leader before its replicas leaves them unable to
+# replay WAL written under the larger value, and Postgres pauses or stops
+# recovery until they catch up; a replica running with more than its leader is
+# no trouble at all.
+
+- name: Restart replicas to apply parameters that need it
   command:
-    argv:
-    - patronictl
-    - -c
-    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
-    - restart
-    - -r
-    - any
-    - --force
-    - "{{ patroni_scope }}"
-    - "{{ ansible_hostname }}"
+    argv: "{{ restart_argv }}"
+  throttle: 1
   become: true
   become_user: postgres
+  when:
+  - restart_pending | bool
+  - not zone_leader | bool
+  - pg_allow_restart | bool
+
+- name: Restart the leader to apply parameters that need it
+  command:
+    argv: "{{ restart_argv }}"
+  register: leader_restart
+  throttle: 1
+  become: true
+  become_user: postgres
+  when:
+  - restart_pending | bool
+  - zone_leader | bool
+  - pg_allow_restart | bool
+
+# Lowering one of those parameters works the other way round. Patroni starts a
+# replica with the larger of the zone's value and the one in its control file,
+# which follows the leader's, so a replica has nothing to apply until the
+# leader has restarted with the smaller value and the replica has replayed the
+# record of it. Patroni flags it then, a cycle or so later, and it is restarted
+# in a second pass. A raised parameter leaves nothing for this pass to do.
+
+- name: Wait for the replicas to replay their leader's new settings
+  wait_for:
+    timeout: 20
+  when: zone_leader_restarted | bool
+  vars:
+    zone_leader_restarted: >-
+      {{ nodes_in_zone | map('extract', hostvars)
+         | selectattr('leader_restart', 'defined')
+         | map(attribute='leader_restart') | select('changed')
+         | list | length > 0 }}
+
+- name: Find the replicas waiting on their leader's restart
+  include_tasks: pending_restart.yaml
+  vars:
+    restart_regardless: false
+  when:
+  - pg_allow_restart | bool
+  - not zone_leader | bool
+
+- name: Restart replicas to apply what their leader's restart changed
+  command:
+    argv: "{{ restart_argv }}"
+  throttle: 1
+  become: true
+  become_user: postgres
+  when:
+  - restart_pending | bool
+  - not zone_leader | bool
+  - pg_allow_restart | bool
+
+- name: Report a restart left pending
+  debug:
+    msg: >-
+      Postgres on {{ inventory_hostname }} needs a restart to apply its new
+      configuration. pg_allow_restart is off, so it was left running as it is;
+      restart it with patronictl restart --pending.
+  when:
+  - restart_pending | bool
+  - not pg_allow_restart | bool

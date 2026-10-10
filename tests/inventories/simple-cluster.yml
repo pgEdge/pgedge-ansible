@@ -25,6 +25,16 @@ pgedge:
     replication_password: TestPass789
     backup_password: TestBackup321
     pgbouncer_auth_password: TestPool654
+    # Postgres parameters of the inventory's own, one of each kind the
+    # collection treats differently: one Postgres applies on reload, one it
+    # applies only on restart (and Patroni only from its store), a name given in
+    # other letter case than the collection's default, and a library merged into
+    # the preload list. The verify playbooks read each back from the server.
+    pg_parameters:
+      work_mem: 8MB
+      max_worker_processes: 16
+      TimeZone: Etc/UTC
+      shared_preload_libraries: auto_explain
     pgbouncer_enabled: true
   hosts:
     192.168.6.10:

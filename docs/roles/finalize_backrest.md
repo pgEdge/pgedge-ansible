@@ -22,9 +22,9 @@ The role performs the following tasks on inventory hosts:
 - Create the `backup_user` PostgreSQL role with `pg_checkpoint` privileges, and
   for non-HA clusters add the matching `pg_hba.conf` entries.
 - Create the repository stanza when the repository does not already have one.
-- For non-HA clusters, set the Postgres `archive_command` and `restore_command`
-  to use PgBackRest. HA clusters get both from the Patroni configuration
-  template. This role also checks the Patroni configuration store and adds
+- For non-HA clusters, check that Postgres is using the PgBackRest
+  `archive_command` that `setup_postgres` writes, and stop if it is not. HA
+  clusters get both commands from the Patroni configuration template. This role also checks the Patroni configuration store and adds
   them there if they are missing, because a cluster that was bootstrapped
   without a repository keeps the `/bin/true` placeholder in the store. It then
   waits until the leader's Postgres is using the new `archive_command`.

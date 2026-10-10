@@ -16,41 +16,32 @@
 
 - include_tasks: certificate.yaml
 
-# Override several Postgres configuration parameters so it all works better
-# with pgEdge Distributed. This is just the initial bootstrap, so these can
-# all be set to something else later; this is just for cluster setup.
+# Write the Postgres configuration the collection and the inventory describe.
+# The block is rewritten whole on every run, so a parameter removed from
+# pg_parameters leaves the file too. Numbers are written bare and everything
+# else quoted, which Postgres accepts for any parameter type.
+#
+# An HA node writes only the parameters it needs to run outside Patroni, as it
+# does while setup_postgres creates its users. Patroni sets aside this file
+# and includes it beneath its own, so the rest of the configuration lives in
+# Patroni's store, where removing a parameter actually removes it.
 
 - name: Configure Postgres for pgEdge compatibility
   blockinfile:
     path: "{{ pg_config_dir }}/postgresql.conf"
     block: |
-      port = '{{ pg_port }}'
-      ssl_cert_file = '{{ pg_data }}/server.crt'
-      ssl_key_file = '{{ pg_data }}/server.key'
-      listen_addresses = '0.0.0.0'
-      archive_mode = 'on'
-      archive_command = '/bin/true'
-      TimeZone = 'UTC'
-      wal_level = 'logical'
-      max_worker_processes = 12
-      max_replication_slots = 16
-      max_wal_senders = 16
-      hot_standby_feedback = 'on'
-      track_commit_timestamp = 'on'
-      shared_preload_libraries = 'spock, snowflake, pg_stat_statements'
-      {% if pg_supports_output_plugin_libraries | default(false) | bool %}
-      output_plugin_libraries = 'pgoutput, test_decoding, spock_output'
-      {% endif %}
-      spock.conflict_resolution = 'last_update_wins'
-      spock.enable_ddl_replication = 'on'
-      spock.allow_ddl_from_functions = 'on'
-      spock.include_ddl_repset = 'on'
-      spock.exception_behaviour = '{{ spock_exception_behaviour }}'
-      spock.save_resolutions = 'on'
-      snowflake.node = {{ zone }}
+      {% for name, value in pg_conf_parameters | dictsort %}
+      {{ name }} = {{ value if value is number
+                      else "'" ~ (value | string | replace("'", "''")) ~ "'" }}
+      {% endfor %}
     state: present
     marker: "# {mark} pgEdge ANSIBLE MANAGED BLOCK"
     insertafter: EOF
+  vars:
+    pg_conf_parameters: >-
+      {{ pg_standalone_parameters if is_ha_cluster | bool
+         else pg_effective_parameters }}
+  register: pg_conf_block
   become: true
   become_user: postgres
 

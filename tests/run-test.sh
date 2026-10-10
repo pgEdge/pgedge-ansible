@@ -124,6 +124,7 @@ python3 "$SCRIPT_DIR/render/check-haproxy.py"
 python3 "$SCRIPT_DIR/render/check-patroni.py"
 python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
 python3 "$SCRIPT_DIR/render/check-etcd.py"
+python3 "$SCRIPT_DIR/render/check-validate.py"
 
 # Step 1: Generate SSH keypair and copy to Docker build context
 echo "==> Step 1: Ensuring SSH keypair exists..."
@@ -231,6 +232,42 @@ if [ -f "$VERIFY_PLAYBOOK" ]; then
     -v
 else
   echo "==> Step 8: No verification playbook found, skipping"
+fi
+
+# Step 8b: Changed Postgres parameters reach a running cluster, through
+# postgresql.conf on a simple cluster and Patroni's store on an HA one,
+# restarting only the nodes that need it.
+#
+# On an HA cluster the playbook re-runs setup_patroni, which signs each node's
+# etcd client certificate against the authority the deployment staged beside
+# its own playbook, in sample-playbooks/<scenario>/tls -- not beside this one.
+# Hand the authority over the way an inventory would, as run-recovery-test.sh
+# does.
+if [ "$SCENARIO" = "simple-cluster" ] || [ "$SCENARIO" = "ultra-ha" ]; then
+  echo "==> Step 8b: Checking changed Postgres parameters are applied..."
+  RECONFIGURE_VARS=()
+  CA_DIR="$(dirname "$PLAYBOOK")/tls/etcd"
+  if [ "$SCENARIO" = "ultra-ha" ] && [ "$DCS" = "etcd3" ] && \
+     [ -f "$CA_DIR/ca.crt" ]; then
+    CA_VARS="$(mktemp)"
+    trap 'rm -f "$CA_VARS"' EXIT
+    python3 - "$CA_DIR" "$CA_VARS" <<'PY'
+import json, pathlib, sys
+src = pathlib.Path(sys.argv[1])
+pathlib.Path(sys.argv[2]).write_text(json.dumps({
+    "etcd_ca_cert": (src / "ca.crt").read_text(),
+    "etcd_ca_key": (src / "ca.key").read_text(),
+}))
+PY
+    RECONFIGURE_VARS+=(-e "@$CA_VARS")
+  fi
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/playbooks/pg-reconfigure.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    "${RECONFIGURE_VARS[@]}" \
+    -v
 fi
 
 # Step 9: A changed etcd configuration reaches a running cluster by rolling

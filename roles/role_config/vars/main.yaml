@@ -135,6 +135,149 @@ pg_config_dir: >-
     else pg_data
   }}
 
+# Postgres configuration parameters, built in layers. The collection's defaults
+# come first, the inventory's pg_parameters are laid over them, and the
+# parameters the collection requires go last, so nothing an inventory says can
+# displace them. init_server refuses an inventory that tries, rather than
+# letting it believe a setting took effect.
+#
+# Every name is lower case. Postgres matches parameter names without regard to
+# case, and a configuration holding both TimeZone and timezone is one where the
+# winner depends on the order the lines happen to be written in.
+#
+# The defaults are what pgEdge needs to work well but an operator may
+# reasonably tune. Values that should follow from the rest of the inventory,
+# such as worker counts that grow with db_names, belong here as expressions.
+
+pg_default_parameters:
+  ssl: true
+  timezone: UTC
+  max_worker_processes: 12
+  max_replication_slots: 16
+  max_wal_senders: 16
+  hot_standby_feedback: true
+  spock.enable_ddl_replication: true
+  spock.allow_ddl_from_functions: true
+  spock.include_ddl_repset: true
+  spock.conflict_resolution: last_update_wins
+  spock.save_resolutions: true
+  spock.conflict_log_level: DEBUG
+
+# What the collection itself depends on: where Postgres listens and with which
+# certificate, logical decoding and commit timestamps for Spock, the snowflake
+# node number, and the archive commands, which follow the backup repository.
+# Each of these is governed by some other setting, or by nothing at all.
+
+pg_required_parameters: >-
+  {{ {
+       'port': pg_port | int,
+       'listen_addresses': '0.0.0.0',
+       'ssl_cert_file': pg_data ~ '/server.crt',
+       'ssl_key_file': pg_data ~ '/server.key',
+       'wal_level': 'logical',
+       'track_commit_timestamp': true,
+       'archive_mode': true,
+       'snowflake.node': zone | int,
+       'spock.exception_behaviour': spock_exception_behaviour,
+     }
+     | combine({
+         'archive_command': 'pgbackrest --stanza=' ~ backup_stanza ~ ' archive-push %p',
+         'restore_command': 'pgbackrest --stanza=' ~ backup_stanza ~ ' archive-get %f %p',
+       } if backup_repo_configured | bool else {
+         'archive_command': '/bin/true',
+       })
+     | combine({
+         'output_plugin_libraries': 'pgoutput, test_decoding, spock_output',
+       } if pg_supports_output_plugin_libraries | default(false) | bool else {}) }}
+
+# Parameters an inventory may not set, each with the reason or what to set
+# instead. The
+# required parameters above are refused too, whether or not they appear here;
+# the rest are ones Patroni sets on its own in an HA zone, or paths the
+# collection's tasks depend on.
+
+pg_protected_parameters:
+  port: "set pg_port instead"
+  listen_addresses: "Postgres listens on every address"
+  ssl_cert_file: "the collection issues the certificate"
+  ssl_key_file: "the collection issues the certificate"
+  wal_level: "Spock requires logical"
+  track_commit_timestamp: "Spock requires it"
+  archive_mode: "set by the backup_* settings"
+  archive_command: "set by the backup_* settings"
+  restore_command: "set by the backup_* settings"
+  snowflake.node: "set zone instead"
+  spock.exception_behaviour: "set exception_behaviour instead"
+  output_plugin_libraries: "the collection sets it where supported"
+  hot_standby: "Patroni sets it"
+  cluster_name: "Patroni sets it"
+  data_directory: "set pg_data instead"
+  config_file: "the collection places it"
+  hba_file: "use custom_hba_rules instead"
+  ident_file: "the collection places it"
+  unix_socket_directories: "the collection's tasks connect through /var/run/postgresql"
+
+# shared_preload_libraries is a list in all but syntax, so the inventory's
+# entries join the collection's rather than replacing them. Spock and snowflake
+# always load, first; pg_stat_statements loads unless the inventory sets the
+# parameter to null; whatever the inventory names comes after.
+
+pg_required_preload_libraries:
+- spock
+- snowflake
+
+pg_default_preload_libraries:
+- pg_stat_statements
+
+# pg_parameters with every name in lower case.
+
+pg_user_parameters: >-
+  {{ dict(pg_parameters | dict2items | map(attribute='key') | map('lower')
+          | zip(pg_parameters | dict2items | map(attribute='value'))) }}
+
+pg_user_preload_libraries: >-
+  {{ ([] if pg_user_parameters.shared_preload_libraries | default(none) is none
+      else pg_user_parameters.shared_preload_libraries.split(',')
+      if pg_user_parameters.shared_preload_libraries is string
+      else pg_user_parameters.shared_preload_libraries)
+     | map('string') | map('trim') | reject('equalto', '') | list }}
+
+pg_preload_libraries: >-
+  {{ (pg_required_preload_libraries
+      + ([] if 'shared_preload_libraries' in pg_user_parameters
+              and pg_user_parameters.shared_preload_libraries is none
+         else pg_default_preload_libraries)
+      + pg_user_preload_libraries) | unique | list }}
+
+pg_merged_parameters: >-
+  {{ pg_default_parameters
+     | combine(pg_user_parameters, pg_required_parameters,
+               {'shared_preload_libraries': pg_preload_libraries | join(', ')}) }}
+
+# The configuration as Postgres is given it: nulls dropped, and booleans
+# spelled on and off. Every template and task that writes parameters reads
+# this, so the simple and HA paths cannot drift apart.
+
+pg_effective_parameters: >-
+  {{ pg_merged_parameters | dict2items | rejectattr('value', 'none') | items2dict
+     | combine(dict(pg_merged_parameters | dict2items
+                    | selectattr('value', 'sameas', true)
+                    | map(attribute='key') | product(['on'])),
+               dict(pg_merged_parameters | dict2items
+                    | selectattr('value', 'sameas', false)
+                    | map(attribute='key') | product(['off']))) }}
+
+# The subset of the above an HA node writes into postgresql.conf for the time
+# it runs outside Patroni. Patroni moves that file aside as
+# postgresql.base.conf and includes it beneath its own, so anything else
+# written there would outlive its removal from the zone's configuration.
+
+pg_standalone_parameters: >-
+  {{ pg_effective_parameters | dict2items
+     | selectattr('key', 'in', pg_required_parameters.keys() | list
+                               + ['shared_preload_libraries'])
+     | items2dict }}
+
 # pgBouncer's packaging differs by platform and neither layout needs new
 # directories or a logrotate file, provided the native paths are used. The RHEL
 # package creates a dedicated pgbouncer user and owns /var/log/pgbouncer and

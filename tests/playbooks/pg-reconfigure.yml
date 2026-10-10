@@ -1,0 +1,250 @@
+---
+# Change a deployed cluster's Postgres parameters.
+#
+# A fresh deployment starts Postgres on a configuration that is already
+# complete, so only a change to a running cluster exercises the reload, the
+# check for parameters waiting on a restart, and the restart itself. The role
+# that applies the change depends on the kind of cluster:
+#
+#   - On a simple cluster, setup_postgres rewrites its block in
+#     postgresql.conf and reloads.
+#   - On an Ultra-HA cluster, Patroni reads the parameters in patroni.yml's
+#     bootstrap.dcs only when it bootstraps a zone, so a deployed zone takes a
+#     change from setup_patroni's edit of its store and nowhere else.
+#
+# Either way, this checks what the collection promises:
+#
+#   - applying the parameters the cluster was deployed with changes nothing:
+#     no rewritten configuration, no reload and no restart. This runs first,
+#     against the configuration the whole deployment left behind, which is
+#     where a later role editing the collection's parameters would show up,
+#   - a changed, an added and a removed parameter all reach every node, the
+#     removed one falling back to the collection's default,
+#   - a parameter that needs a restart gets one, and none is left pending,
+#   - on Ultra-HA, the store holds the collection's lower-case names only,
+#   - with pg_allow_restart off, a restart is reported and left pending, the
+#     server still running with the old value,
+#   - and applying the inventory's own parameters again puts everything back,
+#     restarting the nodes it has to.
+#
+# Every pass changes max_worker_processes, which Postgres applies only on
+# restart (and Patroni takes only from its store), so each one exercises the
+# whole path.
+
+# setup_patroni's template names this zone's proxies and backup servers by
+# address, and an address is a fact, so every host's facts have to be gathered
+# first -- without become, as the deployment gathers them.
+
+- hosts: all
+  any_errors_fatal: true
+
+  tasks:
+  - name: Confirm every host in the inventory is reachable
+    ping:
+
+# No play-level become: both roles stage certificates on the controller, and
+# those tasks would then run there as root and leave the staging directory
+# unreadable to the next run. The roles escalate where they need to, and so do
+# the checks below.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    # The inventory's pg_parameters with work_mem changed, TimeZone removed,
+    # and log_min_duration_statement added.
+    changed_parameters:
+      work_mem: 16MB
+      max_worker_processes: 20
+      log_min_duration_statement: 1000
+      shared_preload_libraries: auto_explain
+    settings_query: >-
+      SELECT name, setting, pending_restart FROM pg_settings
+       WHERE name IN ('work_mem', 'max_worker_processes', 'TimeZone',
+                      'log_min_duration_statement')
+          OR pending_restart
+    ctl: >-
+      patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}
+    # When the server last started and last read its configuration. Neither
+    # moves unless something restarts or reloads it.
+    lifecycle_query: >-
+      SELECT pg_postmaster_start_time(), pg_conf_load_time()
+    # role_config is not loaded yet when the first pass picks its role, so
+    # this reads the inventory's own setting.
+    reconfigure_role: >-
+      {{ 'setup_patroni' if is_ha_cluster | default(false) | bool
+         else 'setup_postgres' }}
+
+  # role_config's defaults reach the play only once the first include_role has
+  # made them public, and this is evaluated for that very task too.
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version | default(17) }}/bin:/usr/lib/postgresql/{{ pg_version | default(17) }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  - name: Read when each node started and last read its configuration
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -c "{{ lifecycle_query }}"
+    register: lifecycle_before
+    changed_when: false
+
+  - name: Apply the parameters the cluster was deployed with
+    include_role:
+      name: "{{ reconfigure_role }}"
+      # The checks below read role_config's variables: the store's scope, the
+      # zone's first node, where patronictl's configuration lives.
+      public: true
+
+  - name: Read when each node started and last read its configuration
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -c "{{ lifecycle_query }}"
+    register: lifecycle_after
+    changed_when: false
+
+  - name: Assert nothing was reloaded or restarted
+    assert:
+      that:
+      - lifecycle_after.stdout == lifecycle_before.stdout
+      fail_msg: >
+        Applying unchanged parameters reloaded or restarted Postgres on
+        {{ inventory_hostname }}: start and load time went from
+        {{ lifecycle_before.stdout }} to {{ lifecycle_after.stdout }}.
+
+  - name: Assert the configuration file was left as it was
+    assert:
+      that:
+      - pg_conf_block is not changed
+      fail_msg: >
+        setup_postgres rewrote its block in postgresql.conf on
+        {{ inventory_hostname }} though no parameter changed, so something
+        else edits the parameters it writes.
+    when: not is_ha_cluster | bool
+
+  - name: Assert the zone's store was left as it was
+    assert:
+      that:
+      - dcs_parameters_patch is skipped
+      fail_msg: >
+        setup_patroni edited the store of zone {{ zone }} though no parameter
+        changed: {{ dcs_parameters_patch.stdout | default('') }}
+    when:
+    - is_ha_cluster | bool
+    - inventory_hostname == first_node_in_zone
+
+  - name: Apply the changed parameters
+    include_role:
+      name: "{{ reconfigure_role }}"
+    vars:
+      pg_parameters: "{{ changed_parameters }}"
+
+  - name: Read the parameters each node is running with
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -F '|' -c "{{ settings_query }}"
+    register: changed_rows
+    changed_when: false
+
+  - name: Assert every node runs the changed parameters with nothing pending
+    assert:
+      that:
+      # work_mem is reported in kB.
+      - settings.work_mem == '16384'
+      - settings.max_worker_processes == '20'
+      - settings.log_min_duration_statement == '1000'
+      # Removed from pg_parameters, so back to the collection's default.
+      - settings.TimeZone == 'UTC'
+      - pending | length == 0
+      fail_msg: >
+        Postgres on {{ inventory_hostname }} is not running the changed
+        parameters: {{ settings }}; restart pending for {{ pending }}.
+    vars:
+      rows: "{{ changed_rows.stdout_lines | map('split', '|') | list }}"
+      settings: "{{ dict(rows | map('first') | zip(rows | map(attribute=1))) }}"
+      pending: "{{ rows | selectattr(2, 'eq', 't') | map('first') | list }}"
+
+  - name: Read each zone's configuration store
+    become: true
+    become_user: postgres
+    command: "{{ ctl }} show-config {{ patroni_scope }}"
+    register: stored_config
+    changed_when: false
+    when:
+    - is_ha_cluster | bool
+    - inventory_hostname == first_node_in_zone
+
+  - name: Assert each zone's store holds exactly the collection's names
+    assert:
+      that:
+      - stored.log_min_duration_statement | string == '1000'
+      # The inventory's TimeZone is gone, and the collection's default is
+      # back under its lower-case name.
+      - stored.timezone == 'UTC'
+      - "'TimeZone' not in stored"
+      - stored.keys() | map('lower') | list == stored.keys() | list
+      fail_msg: >
+        The Patroni store's parameters are not the ones setup_patroni wrote:
+        {{ stored }}
+    vars:
+      stored: "{{ (stored_config.stdout | from_yaml).postgresql.parameters }}"
+    when:
+    - is_ha_cluster | bool
+    - inventory_hostname == first_node_in_zone
+
+  - name: Apply a parameter that needs a restart without allowing one
+    include_role:
+      name: "{{ reconfigure_role }}"
+    vars:
+      pg_parameters: "{{ changed_parameters | combine({'max_worker_processes': 24}) }}"
+      pg_allow_restart: false
+
+  - name: Read the parameters each node is running with
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -F '|' -c "{{ settings_query }}"
+    register: deferred_rows
+    changed_when: false
+
+  - name: Assert the restart was left pending
+    assert:
+      that:
+      - settings.max_worker_processes == '20'
+      - "'max_worker_processes' in pending"
+      fail_msg: >
+        Postgres on {{ inventory_hostname }} was restarted or never saw the
+        change, though pg_allow_restart was off: {{ settings }}; restart
+        pending for {{ pending }}.
+    vars:
+      rows: "{{ deferred_rows.stdout_lines | map('split', '|') | list }}"
+      settings: "{{ dict(rows | map('first') | zip(rows | map(attribute=1))) }}"
+      pending: "{{ rows | selectattr(2, 'eq', 't') | map('first') | list }}"
+
+  - name: Apply the inventory's own parameters again
+    include_role:
+      name: "{{ reconfigure_role }}"
+
+  - name: Read the parameters each node is running with
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -F '|' -c "{{ settings_query }}"
+    register: restored_rows
+    changed_when: false
+
+  - name: Assert every node is back on the inventory's parameters
+    assert:
+      that:
+      - settings.work_mem == '8192'
+      - settings.max_worker_processes == '16'
+      - settings.TimeZone == 'Etc/UTC'
+      - settings.log_min_duration_statement == '-1'
+      - pending | length == 0
+      fail_msg: >
+        Postgres on {{ inventory_hostname }} did not return to the inventory's
+        parameters: {{ settings }}; restart pending for {{ pending }}.
+    vars:
+      rows: "{{ restored_rows.stdout_lines | map('split', '|') | list }}"
+      settings: "{{ dict(rows | map('first') | zip(rows | map(attribute=1))) }}"
+      pending: "{{ rows | selectattr(2, 'eq', 't') | map('first') | list }}"

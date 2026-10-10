@@ -3,3 +3,15 @@
 # The replica method setup_patroni installs when Patroni rebuilds replicas from
 # the backup repository. See templates/pgbackrest_replica.sh.j2.
 patroni_pgbackrest_replica_script: /usr/local/bin/patroni_pgbackrest_replica
+
+# Restarts this member's Postgres through Patroni. A restart of the service
+# itself would leave Patroni's "Pending restart" flag set. setup.yaml decides
+# whether one is needed, so this does not pass --pending.
+restart_argv:
+- patronictl
+- -c
+- "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+- restart
+- --force
+- "{{ patroni_scope }}"
+- "{{ ansible_hostname }}"
