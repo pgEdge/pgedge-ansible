@@ -411,6 +411,8 @@
 # value of the wrong shape would surface as a templating error halfway through
 # setup_postgres or setup_patroni. shared_preload_libraries is the one parameter
 # with a shape of its own: a list, or the comma-separated string Postgres takes.
+# A mapping passes Jinja's sequence test, so it is ruled out by name; its keys
+# would otherwise be loaded as libraries.
 
 - name: Ensure pg_parameters is a mapping of parameter names to values
   assert:
@@ -418,11 +420,35 @@
     - pg_parameters is mapping
     - pg_user_parameters.shared_preload_libraries | default(none) is none or
       pg_user_parameters.shared_preload_libraries is string or
-      pg_user_parameters.shared_preload_libraries is sequence
+      (pg_user_parameters.shared_preload_libraries is sequence and
+       pg_user_parameters.shared_preload_libraries is not mapping)
     fail_msg: >-
       pg_parameters must map Postgres parameter names to values, and its
       shared_preload_libraries, if given, must be a list or a comma-separated
       string.
+  when: inventory_hostname in (groups.pgedge | default([]))
+
+# Names are matched without regard to case, so TimeZone and timezone are one
+# parameter. Given both, one value would silently win over the other.
+
+- name: Ensure pg_parameters names each parameter once
+  assert:
+    that:
+    - duplicated | length == 0
+    fail_msg: >-
+      pg_parameters on {{ inventory_hostname }} sets {{ duplicated | join(', ') }}
+      more than once, in different letter case. Postgres treats parameter names
+      without regard to case, so keep one of each.
+  vars:
+    names: "{{ pg_parameters.keys() | map('lower') | list }}"
+    duplicated: >-
+      {% set seen = [] %}{% set repeated = [] %}
+      {%- for name in names | sort %}
+      {%-   if name in seen and name not in repeated %}
+      {%-     set _ = repeated.append(name) %}
+      {%-   endif %}
+      {%-   set _ = seen.append(name) %}
+      {%- endfor %}{{ repeated }}
   when: inventory_hostname in (groups.pgedge | default([]))
 
 # Some parameters are the collection's to set. Spock cannot work without
@@ -465,10 +491,16 @@
       zone shares a single Postgres configuration through Patroni. Set it on
       the 'pgedge' group, or on a group holding just this zone's nodes.
   vars:
+    # Compared with every name in lower case, as Postgres compares them, so
+    # TimeZone on one node and timezone on another still agree.
     zone_parameters: >-
-      {{ groups['pgedge'] | map('extract', hostvars)
-         | selectattr('zone', 'eq', zone)
-         | map(attribute='pg_parameters', default={}) | list }}
+      {% set found = [] %}
+      {%- for node in groups['pgedge'] | map('extract', hostvars)
+            | selectattr('zone', 'eq', zone) %}
+      {%-   set given = node.pg_parameters | default({}) %}
+      {%-   set _ = found.append(dict(given.keys() | map('lower')
+                                      | zip(given.values()))) %}
+      {%- endfor %}{{ found }}
   when:
   - is_ha_cluster | bool
   - inventory_hostname in (groups.pgedge | default([]))

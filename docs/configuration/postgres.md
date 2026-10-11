@@ -207,7 +207,10 @@ following consequences:
   leader.
   When this parameter is `false`, the run applies everything a reload can apply
   and reports the nodes that still need a restart, so you can restart them in a
-  maintenance window or with a rolling-restart playbook of your own.
+  maintenance window or with a rolling-restart playbook of your own. The
+  parameter does not apply to a new Ultra-HA zone: the primary is always
+  restarted once after Patroni takes it over, because Postgres starts before
+  Patroni and only a restart gives it the zone's full configuration.
 
 In the following example, the inventory leaves restarts to the operator:
 

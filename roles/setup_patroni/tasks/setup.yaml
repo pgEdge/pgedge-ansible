@@ -81,11 +81,16 @@
 # pending members are only reported, which leaves the restarts to a separate
 # rolling-restart playbook or a maintenance window.
 #
-# A first node whose Patroni this run started is restarted regardless. Patroni
-# took over the Postgres setup_postgres left running, configured only for
-# running outside Patroni, and may not have flagged it yet by the time it
-# reports the member running. Replicas need no such care: Patroni starts their
-# Postgres itself, with the zone's configuration.
+# A first node whose Patroni this run started is restarted regardless, and
+# whatever pg_allow_restart says: that restart is part of building the zone,
+# not a change to a running one. Patroni took over the Postgres setup_postgres
+# left running, configured only for running outside Patroni, and may not have
+# flagged it yet by the time it reports the member running. Stopping that
+# Postgres first and letting Patroni start it instead would avoid the restart,
+# but Patroni starts a stopped data directory with no leader as a replica and
+# promotes it, so every new zone would begin on timeline 2. Replicas need no
+# such care: Patroni starts their Postgres itself, with the zone's
+# configuration.
 
 - name: Find the members waiting on a restart
   include_tasks: pending_restart.yaml
@@ -119,7 +124,7 @@
   when:
   - restart_pending | bool
   - zone_leader | bool
-  - pg_allow_restart | bool
+  - pg_allow_restart | bool or patroni_takeover is changed
 
 # Lowering one of those parameters works the other way round. Patroni starts a
 # replica with the larger of the zone's value and the one in its control file,
@@ -167,3 +172,4 @@
   when:
   - restart_pending | bool
   - not pg_allow_restart | bool
+  - patroni_takeover is not changed

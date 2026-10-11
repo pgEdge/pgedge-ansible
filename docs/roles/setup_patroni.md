@@ -25,6 +25,9 @@ The role performs the following tasks on inventory hosts:
   then any replica the leader's restart left waiting, which is what lowering a
   parameter such as `max_worker_processes` does. When `pg_allow_restart` is
   `false`, report those members instead.
+- Restart the primary once after Patroni first takes it over, whatever
+  `pg_allow_restart` says, so that a new zone starts with its full
+  configuration.
 
 ## Role Dependencies
 
