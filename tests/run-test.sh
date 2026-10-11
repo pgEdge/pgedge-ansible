@@ -105,7 +105,13 @@ case "$BACKUP" in
     ;;
 esac
 
+# Set by Step 8b when it stages the etcd authority for the reconfigure run.
+CA_VARS=""
+
 cleanup() {
+  if [ -n "$CA_VARS" ]; then
+    rm -f "$CA_VARS"
+  fi
   if [ "$KEEP" = false ]; then
     echo "==> Tearing down containers..."
     docker compose -p "$PROJECT_NAME" "${COMPOSE_ARGS[@]}" down -v --remove-orphans 2>/dev/null || true
@@ -250,7 +256,6 @@ if [ "$SCENARIO" = "simple-cluster" ] || [ "$SCENARIO" = "ultra-ha" ]; then
   if [ "$SCENARIO" = "ultra-ha" ] && [ "$DCS" = "etcd3" ] && \
      [ -f "$CA_DIR/ca.crt" ]; then
     CA_VARS="$(mktemp)"
-    trap 'rm -f "$CA_VARS"' EXIT
     python3 - "$CA_DIR" "$CA_VARS" <<'PY'
 import json, pathlib, sys
 src = pathlib.Path(sys.argv[1])
