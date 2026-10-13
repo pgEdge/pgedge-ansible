@@ -56,6 +56,7 @@ jobs:
           python3 tests/render/check-patroni.py
           python3 tests/render/check-pgbackrest.py
           python3 tests/render/check-etcd.py
+          python3 tests/render/check-validate.py
 
       - name: Generate SSH keypair
         run: |
@@ -113,6 +114,15 @@ jobs:
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-simple-cluster.yml \
+            -i tests/inventories/simple-cluster.yml \
+            --private-key tests/.ssh/id_ed25519
+
+      # After the verification, which reads the inventory's parameters back:
+      # this changes them, then puts them back the way it found them.
+      - name: Check changed Postgres parameters are applied
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/pg-reconfigure.yml \
             -i tests/inventories/simple-cluster.yml \
             --private-key tests/.ssh/id_ed25519
 

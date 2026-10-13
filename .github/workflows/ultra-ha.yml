@@ -108,6 +108,7 @@ jobs:
           python3 tests/render/check-patroni.py
           python3 tests/render/check-pgbackrest.py
           python3 tests/render/check-etcd.py
+          python3 tests/render/check-validate.py
 
       - name: Generate SSH keypair
         run: |
@@ -193,6 +194,16 @@ jobs:
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-ultra-ha.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
+
+      # After the verification, which reads the inventory's own parameters, and
+      # ending on them again, so the steps below see the cluster as deployed.
+      - name: Check changed Postgres parameters are applied through Patroni
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/pg-reconfigure.yml \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS

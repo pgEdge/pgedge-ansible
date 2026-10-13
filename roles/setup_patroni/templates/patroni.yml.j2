@@ -36,44 +36,18 @@ bootstrap:
       use_pg_rewind: true
       use_slots: true
 
-      # Change any cluster-wide configuration settings here
+      # The zone's Postgres configuration, from role_config's
+      # pg_effective_parameters: the collection's defaults, the inventory's
+      # pg_parameters and the parameters the collection requires. Patroni
+      # reads this only when it bootstraps a cluster, and setup_patroni keeps
+      # the store in step with it after that. It is still rendered in full
+      # here because a recovery wipes the store and writes this section into
+      # it again, and anything that lived only in the store -- the archive
+      # command, once -- would silently be lost.
       parameters:
-        port: {{ pg_port }}
-        ssl: on
-        ssl_cert_file: "{{ pg_data }}/server.crt"
-        ssl_key_file: "{{ pg_data }}/server.key"
-        listen_addresses: "0.0.0.0"
-        archive_mode: "on"
-{% if backup_repo_configured | bool %}
-        # Rendered here rather than patched into the configuration store after
-        # the fact. A patch lives only in the store, and a recovery wipes the
-        # store and writes this section into it again -- which silently put the
-        # placeholder below back and stopped a freshly recovered cluster from
-        # archiving anything at all.
-        archive_command: "pgbackrest --stanza={{ backup_stanza }} archive-push %p"
-        restore_command: "pgbackrest --stanza={{ backup_stanza }} archive-get %f %p"
-{% else %}
-        archive_command: "/bin/true"
-{% endif %}
-        TimeZone: "UTC"
-        wal_level: "logical"
-        max_worker_processes: 12
-        max_replication_slots: 16
-        max_wal_senders: 16
-        hot_standby_feedback: "on"
-        track_commit_timestamp: "on"
-        shared_preload_libraries: "spock, snowflake, pg_stat_statements"
-{% if pg_supports_output_plugin_libraries | default(false) | bool %}
-        output_plugin_libraries: "pgoutput, test_decoding, spock_output"
-{% endif %}
-        spock.enable_ddl_replication: "on"
-        spock.allow_ddl_from_functions: "on"
-        spock.include_ddl_repset: "on"
-        spock.exception_behaviour: "{{ spock_exception_behaviour }}"
-        spock.conflict_resolution: "last_update_wins"
-        spock.save_resolutions: "on"
-        spock.conflict_log_level: "DEBUG"
-        snowflake.node: {{ zone }}
+{% for name, value in pg_effective_parameters | dictsort %}
+        {{ name | to_json }}: {{ value | to_json }}
+{% endfor %}
 
     # This will tell Patroni to ignore Spock replication slots.
     ignore_slots:
@@ -182,9 +156,18 @@ postgresql:
       password: {{ db_password }}
 
 {% if ansible_os_family == 'Debian' %}
+  # Debian's own layout, as its packaged clusters are configured. These are
+  # local to the node and take precedence over the zone's configuration, so
+  # any the inventory sets in pg_parameters are left to the zone instead.
+{%   set debian_parameters = {
+       'unix_socket_directories': '/var/run/postgresql/',
+       'logging_collector': 'on',
+       'log_directory': '/var/log/postgresql',
+       'log_filename': 'postgresql-' ~ pg_version ~ '-' ~ cluster_name ~ '.log',
+     } %}
   parameters:
-    unix_socket_directories: '/var/run/postgresql/'
-    logging_collector: 'on'
-    log_directory: '/var/log/postgresql'
-    log_filename: 'postgresql-{{ pg_version }}-{{ cluster_name }}.log'
+{%   for name, value in debian_parameters.items()
+       if name not in pg_user_parameters %}
+    {{ name }}: '{{ value }}'
+{%   endfor %}
 {% endif %}

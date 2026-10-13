@@ -207,6 +207,28 @@ while another member of its zone is unhealthy. Run the deployment while the
 cluster is healthy. A member whose restart was refused, or that a failed run
 never reached, is restarted by the next deployment.
 
+### Postgres parameters on an existing cluster
+
+The first run of this release rewrites each node's Postgres configuration from
+the new parameter layers, even when the inventory sets no `pg_parameters`. On an
+Ultra-HA cluster it also updates each zone's Patroni configuration store. The
+values are the same as before, with the following exceptions:
+
+- Parameter names are lower case, so the store's `TimeZone` becomes
+  `timezone`.
+- On a simple cluster, `ssl = 'on'` and `spock.conflict_log_level = 'DEBUG'`
+  are now set, as they always were on Ultra-HA clusters. On RHEL, a simple
+  cluster's `ssl` was previously left at the `off` that `initdb` writes, even
+  though the collection issued a certificate for it.
+- An Ultra-HA cluster's store now holds only the parameters the collection
+  writes. A parameter added by hand with `patronictl edit-config` is removed.
+  Move any such parameter into `pg_parameters` before upgrading.
+
+All of these changes apply with a reload. `setup_patroni` no longer restarts
+every member on every run. It restarts only members that Patroni reports as
+waiting on a restart, and the first node of a zone whose Patroni the same run
+started.
+
 ### Gather facts for every host first
 
 Roles read other hosts' addresses from the facts gathered for those hosts, so
@@ -230,6 +252,31 @@ same play to the top:
 
 ### Added
 
+- New `pg_parameters` parameter sets Postgres configuration parameters from the
+  inventory, on simple and Ultra-HA clusters alike. The collection applies the
+  values on top of its own defaults. Names are matched without regard to case,
+  YAML booleans become `on` and `off`, and a `null` value removes a default.
+  `shared_preload_libraries` is merged with the collection's libraries rather
+  than replacing them. `init_server` rejects parameters the collection must
+  control, such as `wal_level`, `port` and the archive commands, and names the
+  setting to change instead. On an Ultra-HA cluster it also rejects a zone whose
+  nodes disagree, because Patroni keeps one configuration per zone. See
+  [pg_parameters](../configuration/postgres.md#pg_parameters). (EE-35)
+- New `pg_allow_restart` parameter, `true` by default, controls whether a run
+  restarts Postgres to apply parameters that only take effect on restart. When
+  it is `false`, the run reports the nodes waiting on a restart and leaves them
+  running, so a maintenance window or a separate rolling-restart playbook can
+  take care of them. (EE-35)
+- New `tests/playbooks/pg-reconfigure.yml` changes, adds and removes Postgres
+  parameters on a deployed simple or Ultra-HA cluster. It first checks that
+  applying the deployed parameters again reloads and restarts nothing. It then
+  checks that every node applies the changes, that an Ultra-HA store holds
+  exactly the collection's parameters, that `pg_allow_restart: false` leaves a
+  restart pending, and that the inventory's own parameters can be restored.
+  `tests/render/check-patroni.py` checks the parameter layering, and
+  `tests/render/check-validate.py` checks that `init_server` refuses protected
+  parameters and an HA zone whose nodes disagree. The verify playbooks read the
+  inventory's parameters back from every node. (EE-35)
 - New `wipe_cluster` role and `sample-playbooks/wipe-cluster/` playbook tear a
   cluster down for a redeployment or a recovery. They stop Postgres, Patroni,
   pgBouncer and the collection's etcd, remove the cluster from any other
@@ -438,6 +485,26 @@ same play to the top:
 
 ### Changed
 
+- `setup_patroni` brings each zone's Patroni configuration store up to date
+  with the Postgres parameters on every run. Before, the parameters were written
+  only into `bootstrap.dcs`, which Patroni reads only when it bootstraps a zone,
+  so a deployed cluster could never take a change. The template still renders
+  the same parameters into `bootstrap.dcs`, so a recovery, which rebuilds the
+  store from it, recreates them. (EE-35)
+- `setup_patroni` restarts only members that Patroni reports as waiting on a
+  restart, one at a time and replicas before the leader, instead of every member
+  on every run. Raising a parameter such as `max_worker_processes` on a leader
+  before its replicas leaves the replicas unable to replay WAL. Lowering one
+  reaches a replica only after its leader has restarted, so replicas Patroni
+  flags then are restarted in a second pass. (EE-35)
+- On the first node of an HA zone, `setup_postgres` writes into
+  `postgresql.conf` only the parameters Postgres needs before Patroni takes
+  over. Patroni keeps that file beneath its own configuration, so any other
+  parameter written there would remain in effect after being removed from the
+  store. (EE-35)
+- On a simple cluster, `setup_postgres` reloads Postgres when its configuration
+  changes, and restarts it when Postgres reports a parameter waiting on a
+  restart. (EE-35)
 - The playbook documentation now states that every play applying the
   collection's roles must use the default `linear` strategy over all of its
   hosts at once, without `strategy: free` or `serial`. The roles have always
@@ -544,6 +611,13 @@ same play to the top:
 
 ### Fixed
 
+- `setup_postgres` writes a non-HA cluster's archive and restore commands
+  itself, from the same backup settings `finalize_backrest` reads.
+  `finalize_backrest` used to edit them into a line inside `setup_postgres`'s
+  managed block, which the next run of `setup_postgres` reset to `/bin/true`.
+  Every run therefore changed the file twice, and archiving stopped between
+  the two roles. `finalize_backrest` now only checks that Postgres is using
+  the right command. (EE-35)
 - `backup_repo_cipher_type: none` now produces a configuration PgBackRest
   accepts. The repository template emitted `repo1-cipher-pass` unconditionally,
   and PgBackRest rejects a password alongside a cipher type of `none`, so

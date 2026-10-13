@@ -1,0 +1,78 @@
+---
+
+# Keep the zone's Postgres configuration in Patroni's store in step with the
+# inventory. The template renders the same parameters into bootstrap.dcs, but
+# Patroni reads that only when it bootstraps a cluster, so without this an
+# existing zone would never see a parameter change at all.
+#
+# The collection owns the whole parameter set. Whatever the store holds that
+# pg_effective_parameters does not is removed, which is what makes deleting a
+# parameter from pg_parameters undo it, and also means a change made by hand
+# with patronictl edit-config lasts only until the next run. A name stored in
+# other letter case, such as the TimeZone earlier releases wrote, is replaced by
+# its lower-case form the same way.
+#
+# Values are compared as strings: the store keeps what it was given, so 12 and
+# '12' are the same setting to Postgres and should not count as a change.
+
+- name: Read the zone's Postgres configuration from the Patroni store
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - show-config
+    - "{{ patroni_scope }}"
+  register: dcs_config
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: inventory_hostname == first_node_in_zone
+
+- name: Bring the Patroni store's Postgres configuration up to date
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - edit-config
+    - --force
+    - --apply
+    - "-"
+    - "{{ patroni_scope }}"
+    stdin: "{{ {'postgresql': {'parameters': dcs_patch}} | to_nice_yaml }}"
+  register: dcs_parameters_patch
+  become: true
+  become_user: postgres
+  vars:
+    stored: >-
+      {{ ((dcs_config.stdout | from_yaml | default({}, true)).postgresql
+          | default({}, true)).parameters | default({}, true) }}
+    stored_items: >-
+      {{ dict(stored.keys() | zip(stored.values() | map('string')))
+         | dict2items }}
+    wanted_items: >-
+      {{ dict(pg_effective_parameters.keys()
+              | zip(pg_effective_parameters.values() | map('string')))
+         | dict2items }}
+    changed_names: >-
+      {{ wanted_items | difference(stored_items) | map(attribute='key') | list }}
+    removed_names: >-
+      {{ stored.keys() | difference(pg_effective_parameters.keys()) }}
+    # Patroni deletes a key it is given as null.
+    dcs_patch: >-
+      {{ dict(removed_names | product([none]))
+         | combine(pg_effective_parameters | dict2items
+                   | selectattr('key', 'in', changed_names) | items2dict) }}
+  when:
+  - inventory_hostname == first_node_in_zone
+  - dcs_patch | length > 0
+
+# Patroni hands a store change to each member on its next cycle, not when
+# edit-config returns, and only then does a member know whether the change
+# needs a restart. Two cycles of loop_wait cover every member of the zone.
+
+- name: Wait for the zone's members to take up the new configuration
+  wait_for:
+    timeout: 20
+  when: hostvars[first_node_in_zone].dcs_parameters_patch is changed

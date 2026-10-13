@@ -17,7 +17,17 @@ The role performs the following tasks on inventory hosts:
 - Disable the native Postgres systemd service so Patroni takes control.
 - Start Patroni on the primary node first, then on all replica nodes.
 - Wait for the cluster to reach a running state before proceeding.
-- Apply a `patronictl restart` to clear any "Pending Restart" flag.
+- Bring the Postgres parameters in the zone's configuration store up to date
+  with the inventory's `pg_parameters` and the collection's defaults, removing
+  any parameter the configuration no longer names.
+- Restart, with `patronictl restart`, each member that Patroni reports as
+  waiting on a restart: one member at a time, replicas before the leader, and
+  then any replica the leader's restart left waiting, which is what lowering a
+  parameter such as `max_worker_processes` does. When `pg_allow_restart` is
+  `false`, report those members instead.
+- Restart the primary once after Patroni first takes it over, whatever
+  `pg_allow_restart` says, so that a new zone starts with its full
+  configuration.
 
 ## Role Dependencies
 
@@ -71,6 +81,8 @@ This role uses the following parameters from the inventory file:
 | `patroni_namespace` | Key prefix Patroni uses within the store. Set one per zone when a single store spans zones and the prefix is what must differ. |
 | `patroni_replica_from_backup` | Rebuild replicas with a PgBackRest delta restore before cloning from the leader. |
 | `patroni_scope` | Cluster name Patroni uses within the store. Set one per zone when a single store spans zones. |
+| `pg_parameters` | Postgres configuration parameters, kept in the zone's configuration store. |
+| `pg_allow_restart` | Restart members when a changed parameter needs it. |
 | `synchronous_mode` | Enable synchronous replication mode. |
 | `synchronous_mode_strict` | Require a synchronous replica for all commits. |
 | `tls_validity_days` | Number of days TLS certificates remain valid. |

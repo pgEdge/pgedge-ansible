@@ -112,6 +112,112 @@ custom_hba_rules:
     source: 10.0.0.0/8
 ```
 
+## pg_parameters
+
+- Type: Dictionary
+- Default: `{}`
+- Description: This parameter sets Postgres configuration parameters, by name.
+  The collection applies the values on top of its own defaults, so you only
+  need to name the parameters you want to change. The parameters work the same
+  way on a simple cluster and on an Ultra-HA cluster.
+
+  - Names are matched without regard to case, as Postgres matches them, so
+    `TimeZone` overrides the collection's default `timezone`.
+  - YAML booleans become `on` and `off`. Numbers are written as numbers, and
+    every other value as a quoted string, so `work_mem: 64MB` works as
+    written.
+  - A `null` value removes a collection default, and Postgres then uses its
+    built-in value.
+  - `shared_preload_libraries` accepts a list or a comma-separated string, and
+    its libraries are **added** to the ones the collection loads. `spock` and
+    `snowflake` always load first, followed by `pg_stat_statements`. Setting
+    `shared_preload_libraries` to `null` drops `pg_stat_statements` but never
+    `spock` or `snowflake`.
+  - Removing a parameter from `pg_parameters` removes it from the cluster at the
+    next run.
+
+In the following example, the inventory tunes memory, logs slow statements,
+and loads `auto_explain` beside the collection's libraries:
+
+```yaml
+pg_parameters:
+  work_mem: 64MB
+  maintenance_work_mem: 1GB
+  log_min_duration_statement: 1000
+  jit: off
+  shared_preload_libraries: auto_explain
+```
+
+### Parameters the Collection Controls
+
+Spock needs some parameters set to particular values, and some parameters
+follow other settings in the inventory or are set by Patroni. `init_server`
+rejects an inventory that sets any of them in `pg_parameters`, and the error
+names the setting to change instead.
+
+| Parameter | Controlled by |
+|-----------|---------------|
+| `port` | `pg_port` |
+| `listen_addresses` | The collection; Postgres listens on every address. |
+| `ssl_cert_file`, `ssl_key_file` | The collection, which issues the certificate. |
+| `wal_level`, `track_commit_timestamp` | The collection; Spock requires `logical` and `on`. |
+| `archive_mode`, `archive_command`, `restore_command` | The backup settings, as described in [Backup Configuration](backup.md). |
+| `snowflake.node` | `zone` |
+| `spock.exception_behaviour` | `exception_behaviour` |
+| `output_plugin_libraries` | The collection, on Postgres releases that support the parameter. |
+| `hot_standby`, `cluster_name` | Patroni |
+| `data_directory` | `pg_data` |
+| `hba_file` | `custom_hba_rules` |
+| `config_file`, `ident_file`, `unix_socket_directories` | The collection. |
+
+The collection's other defaults can be overridden. These defaults include
+`ssl`, `timezone`, `max_worker_processes`, `max_replication_slots`,
+`max_wal_senders`, `hot_standby_feedback` and the Spock conflict and DDL
+settings. `pg_default_parameters` in the `role_config` role's variables lists
+them all.
+
+### Ultra-HA Clusters
+
+In an Ultra-HA cluster, Patroni keeps each zone's Postgres configuration in its
+configuration store, and every member of the zone shares it. This has the
+following consequences:
+
+- Every node in a zone must have the same `pg_parameters`. Set the parameter on
+  the `pgedge` group, or on a group that holds just the zone's nodes. Different
+  zones may use different values. `init_server` rejects a zone whose nodes
+  disagree.
+- `setup_patroni` updates the store on every run, not only when it bootstraps
+  the zone. The collection owns the store's parameters. A parameter that is in
+  the store but not in the collection's configuration is removed, so a change
+  made by hand with `patronictl edit-config` lasts only until the next run.
+- A Debian node's local logging settings (`logging_collector`,
+  `log_directory` and `log_filename`) normally take precedence over the store.
+  The collection drops each one that `pg_parameters` sets, so your value
+  applies.
+
+## pg_allow_restart
+
+- Type: Boolean
+- Default: `true`
+- Description: This parameter controls whether the collection restarts Postgres
+  to apply parameters that only take effect on restart, such as
+  `shared_preload_libraries` or `max_worker_processes`. The collection restarts
+  only nodes that Postgres or Patroni report as waiting on a restart, and only
+  one node at a time. In an Ultra-HA zone it restarts replicas before the
+  leader.
+  When this parameter is `false`, the run applies everything a reload can apply
+  and reports the nodes that still need a restart, so you can restart them in a
+  maintenance window or with a rolling-restart playbook of your own. The
+  parameter does not apply to a new Ultra-HA zone: the primary is always
+  restarted once after Patroni takes it over, because Postgres starts before
+  Patroni and only a restart gives it the zone's full configuration.
+
+In the following example, the inventory leaves restarts to the operator:
+
+```yaml
+pg_allow_restart: false
+```
+
 ## Internal Path Variables
 
 The `role_config` role computes the following additional path variables. These

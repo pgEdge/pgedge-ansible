@@ -1,0 +1,32 @@
+---
+
+# Whether this member has a restart pending, and whether it leads its zone.
+# patronictl marks a member with a pending restart with an asterisk, and lists
+# the column only while some member of the zone has one. restart_regardless
+# counts the member as pending whatever Patroni says.
+
+- name: List the zone's members
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - list
+    - -f
+    - json
+    - "{{ patroni_scope }}"
+  register: patroni_members
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- name: Record whether this member has a restart pending
+  set_fact:
+    restart_pending: >-
+      {{ member['Pending restart'] | default('') | length > 0
+         or restart_regardless | bool }}
+    zone_leader: "{{ member.Role | default('') == 'Leader' }}"
+  vars:
+    member: >-
+      {{ patroni_members.stdout | from_json
+         | selectattr('Member', 'eq', ansible_hostname) | first | default({}) }}

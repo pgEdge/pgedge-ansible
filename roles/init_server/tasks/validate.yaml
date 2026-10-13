@@ -407,6 +407,104 @@
   - inventory_hostname in (groups.haproxy | default([]))
   - inventory_hostname in (groups.pgedge | default([]))
 
+# pg_parameters is laid over the collection's own Postgres configuration, so a
+# value of the wrong shape would surface as a templating error halfway through
+# setup_postgres or setup_patroni. shared_preload_libraries is the one parameter
+# with a shape of its own: a list, or the comma-separated string Postgres takes.
+# A mapping passes Jinja's sequence test, so it is ruled out by name; its keys
+# would otherwise be loaded as libraries.
+
+- name: Ensure pg_parameters is a mapping of parameter names to values
+  assert:
+    that:
+    - pg_parameters is mapping
+    - pg_user_parameters.shared_preload_libraries | default(none) is none or
+      pg_user_parameters.shared_preload_libraries is string or
+      (pg_user_parameters.shared_preload_libraries is sequence and
+       pg_user_parameters.shared_preload_libraries is not mapping)
+    fail_msg: >-
+      pg_parameters must map Postgres parameter names to values, and its
+      shared_preload_libraries, if given, must be a list or a comma-separated
+      string.
+  when: inventory_hostname in (groups.pgedge | default([]))
+
+# Names are matched without regard to case, so TimeZone and timezone are one
+# parameter. Given both, one value would silently win over the other.
+
+- name: Ensure pg_parameters names each parameter once
+  assert:
+    that:
+    - duplicated | length == 0
+    fail_msg: >-
+      pg_parameters on {{ inventory_hostname }} sets {{ duplicated | join(', ') }}
+      more than once, in different letter case. Postgres treats parameter names
+      without regard to case, so keep one of each.
+  vars:
+    names: "{{ pg_parameters.keys() | map('lower') | list }}"
+    duplicated: >-
+      {% set seen = [] %}{% set repeated = [] %}
+      {%- for name in names | sort %}
+      {%-   if name in seen and name not in repeated %}
+      {%-     set _ = repeated.append(name) %}
+      {%-   endif %}
+      {%-   set _ = seen.append(name) %}
+      {%- endfor %}{{ repeated }}
+  when: inventory_hostname in (groups.pgedge | default([]))
+
+# Some parameters are the collection's to set. Spock cannot work without
+# logical decoding, the archive commands have to name the repository the backup
+# settings describe, and Patroni overrides several more in an HA zone no matter
+# what its configuration says. Refusing them here is kinder than accepting a
+# value that is silently replaced, which is what would happen otherwise: the
+# collection's own values are laid over the inventory's.
+
+- name: Ensure pg_parameters leaves the collection's own parameters alone
+  assert:
+    that:
+    - refused | length == 0
+    fail_msg: >-
+      pg_parameters on {{ inventory_hostname }} sets parameters the collection
+      controls itself:
+      {% for name in refused %}{{ name }} ({{ pg_protected_parameters[name]
+      | default('the collection requires its value') }}){{ '; ' if not loop.last
+      else '.' }}{% endfor %}
+  vars:
+    refused: >-
+      {{ pg_user_parameters.keys()
+         | intersect(pg_protected_parameters.keys() | list
+                     + pg_required_parameters.keys() | list)
+         | sort }}
+  when: inventory_hostname in (groups.pgedge | default([]))
+
+# An HA zone keeps one Postgres configuration, in Patroni's store, for every
+# member: a replica has to be able to take over with the settings the leader
+# ran with. Different values on two nodes of a zone would leave the store
+# holding whichever node wrote last, so they are rejected like a half-pooled
+# cluster is. Zones are separate Patroni clusters and may differ freely.
+
+- name: Ensure every node of an HA zone agrees on pg_parameters
+  assert:
+    that:
+    - zone_parameters | unique | length <= 1
+    fail_msg: >-
+      pg_parameters must be the same on every node of zone {{ zone }}: an HA
+      zone shares a single Postgres configuration through Patroni. Set it on
+      the 'pgedge' group, or on a group holding just this zone's nodes.
+  vars:
+    # Compared with every name in lower case, as Postgres compares them, so
+    # TimeZone on one node and timezone on another still agree.
+    zone_parameters: >-
+      {% set found = [] %}
+      {%- for node in groups['pgedge'] | map('extract', hostvars)
+            | selectattr('zone', 'eq', zone) %}
+      {%-   set given = node.pg_parameters | default({}) %}
+      {%-   set _ = found.append(dict(given.keys() | map('lower')
+                                      | zip(given.values()))) %}
+      {%- endfor %}{{ found }}
+  when:
+  - is_ha_cluster | bool
+  - inventory_hostname in (groups.pgedge | default([]))
+
 # Ensure that only "supported" DCS types are used. These are pulled from the
 # Patroni documentation:
 #  - https://patroni.readthedocs.io/en/latest/yaml_configuration.html

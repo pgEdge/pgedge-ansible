@@ -49,11 +49,23 @@ in full.
   keys in `backup_repo_params` for S3-compatible stores such as MinIO. (EE-39)
 - `init_server` validates S3 repository settings and refuses a backup server in
   an S3 zone. (EE-39)
+- New `pg_parameters` parameter sets Postgres configuration parameters on simple
+  and Ultra-HA clusters. It merges `shared_preload_libraries` with the
+  collection's libraries and rejects parameters the collection controls.
+  (EE-35)
+- New `pg_allow_restart` parameter controls whether a run restarts Postgres to
+  apply parameters that need a restart. (EE-35)
+- New Postgres reconfiguration check in the test suite. (EE-35)
 
 ### Changed
 
 - `setup_etcd` applies a changed configuration to a running cluster, restarting
   one etcd member at a time. (EE-42)
+- `setup_patroni` keeps the Postgres parameters in each zone's Patroni store up
+  to date on every run, and restarts only members with a restart pending,
+  replicas first. (EE-35)
+- Simple clusters now set `ssl` and `spock.conflict_log_level` the same way
+  Ultra-HA clusters do. (EE-35)
 - The first backup is taken only when the repository holds none that can
   restore the cluster. (EE-39)
 - `setup_backrest` writes files only and runs before `setup_postgres`. (EE-39)
@@ -77,6 +89,8 @@ in full.
 
 - `backup_repo_cipher_type: none` produces a configuration PgBackRest
   accepts. (EE-39)
+- A non-HA cluster's `archive_command` no longer reverts to `/bin/true` each
+  time `setup_postgres` runs before `finalize_backrest`. (EE-35)
 - `backup_repo_user` and `backup_repo_path` no longer become `root` and
   `/home/root` when facts are gathered under `become`. (EE-39)
 - S3 repositories get a client configuration. (EE-39)

@@ -21,6 +21,30 @@ replication_password: secret
 
 custom_hba_rules: []
 
+# Postgres configuration parameters, by name, laid over the collection's own
+# defaults (pg_default_parameters in this role's vars). Names are matched
+# without regard to case, as Postgres matches them, so TimeZone and timezone
+# are the same parameter. A null value drops a collection default, leaving
+# Postgres to its built-in one.
+#
+# shared_preload_libraries is merged rather than replaced: the libraries named
+# here, as a list or a comma-separated string, are loaded beside the ones the
+# collection needs. Parameters the collection must control itself, such as
+# port or wal_level, are refused by init_server; pg_protected_parameters in
+# this role's vars names each one and the setting that governs it instead.
+#
+# In an HA cluster these become the zone's Patroni configuration, which every
+# member of the zone shares, so every node of a zone must agree on them.
+
+pg_parameters: {}
+
+# Whether a parameter change that only takes effect on restart is applied by
+# restarting Postgres. In an HA zone the members restart one at a time. Turn it
+# off to leave the restart to a maintenance window: the run then reports the
+# nodes with a restart pending and changes nothing more.
+
+pg_allow_restart: true
+
 # pgBouncer connection pooler. Pooling is a property of the cluster, the way
 # is_ha_cluster is: set pgbouncer_enabled on the 'pgedge' group and every pgEdge
 # node gets a pooler in front of its own Postgres. It is deliberately not a

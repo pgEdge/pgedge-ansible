@@ -12,6 +12,74 @@
     state: started
     enabled: true
   become: true
+  register: pg_service_start
+
+# A running server reads a changed configuration only when told to. One just
+# started has already read it. The time of the request is kept, because the
+# reload is only a signal: the server re-reads its configuration some moments
+# later, and until then it reports nothing pending.
+
+- name: Reload Postgres to apply configuration changes
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: SELECT pg_reload_conf(), now()::text AS requested
+  register: pg_reload
+  changed_when: true
+  become: true
+  become_user: postgres
+  when:
+  - pg_conf_block is changed
+  - pg_service_start is not changed
+
+# Some parameters take effect only when the server starts, and a reload leaves
+# them pending. Postgres reports those itself, which also catches a change
+# that an earlier run applied and then left for a maintenance window.
+
+- name: Check for parameters waiting on a restart
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT pg_conf_load_time() >= %(requested)s::timestamptz AS loaded,
+             ARRAY(SELECT name FROM pg_settings
+                    WHERE pending_restart ORDER BY name) AS pending
+    named_args:
+      requested: >-
+        {{ pg_reload.query_result[0].requested
+           if pg_reload is not skipped else '-infinity' }}
+  register: pg_pending_restart
+  until: pg_pending_restart.query_result[0].loaded | bool
+  retries: 10
+  delay: 1
+  changed_when: false
+  become: true
+  become_user: postgres
+
+# One node at a time: every node is a Spock peer, and restarting them together
+# would take the whole cluster down at once.
+
+- name: Restart Postgres to apply parameters that need it
+  service:
+    name: "{{ pg_service_name }}"
+    state: restarted
+  become: true
+  throttle: 1
+  when:
+  - pg_pending_restart.query_result[0].pending | length > 0
+  - pg_allow_restart | bool
+
+- name: Report parameters left waiting on a restart
+  debug:
+    msg: >-
+      Postgres on {{ inventory_hostname }} needs a restart to apply
+      {{ pg_pending_restart.query_result[0].pending | join(', ') }}.
+      pg_allow_restart is off, so it was left running as it is.
+  when:
+  - pg_pending_restart.query_result[0].pending | length > 0
+  - not pg_allow_restart | bool
 
 # Include all other common steps for a standard Postgres node
 

@@ -26,12 +26,18 @@ replicas from a backup where no repository exists renders as Ansible would
 render it -- without the pgbackrest method -- and this also pins that
 derivation.
 
+The Postgres parameters are derived the same way: pg_effective_parameters and
+the layers beneath it are role_config's expressions, evaluated here against an
+inventory's pg_parameters, so a case with parameters of its own checks the
+layering as well as the rendering.
+
 Ansible's template module turns trim_blocks on, unlike a bare Jinja2
 Environment, so a '{%- if %}' that renders cleanly here would not there.
 """
 
 import itertools
 import json
+from jinja2.nativetypes import NativeEnvironment
 import re
 import os
 import subprocess
@@ -107,6 +113,53 @@ def hostvars_for(hosts_with_facts):
     return hv
 
 
+# role_config's parameter layers, in the order each reads the one before.
+PARAMETER_LAYERS = ("pg_user_parameters", "pg_user_preload_libraries",
+                    "pg_preload_libraries", "pg_required_parameters",
+                    "pg_merged_parameters", "pg_effective_parameters")
+
+
+def ansible_filters(e):
+    """The Ansible filters role_config's parameter expressions use."""
+    def combine(*dicts):
+        out = {}
+        for d in dicts:
+            out.update(d)
+        return out
+    e.filters["combine"] = combine
+    e.filters["dict2items"] = lambda d: [{"key": k, "value": v}
+                                         for k, v in d.items()]
+    e.filters["items2dict"] = lambda items: {i["key"]: i["value"]
+                                             for i in items}
+    e.filters["zip"] = lambda a, *b: list(zip(a, *b))
+    e.filters["product"] = lambda a, *b: list(itertools.product(a, *b))
+    e.filters["difference"] = lambda a, b: [x for x in a if x not in list(b)]
+    e.filters["intersect"] = lambda a, b: [x for x in a if x in list(b)]
+    e.filters["bool"] = lambda v: str(v).strip().lower() in (
+        "true", "yes", "on", "1")
+    return e
+
+
+def parameters(pg_parameters, backups, zone=1):
+    """role_config's parameter layers for an inventory's pg_parameters,
+    evaluated as Ansible would. Returns every layer by name."""
+    role_vars = yaml.safe_load(ROLE_VARS.read_text())
+    e = ansible_filters(NativeEnvironment(undefined=StrictUndefined))
+    ctx = dict(pg_parameters=pg_parameters, pg_port=5432,
+               pg_data="/var/lib/pgsql/17/data", zone=zone,
+               spock_exception_behaviour="transdiscard",
+               backup_repo_configured=backups, backup_stanza="pgedge-demo-1",
+               pg_supports_output_plugin_libraries=True,
+               pg_default_parameters=role_vars["pg_default_parameters"],
+               pg_required_preload_libraries=
+               role_vars["pg_required_preload_libraries"],
+               pg_default_preload_libraries=
+               role_vars["pg_default_preload_libraries"])
+    for name in PARAMETER_LAYERS:
+        ctx[name] = e.from_string(role_vars[name]).render(**ctx)
+    return ctx
+
+
 def replica_from_backup(e, requested, backups):
     """role_config's replica_from_backup, evaluated as Ansible would."""
     expr = yaml.safe_load(ROLE_VARS.read_text())["replica_from_backup"]
@@ -114,10 +167,13 @@ def replica_from_backup(e, requested, backups):
                                       backup_repo_configured=backups)
 
 
-def context(e, os_family, backups, replica, hosts_with_facts):
+def context(e, os_family, backups, replica, hosts_with_facts,
+            pg_parameters=None):
     """The template's variables. 'replica' is the inventory's
-    patroni_replica_from_backup; what the template sees is derived from it."""
+    patroni_replica_from_backup; what the template sees is derived from it,
+    as the Postgres parameters are from 'pg_parameters'."""
     zone = 1
+    layers = parameters(pg_parameters or {}, backups, zone)
     in_zone = [h for h in PGEDGE if ZONE_OF[h] == zone]
     return dict(
         ansible_default_ipv4={"address": PGEDGE[0], "netmask": "255.255.255.0"},
@@ -134,15 +190,15 @@ def context(e, os_family, backups, replica, hosts_with_facts):
         pg_config_dir="/var/lib/pgsql/17/data", pg_path="/usr/pgsql-17",
         pg_home="/var/lib/pgsql", pg_version=17, cluster_name="demo", zone=zone,
         patroni_pgbackrest_replica_script=REPLICA_SCRIPT,
-        pg_supports_output_plugin_libraries=True,
-        spock_exception_behaviour="transdiscard",
         groups={"pgedge": PGEDGE, "haproxy": HAPROXY, "backup": BACKUP},
         hostvars=hostvars_for(hosts_with_facts),
         nodes_in_zone=in_zone,
         proxies_in_zone=[h for h in HAPROXY if ZONE_OF[h] == zone],
         proxy_node="", custom_hba_rules=[], backup_host="",
         pgedge_user="pgedge", db_user="admin", replication_user="replicator",
-        backup_user="backrest", db_password="p", replication_password="p")
+        backup_user="backrest", db_password="p", replication_password="p",
+        pg_user_parameters=layers["pg_user_parameters"],
+        pg_effective_parameters=layers["pg_effective_parameters"])
 
 
 def debian_config_dir_guaranteed(pg):
@@ -228,6 +284,115 @@ def check_switches(e, template):
             print(f"FAIL     {label}: {', '.join(bad)}")
         else:
             print(f"ok       {label}")
+
+    return failures
+
+
+# What bootstrap.dcs held before its parameters came from pg_parameters, with
+# the repository configured. An inventory that sets none must render exactly
+# this, give or take spelling: the names are lower case now, and on and off
+# are strings.
+LEGACY_PARAMETERS = {
+    "port": 5432, "ssl": "on",
+    "ssl_cert_file": "/var/lib/pgsql/17/data/server.crt",
+    "ssl_key_file": "/var/lib/pgsql/17/data/server.key",
+    "listen_addresses": "0.0.0.0", "archive_mode": "on",
+    "archive_command": "pgbackrest --stanza=pgedge-demo-1 archive-push %p",
+    "restore_command": "pgbackrest --stanza=pgedge-demo-1 archive-get %f %p",
+    "timezone": "UTC", "wal_level": "logical", "max_worker_processes": 12,
+    "max_replication_slots": 16, "max_wal_senders": 16,
+    "hot_standby_feedback": "on", "track_commit_timestamp": "on",
+    "shared_preload_libraries": "spock, snowflake, pg_stat_statements",
+    "output_plugin_libraries": "pgoutput, test_decoding, spock_output",
+    "spock.enable_ddl_replication": "on",
+    "spock.allow_ddl_from_functions": "on", "spock.include_ddl_repset": "on",
+    "spock.exception_behaviour": "transdiscard",
+    "spock.conflict_resolution": "last_update_wins",
+    "spock.save_resolutions": "on", "spock.conflict_log_level": "DEBUG",
+    "snowflake.node": 1,
+}
+
+# An inventory exercising each rule of the layering: a name in other case
+# overriding a default, a plain addition, a YAML boolean, a null dropping a
+# default, libraries merged into the preload list (one of them already there),
+# and a parameter Debian's local block would otherwise shadow.
+USER_PARAMETERS = {
+    "TimeZone": "America/Chicago", "work_mem": "64MB", "jit": False,
+    "spock.conflict_log_level": None,
+    "shared_preload_libraries": "auto_explain, spock",
+    "log_directory": "/var/log/pg",
+}
+
+
+def check_parameters(e, template):
+    """The parameters bootstrap.dcs carries, with and without pg_parameters."""
+    everyone = set(PGEDGE + HAPROXY + BACKUP)
+    failures = []
+
+    def dcs_and_local(os_family, pg_parameters):
+        doc = yaml.safe_load(template.render(**context(
+            e, os_family, True, False, everyone, pg_parameters)))
+        return (doc["bootstrap"]["dcs"]["postgresql"]["parameters"],
+                doc["postgresql"].get("parameters") or {})
+
+    for os_family in ("RedHat", "Debian"):
+        dcs, _ = dcs_and_local(os_family, None)
+        label = f"{os_family} parameters without pg_parameters"
+        if dcs != LEGACY_PARAMETERS:
+            diff = sorted(set(dcs.items()) ^ set(LEGACY_PARAMETERS.items()))
+            failures.append(f"{label}: differs from the legacy set: {diff}")
+            print(f"FAIL     {label}")
+        else:
+            print(f"ok       {label}")
+
+        dcs, local = dcs_and_local(os_family, USER_PARAMETERS)
+        checks = {
+            "case-folded override": dcs.get("timezone") == "America/Chicago"
+                and "TimeZone" not in dcs,
+            "added parameter": dcs.get("work_mem") == "64MB",
+            "boolean spelled off": dcs.get("jit") == "off",
+            "null drops a default": "spock.conflict_log_level" not in dcs,
+            "preload libraries merged": dcs.get("shared_preload_libraries")
+                == "spock, snowflake, pg_stat_statements, auto_explain",
+            "required parameters kept": all(
+                dcs.get(k) == LEGACY_PARAMETERS[k]
+                for k in ("wal_level", "port", "archive_command",
+                          "snowflake.node")),
+            # Patroni's local parameters beat the store's, so a Debian default
+            # the inventory overrides has to leave the local block.
+            "local block yields to pg_parameters": "log_directory" not in local
+                and (os_family != "Debian"
+                     or local.get("logging_collector") == "on"),
+        }
+        bad = [name for name, ok in checks.items() if not ok]
+        label = f"{os_family} parameters with pg_parameters"
+        if bad:
+            failures.append(f"{label}: {', '.join(bad)}")
+            print(f"FAIL     {label}: {', '.join(bad)}")
+        else:
+            print(f"ok       {label}")
+
+    # With no repository the archive command is the placeholder, and there is
+    # no restore command to give.
+    dcs = parameters({}, False)["pg_effective_parameters"]
+    label = "parameters without a repository"
+    if dcs.get("archive_command") != "/bin/true" or "restore_command" in dcs:
+        failures.append(f"{label}: archive_command {dcs.get('archive_command')}"
+                        f", restore_command {dcs.get('restore_command')}")
+        print(f"FAIL     {label}")
+    else:
+        print(f"ok       {label}")
+
+    # Setting shared_preload_libraries to null drops the default library but
+    # never the ones Spock and snowflake need.
+    preload = parameters({"shared_preload_libraries": None}, True)[
+        "pg_effective_parameters"]["shared_preload_libraries"]
+    label = "null shared_preload_libraries"
+    if preload != "spock, snowflake":
+        failures.append(f"{label}: got '{preload}'")
+        print(f"FAIL     {label}")
+    else:
+        print(f"ok       {label}")
 
     return failures
 
@@ -404,6 +569,8 @@ def main():
     template = e.get_template("patroni.yml.j2")
 
     failures = check_switches(e, template)
+    print()
+    failures += check_parameters(e, template)
     print()
     failures += check_missing_facts(e, template)
     failures += check_replica_script(

@@ -79,6 +79,8 @@ access:
 | pgedge_user | pgedge | Internal user for node-to-node Spock connections. |
 | pgedge_password | secret | Password for pgedge_user. |
 | custom_hba_rules | [] | List of additional pg_hba.conf rules to append to the default rule set. Each rule is a dictionary with contype, users, databases, method, and source fields. |
+| pg_parameters | {} | Postgres configuration parameters, by name, applied over the collection's defaults. `shared_preload_libraries` is merged with the collection's libraries. Parameters the collection controls are rejected. See [pg_parameters](configuration/postgres.md#pg_parameters). |
+| pg_allow_restart | true | Restart Postgres to apply parameters that need a restart. When `false`, pending restarts are reported and left for the operator. |
 
 ## High Availability Parameters
 
