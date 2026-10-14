@@ -101,7 +101,7 @@
       that:
       # work_mem is reported in kB.
       - settings.work_mem == '8192'
-      - settings.max_worker_processes == '16'
+      - settings.max_worker_processes == '24'
       - settings.TimeZone == 'Etc/UTC'
       - preload == ['spock', 'snowflake', 'pg_stat_statements', 'auto_explain']
       - pending | length == 0

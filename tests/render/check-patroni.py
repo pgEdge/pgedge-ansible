@@ -29,7 +29,9 @@ derivation.
 The Postgres parameters are derived the same way: pg_effective_parameters and
 the layers beneath it are role_config's expressions, evaluated here against an
 inventory's pg_parameters, so a case with parameters of its own checks the
-layering as well as the rendering.
+layering as well as the rendering. The worker and slot defaults among them are
+sized from the shape of the cluster, and are checked against the worked
+examples in Spock's sizing guide across clusters of other shapes.
 
 Ansible's template module turns trim_blocks on, unlike a bare Jinja2
 Environment, so a '{%- if %}' that renders cleanly here would not there.
@@ -113,8 +115,16 @@ def hostvars_for(hosts_with_facts):
     return hv
 
 
-# role_config's parameter layers, in the order each reads the one before.
-PARAMETER_LAYERS = ("pg_user_parameters", "pg_user_preload_libraries",
+# role_config's parameter layers, in the order each reads the one before. The
+# sizing layers read the cluster's shape and max_parallel_workers, and
+# pg_default_parameters is built from them.
+PARAMETER_LAYERS = ("pg_user_parameters",
+                    "zone_list", "nodes_in_zone", "pg_spock_nodes",
+                    "pg_connectable_dbs", "pg_spock_subscriptions",
+                    "pg_physical_standbys", "pg_parallel_workers",
+                    "pg_worker_processes", "pg_replication_slots",
+                    "pg_sized_parameters", "pg_default_parameters",
+                    "pg_user_preload_libraries",
                     "pg_preload_libraries", "pg_required_parameters",
                     "pg_merged_parameters", "pg_effective_parameters")
 
@@ -135,14 +145,37 @@ def ansible_filters(e):
     e.filters["product"] = lambda a, *b: list(itertools.product(a, *b))
     e.filters["difference"] = lambda a, b: [x for x in a if x not in list(b)]
     e.filters["intersect"] = lambda a, b: [x for x in a if x in list(b)]
+    # Ansible's unique returns a list, where Jinja's returns a generator.
+    e.filters["unique"] = lambda a: list(dict.fromkeys(a))
+    e.filters["extract"] = lambda key, container: container[key]
     e.filters["bool"] = lambda v: str(v).strip().lower() in (
         "true", "yes", "on", "1")
     return e
 
 
-def parameters(pg_parameters, backups, zone=1):
-    """role_config's parameter layers for an inventory's pg_parameters,
-    evaluated as Ansible would. Returns every layer by name."""
+def cluster(zones, members=1, db_names=("demo",), pg_version=17):
+    """An inventory's shape: zones of a number of pgEdge members each, HA where
+    there is more than one, replicating db_names."""
+    hosts = {f"n{z}-{m}": z for z in range(1, zones + 1)
+             for m in range(members)}
+    return dict(groups={"pgedge": list(hosts)},
+                hostvars={h: {"inventory_hostname": h, "zone": z}
+                          for h, z in hosts.items()},
+                db_names=list(db_names), pg_version=pg_version,
+                is_ha_cluster=members > 1)
+
+
+# The ultra-ha inventory's shape, which the template is rendered against.
+ULTRA_HA = dict(groups={"pgedge": PGEDGE},
+                hostvars={h: {"inventory_hostname": h, "zone": ZONE_OF[h]}
+                          for h in PGEDGE},
+                db_names=["demo"], pg_version=17, is_ha_cluster=True)
+
+
+def parameters(pg_parameters, backups, zone=1, shape=ULTRA_HA):
+    """role_config's parameter layers for an inventory's pg_parameters and the
+    shape of its cluster, evaluated as Ansible would. Returns every layer by
+    name."""
     role_vars = yaml.safe_load(ROLE_VARS.read_text())
     e = ansible_filters(NativeEnvironment(undefined=StrictUndefined))
     ctx = dict(pg_parameters=pg_parameters, pg_port=5432,
@@ -150,11 +183,11 @@ def parameters(pg_parameters, backups, zone=1):
                spock_exception_behaviour="transdiscard",
                backup_repo_configured=backups, backup_stanza="pgedge-demo-1",
                pg_supports_output_plugin_libraries=True,
-               pg_default_parameters=role_vars["pg_default_parameters"],
                pg_required_preload_libraries=
                role_vars["pg_required_preload_libraries"],
                pg_default_preload_libraries=
-               role_vars["pg_default_preload_libraries"])
+               role_vars["pg_default_preload_libraries"],
+               **shape)
     for name in PARAMETER_LAYERS:
         ctx[name] = e.from_string(role_vars[name]).render(**ctx)
     return ctx
@@ -291,7 +324,8 @@ def check_switches(e, template):
 # What bootstrap.dcs held before its parameters came from pg_parameters, with
 # the repository configured. An inventory that sets none must render exactly
 # this, give or take spelling: the names are lower case now, and on and off
-# are strings.
+# are strings. The one value that changed is max_worker_processes, once a fixed
+# 12 and now sized from the cluster: 20 for two zones replicating one database.
 LEGACY_PARAMETERS = {
     "port": 5432, "ssl": "on",
     "ssl_cert_file": "/var/lib/pgsql/17/data/server.crt",
@@ -299,7 +333,7 @@ LEGACY_PARAMETERS = {
     "listen_addresses": "0.0.0.0", "archive_mode": "on",
     "archive_command": "pgbackrest --stanza=pgedge-demo-1 archive-push %p",
     "restore_command": "pgbackrest --stanza=pgedge-demo-1 archive-get %f %p",
-    "timezone": "UTC", "wal_level": "logical", "max_worker_processes": 12,
+    "timezone": "UTC", "wal_level": "logical", "max_worker_processes": 20,
     "max_replication_slots": 16, "max_wal_senders": 16,
     "hot_standby_feedback": "on", "track_commit_timestamp": "on",
     "shared_preload_libraries": "spock, snowflake, pg_stat_statements",
@@ -394,6 +428,67 @@ def check_parameters(e, template):
     else:
         print(f"ok       {label}")
 
+    return failures
+
+
+# (what it is, cluster shape, pg_parameters, the sized parameters expected)
+# The first two are the worked examples in Spock's sizing guide; the next five
+# its table of recommended minimums, for one database and no standbys.
+SIZING = [
+    ("3-node mesh, one database, one standby",
+     cluster(3, members=2), {},
+     {"max_worker_processes": 20, "max_replication_slots": 16,
+      "max_wal_senders": 16}),
+    ("5-node mesh, two databases, two standbys",
+     cluster(5, members=3, db_names=("app", "ledger")), {},
+     {"max_worker_processes": 32, "max_replication_slots": 20,
+      "max_wal_senders": 20}),
+    *[(f"{n}-node mesh", cluster(n), {},
+       {"max_worker_processes": workers, "max_replication_slots": 16,
+        "max_wal_senders": 16})
+      for n, workers in ((2, 20), (3, 20), (4, 24), (5, 24), (8, 32))],
+    ("a single node never falls below the old slot count",
+     cluster(1), {},
+     {"max_worker_processes": 16, "max_replication_slots": 16,
+      "max_wal_senders": 16}),
+    ("3-node mesh replicating ten databases",
+     cluster(3, db_names=[f"db{i}" for i in range(10)]), {},
+     {"max_worker_processes": 64, "max_replication_slots": 42,
+      "max_wal_senders": 42}),
+    # Counted twice, postgres would round the workers up to 32.
+    ("postgres in db_names is one manager, not two",
+     cluster(3, db_names=("app", "ledger", "postgres")), {},
+     {"max_worker_processes": 28, "max_replication_slots": 16,
+      "max_wal_senders": 16}),
+    ("more parallel workers grow the worker pool",
+     cluster(3), {"Max_Parallel_Workers": 16},
+     {"max_worker_processes": 28, "max_replication_slots": 16,
+      "max_wal_senders": 16}),
+    ("Postgres 18 sizes its origins with the slots",
+     cluster(5, members=3, db_names=("app", "ledger"), pg_version=18), {},
+     {"max_worker_processes": 32, "max_replication_slots": 20,
+      "max_wal_senders": 20, "max_active_replication_origins": 20}),
+    ("pg_parameters still wins over the calculation",
+     cluster(3), {"max_worker_processes": 40, "max_wal_senders": None},
+     {"max_worker_processes": 40, "max_replication_slots": 16}),
+]
+
+SIZED = ("max_worker_processes", "max_replication_slots", "max_wal_senders",
+         "max_active_replication_origins")
+
+
+def check_sizing():
+    """The worker and slot defaults, sized from clusters of several shapes."""
+    failures = []
+    for label, shape, pg_parameters, want in SIZING:
+        effective = parameters(pg_parameters, True, shape=shape)[
+            "pg_effective_parameters"]
+        got = {k: effective[k] for k in SIZED if k in effective}
+        if got != want:
+            failures.append(f"sizing '{label}': expected {want}, got {got}")
+            print(f"FAIL     sizing: {label}")
+        else:
+            print(f"ok       sizing: {label}")
     return failures
 
 
@@ -571,6 +666,8 @@ def main():
     failures = check_switches(e, template)
     print()
     failures += check_parameters(e, template)
+    print()
+    failures += check_sizing()
     print()
     failures += check_missing_facts(e, template)
     failures += check_replica_script(

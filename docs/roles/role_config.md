@@ -77,6 +77,20 @@ variables include the following computed values:
 - `proxies_in_zone` contains hosts in the `haproxy` group of the current zone.
 - `backups_in_zone` contains hosts in the `backup` group of the current zone.
 - `first_node_in_zone` contains the first pgedge node in the current zone.
+- `zone_list` contains every zone that holds a pgedge node.
+
+Postgres sizing variables include the following computed values, which follow
+the formulas in
+[Worker and Replication Sizing](../configuration/postgres.md#worker-and-replication-sizing):
+
+- `pg_spock_nodes`, `pg_connectable_dbs`, `pg_spock_subscriptions`,
+  `pg_physical_standbys` and `pg_parallel_workers` contain the formulas'
+  inputs.
+- `pg_worker_processes` and `pg_replication_slots` contain the calculated
+  totals.
+- `pg_sized_parameters` maps each calculated Postgres parameter to its value.
+  `pg_default_parameters` includes it, and `init_server` compares
+  `pg_parameters` against it.
 
 OS-specific shortcut variables include the following computed values:
 

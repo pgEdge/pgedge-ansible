@@ -223,11 +223,24 @@ values are the same as before, with the following exceptions:
 - An Ultra-HA cluster's store now holds only the parameters the collection
   writes. A parameter added by hand with `patronictl edit-config` is removed.
   Move any such parameter into `pg_parameters` before upgrading.
+- `max_worker_processes` is now calculated from the number of zones, the
+  databases in `db_names` and `max_parallel_workers`, where it was a fixed
+  `12`. Every cluster gets at least `16`, and most get `20` or more.
+  `max_replication_slots` and `max_wal_senders` are calculated as well, but
+  never fall below the `16` they were before, so they change only on clusters
+  large enough to need more. On Postgres 18, `max_active_replication_origins`
+  is set to the same value. See
+  [Worker and Replication Sizing](../configuration/postgres.md#worker-and-replication-sizing).
 
-All of these changes apply with a reload. `setup_patroni` no longer restarts
-every member on every run. It restarts only members that Patroni reports as
-waiting on a restart, and the first node of a zone whose Patroni the same run
-started.
+The worker, slot and origin changes take effect only after a restart. The run
+restarts each node that needs one, one node at a time, unless
+`pg_allow_restart` is `false`. All other changes apply with a reload. If
+`pg_parameters` already sets any of these parameters, the inventory's value
+still wins. `init_server` warns where that value is below the calculated one.
+
+`setup_patroni` no longer restarts every member on every run. It restarts only
+members that Patroni reports as waiting on a restart, and the first node of a
+zone whose Patroni the same run started.
 
 ### Gather facts for every host first
 
@@ -277,6 +290,13 @@ same play to the top:
   `tests/render/check-validate.py` checks that `init_server` refuses protected
   parameters and an HA zone whose nodes disagree. The verify playbooks read the
   inventory's parameters back from every node. (EE-35)
+- `init_server` warns when `pg_parameters` sets `max_worker_processes`,
+  `max_replication_slots`, `max_wal_senders` or
+  `max_active_replication_origins` below the value the collection calculates
+  for the cluster, or to `null`. The run continues, but a pool that small can
+  stop replication from starting. `tests/render/check-patroni.py` checks the
+  calculation against the worked examples in Spock's sizing guide, and
+  `tests/render/check-validate.py` checks the warning. (EE-36)
 - New `wipe_cluster` role and `sample-playbooks/wipe-cluster/` playbook tear a
   cluster down for a redeployment or a recovery. They stop Postgres, Patroni,
   pgBouncer and the collection's etcd, remove the cluster from any other
@@ -505,6 +525,16 @@ same play to the top:
 - On a simple cluster, `setup_postgres` reloads Postgres when its configuration
   changes, and restarts it when Postgres reports a parameter waiting on a
   restart. (EE-35)
+- The defaults for `max_worker_processes`, `max_replication_slots`,
+  `max_wal_senders` and, on Postgres 18 and later,
+  `max_active_replication_origins` are calculated from the number of zones,
+  the databases in `db_names`, the standbys in each zone and
+  `max_parallel_workers`, using the formulas in Spock's sizing guide. The
+  previous fixed values (`12` workers and `16` slots and walsenders) were too
+  small for a cluster replicating several databases, and replication never
+  started on one. Slots and walsenders never fall below `16`. See
+  [Worker and Replication Sizing](../configuration/postgres.md#worker-and-replication-sizing).
+  (EE-36)
 - The playbook documentation now states that every play applying the
   collection's roles must use the default `linear` strategy over all of its
   hosts at once, without `strategy: free` or `serial`. The roles have always

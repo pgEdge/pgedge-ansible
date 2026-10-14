@@ -58,7 +58,7 @@
     # and log_min_duration_statement added.
     changed_parameters:
       work_mem: 16MB
-      max_worker_processes: 20
+      max_worker_processes: 28
       log_min_duration_statement: 1000
       shared_preload_libraries: auto_explain
     settings_query: >-
@@ -153,7 +153,7 @@
       that:
       # work_mem is reported in kB.
       - settings.work_mem == '16384'
-      - settings.max_worker_processes == '20'
+      - settings.max_worker_processes == '28'
       - settings.log_min_duration_statement == '1000'
       # Removed from pg_parameters, so back to the collection's default.
       - settings.TimeZone == 'UTC'
@@ -198,7 +198,7 @@
     include_role:
       name: "{{ reconfigure_role }}"
     vars:
-      pg_parameters: "{{ changed_parameters | combine({'max_worker_processes': 24}) }}"
+      pg_parameters: "{{ changed_parameters | combine({'max_worker_processes': 32}) }}"
       pg_allow_restart: false
 
   - name: Read the parameters each node is running with
@@ -211,7 +211,7 @@
   - name: Assert the restart was left pending
     assert:
       that:
-      - settings.max_worker_processes == '20'
+      - settings.max_worker_processes == '28'
       - "'max_worker_processes' in pending"
       fail_msg: >
         Postgres on {{ inventory_hostname }} was restarted or never saw the
@@ -237,7 +237,7 @@
     assert:
       that:
       - settings.work_mem == '8192'
-      - settings.max_worker_processes == '16'
+      - settings.max_worker_processes == '24'
       - settings.TimeZone == 'Etc/UTC'
       - settings.log_min_duration_statement == '-1'
       - pending | length == 0
