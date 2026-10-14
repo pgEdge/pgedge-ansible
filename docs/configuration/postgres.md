@@ -171,10 +171,99 @@ names the setting to change instead.
 | `config_file`, `ident_file`, `unix_socket_directories` | The collection. |
 
 The collection's other defaults can be overridden. These defaults include
-`ssl`, `timezone`, `max_worker_processes`, `max_replication_slots`,
-`max_wal_senders`, `hot_standby_feedback` and the Spock conflict and DDL
+`ssl`, `timezone`, `hot_standby_feedback` and the Spock conflict and DDL
 settings. `pg_default_parameters` in the `role_config` role's variables lists
-them all.
+them all. The defaults for `max_worker_processes`, `max_replication_slots`,
+`max_wal_senders` and, on Postgres 18 and later,
+`max_active_replication_origins` are calculated from the cluster, as described
+in the next section.
+
+### Worker and Replication Sizing
+
+Spock needs background workers, walsenders, replication slots and replication
+origins on every node. The number of each grows with the number of zones and
+with the number of databases in `db_names`. Postgres sets aside a fixed number
+of each when it starts, so a cluster that outgrows them does not slow down. It
+stops replicating. Spock cannot start the worker it needs, logs an error, and
+retries in a loop, and a subscription never leaves the `initializing` state.
+
+To prevent this, the collection calculates these four parameters from the
+inventory instead of using fixed values. The formulas come from the Spock
+documentation's sizing guide, which explains each term in detail. They use the
+following values:
+
+- `N` is the number of zones. Every zone holds one Spock node, however many
+  members it has.
+- `D` is the number of databases that accept connections: the databases in
+  `db_names`, plus `postgres` and `template1`. Spock starts a manager worker in
+  each, whether it replicates or not.
+- `S` is the number of subscriptions on each node: the number of databases in
+  `db_names` multiplied by `N - 1`.
+- `P` is the number of physical standbys in the node's zone: one less than the
+  zone's members in an Ultra-HA cluster, and zero otherwise.
+- `W` is `max_parallel_workers` from `pg_parameters`, or `8`, its Postgres
+  default. Parallel queries draw on the same worker pool as Spock.
+
+The collection calculates the defaults with the following formulas:
+
+    max_worker_processes = 1 + 1 + D + 2 * S + W + 2,  rounded up to a multiple of 4
+    max_replication_slots = 2 * S + P + 2,  but no less than 16
+    max_wal_senders = max_replication_slots
+    max_active_replication_origins = max_replication_slots  (Postgres 18 and later)
+
+The worker formula counts a supervisor, a slot synchronization worker, one
+manager for each database, an apply worker and a table synchronization worker
+for each subscription, the parallel query workers, and two spare workers. The
+slot formula counts an apply slot and a table synchronization slot for each
+subscription, a slot for each standby, and two spare slots for tools such as
+`pg_basebackup`. Earlier releases set `max_replication_slots` and
+`max_wal_senders` to a fixed `16`, and the calculated values never go below it.
+If Postgres finds more replication slots on disk than `max_replication_slots`
+allows, it refuses to start, so these values must never shrink on an existing
+cluster.
+
+The following table shows the calculated values for clusters that replicate a
+single database:
+
+| Cluster | `max_worker_processes` | `max_replication_slots`, `max_wal_senders` |
+|---------|------------------------|--------------------------------------------|
+| 2 zones | 20 | 16 |
+| 3 zones | 20 | 16 |
+| 4 zones | 24 | 16 |
+| 5 zones | 24 | 16 |
+| 8 zones | 32 | 16 |
+
+Each additional database raises both values. For example, a 3-zone cluster
+that replicates ten databases needs 64 workers and 42 slots.
+
+The calculation changes whenever the cluster does. Adding a zone or a database
+to `db_names` raises the values on every node, and the next run applies them.
+Every one of these parameters requires a restart, so `pg_allow_restart` decides
+whether the run restarts each node or leaves the restart pending.
+
+Removing a zone or a database from `db_names` lowers the values just as
+readily, but the collection does not drop the subscriptions and replication
+slots the removed zone or database leaves behind. If those slots outnumber the
+new `max_replication_slots`, Postgres refuses to start after the next restart.
+Before you remove a zone or a database, either drop its subscriptions and slots
+on every remaining node, or set the parameters in `pg_parameters` to their
+current values until you have.
+
+!!! warning "Overriding the calculated values"
+
+    You can set any of these parameters in `pg_parameters`, and your value
+    replaces the calculation completely. The collection does not raise it as the
+    cluster grows. If you set one, calculate it yourself with the formulas
+    above, and recalculate it whenever you add a zone or a database. The
+    formulas cannot account for databases created outside `db_names`, or for
+    extensions that start their own background workers, such as `pg_cron`. If
+    your nodes have either, add them to the totals yourself.
+
+    `init_server` refuses an inventory where `pg_parameters` sets one of these
+    parameters below the calculated value, or sets it to `null`, which falls
+    back to Postgres's smaller built-in default. A pool that small eventually
+    keeps Spock from starting a worker it needs, and replication stops. Raise
+    the value, or remove it from `pg_parameters` to use the calculated one.
 
 ### Ultra-HA Clusters
 

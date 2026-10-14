@@ -32,7 +32,7 @@ pgedge:
     # the preload list. The verify playbooks read each back from the server.
     pg_parameters:
       work_mem: 8MB
-      max_worker_processes: 16
+      max_worker_processes: 24
       TimeZone: Etc/UTC
       shared_preload_libraries: auto_explain
     pgbouncer_enabled: true

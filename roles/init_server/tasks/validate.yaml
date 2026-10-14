@@ -476,6 +476,39 @@
          | sort }}
   when: inventory_hostname in (groups.pgedge | default([]))
 
+# The collection sizes Spock's worker, walsender, slot and origin pools from the
+# inventory (pg_sized_parameters in role_config). pg_parameters may raise them,
+# but a value below the calculation, or a null that falls back to Postgres's own
+# smaller default, leaves Spock unable to start a worker it needs sooner or
+# later, and replication then never starts: an error in the server log, not in
+# this run. A cluster that cannot replicate is not one to build, so the
+# inventory is refused here instead.
+
+- name: Ensure pg_parameters leaves Spock the pools it needs
+  assert:
+    that:
+    - undersized | length == 0
+    fail_msg: >-
+      pg_parameters on {{ inventory_hostname }} sets
+      {{ undersized | join('; ') }}. The collection calculates these from the
+      zones, db_names, the zone's standbys and max_parallel_workers, and a
+      smaller pool keeps Spock from starting the workers it needs. Raise them,
+      or remove them from pg_parameters to use the calculated values. See
+      "Worker and Replication Sizing" in the Postgres configuration docs.
+  vars:
+    undersized: >-
+      {% set found = [] %}
+      {%- for name, sized in pg_sized_parameters.items()
+            if name in pg_user_parameters %}
+      {%-   set given = pg_user_parameters[name] %}
+      {%-   if given is none or given | int < sized %}
+      {%-     set _ = found.append(name ~ ' to '
+                ~ ('null' if given is none else given)
+                ~ ' where the cluster needs at least ' ~ sized) %}
+      {%-   endif %}
+      {%- endfor %}{{ found }}
+  when: inventory_hostname in (groups.pgedge | default([]))
+
 # An HA zone keeps one Postgres configuration, in Patroni's store, for every
 # member: a replica has to be able to take over with the settings the leader
 # ran with. Different values on two nodes of a zone would leave the store

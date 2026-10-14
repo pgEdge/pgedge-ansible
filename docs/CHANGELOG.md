@@ -56,6 +56,8 @@ in full.
 - New `pg_allow_restart` parameter controls whether a run restarts Postgres to
   apply parameters that need a restart. (EE-35)
 - New Postgres reconfiguration check in the test suite. (EE-35)
+- `init_server` refuses `pg_parameters` that set a worker, slot, walsender or
+  origin limit below what the cluster needs. (EE-36)
 
 ### Changed
 
@@ -66,6 +68,11 @@ in full.
   replicas first. (EE-35)
 - Simple clusters now set `ssl` and `spock.conflict_log_level` the same way
   Ultra-HA clusters do. (EE-35)
+- `max_worker_processes`, `max_replication_slots`, `max_wal_senders` and, on
+  Postgres 18, `max_active_replication_origins` default to values calculated
+  from the zones, `db_names` and standbys, so clusters replicating several
+  databases start replicating. Slots and walsenders never go below the previous
+  `16`. (EE-36)
 - The first backup is taken only when the repository holds none that can
   restore the cluster. (EE-39)
 - `setup_backrest` writes files only and runs before `setup_postgres`. (EE-39)

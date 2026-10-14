@@ -10,6 +10,9 @@ are the controller itself.
 
 Each case names the inventory's pgedge hosts and whether the run must pass. A
 refusal must also say why, in words an operator can act on.
+
+An override smaller than the collection's calculated worker and slot pools is
+refused too, while one at least as large passes.
 """
 
 import json
@@ -48,6 +51,14 @@ HA = {"is_ha_cluster": True}
 
 TUNED = {"work_mem": "64MB", "TimeZone": "Etc/UTC", "jit": False,
          "shared_preload_libraries": ["auto_explain"]}
+
+# Three single-node zones replicating one database: 20 workers, 16 slots.
+MESH = {f"n{z}": {**SIMPLE, "zone": z} for z in (1, 2, 3)}
+
+
+def mesh(pg_parameters):
+    return {h: {**v, "pg_parameters": pg_parameters} for h, v in MESH.items()}
+
 
 # (name, {host: vars}, passes, fragments the refusal must contain)
 CASES = [
@@ -95,6 +106,30 @@ CASES = [
      {"n1": {**HA, "zone": 1, "pg_parameters": TUNED},
       "n2": {**HA, "zone": 1, "pg_parameters": {"work_mem": "8MB"}}},
      False, ["pg_parameters must be the same on every node of zone 1"]),
+    ("pools left to the collection",
+     mesh({"work_mem": "64MB"}), True, []),
+    ("pools overridden upward",
+     mesh({"max_worker_processes": 32, "max_wal_senders": "20"}),
+     True, []),
+    ("worker pool overridden below the calculation",
+     mesh({"max_worker_processes": 12}),
+     False,
+     ["max_worker_processes to 12 where the cluster needs at least 20"]),
+    ("pools removed in favor of Postgres's defaults",
+     mesh({"max_wal_senders": None, "Max_Replication_Slots": 10}),
+     False,
+     ["max_replication_slots to 10 where the cluster needs at least 16",
+      "max_wal_senders to null where the cluster needs at least 16"]),
+    ("more parallel workers outgrowing a fixed worker pool",
+     mesh({"max_parallel_workers": 16, "max_worker_processes": 24}),
+     False,
+     ["max_worker_processes to 24 where the cluster needs at least 28"]),
+    ("more databases outgrowing the slot pool",
+     {h: {**v, "db_names": [f"db{i}" for i in range(5)],
+          "pg_parameters": {"max_replication_slots": 16}}
+      for h, v in MESH.items()},
+     False,
+     ["max_replication_slots to 16 where the cluster needs at least 22"]),
 ]
 
 

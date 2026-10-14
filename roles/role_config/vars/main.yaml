@@ -39,6 +39,17 @@ pooled_nodes_in_zone: "{{ nodes_in_zone if cluster_is_pooled | bool else [] }}"
 
 first_node_in_zone: "{{ nodes_in_zone | first }}"
 
+# Every zone the cluster has, which is by definition the zones its pgEdge nodes
+# are in. Derived from the pgedge group rather than from every host in the
+# inventory: a host that belongs to no deployment group — a client, a bastion,
+# a monitoring box — carries no zone, and counting it invents an empty zone
+# that no node can satisfy. setup_pgedge's subscription loop then looks for
+# the first pgEdge node in that zone and fails on an empty sequence.
+
+zone_list: >
+    {{ groups['pgedge'] | map('extract', hostvars) |
+       map(attribute='zone', default='') | unique }}
+
 spock_exception_behaviour: >-
   {{ exception_behaviour if exception_behaviour in (
        'discard', 'transdiscard', 'sub_disable'
@@ -149,19 +160,79 @@ pg_config_dir: >-
 # reasonably tune. Values that should follow from the rest of the inventory,
 # such as worker counts that grow with db_names, belong here as expressions.
 
-pg_default_parameters:
-  ssl: true
-  timezone: UTC
-  max_worker_processes: 12
-  max_replication_slots: 16
-  max_wal_senders: 16
-  hot_standby_feedback: true
-  spock.enable_ddl_replication: true
-  spock.allow_ddl_from_functions: true
-  spock.include_ddl_repset: true
-  spock.conflict_resolution: last_update_wins
-  spock.save_resolutions: true
-  spock.conflict_log_level: DEBUG
+# Spock draws on three pools Postgres sizes at startup: background workers,
+# walsenders, and replication slots (with origins, which Postgres 18 sizes on
+# their own). A pool too small for the cluster is not a soft failure. Spock
+# cannot register the worker it needs, retries in a loop, and replication never
+# starts. These size each pool from the inventory, following the formulas in
+# Spock's sizing guide, so that adding a zone or a database to db_names grows
+# them with it. The terms are the guide's:
+#
+#   - N, every zone is one Spock node however many members it has.
+#   - D, Spock starts a manager for every database that accepts connections,
+#     whether or not it replicates: db_names, postgres and template1. A
+#     database created outside the collection is not counted.
+#   - S, each database in db_names subscribes to the same database on every
+#     other node.
+#   - Each other member of an HA zone holds a physical slot on the leader.
+#
+# max_parallel_workers draws from the worker pool too, so an inventory that
+# raises it raises the pool with it. The worker total is rounded up to a
+# multiple of four to leave room to grow, and the slot total never falls below
+# 16, the fixed value earlier releases used: shrinking max_replication_slots
+# beneath the slots a node already holds stops Postgres from starting.
+
+pg_spock_nodes: "{{ zone_list | length }}"
+
+pg_connectable_dbs: "{{ (db_names + ['postgres', 'template1']) | unique | length }}"
+
+pg_spock_subscriptions: "{{ db_names | length * (pg_spock_nodes | int - 1) }}"
+
+pg_physical_standbys: "{{ nodes_in_zone | length - 1 if is_ha_cluster | bool else 0 }}"
+
+pg_parallel_workers: >-
+  {{ 8 if pg_user_parameters.max_parallel_workers | default(none) is none
+     else pg_user_parameters.max_parallel_workers | int }}
+
+# One supervisor, one slot sync worker, a manager per connectable database, and
+# an apply worker and a table sync worker per subscription, plus two spare.
+pg_worker_processes: >-
+  {{ ((2 + pg_connectable_dbs | int + 2 * pg_spock_subscriptions | int
+       + pg_parallel_workers | int + 2 + 3) // 4) * 4 }}
+
+# An apply slot and a table sync slot per subscription, one per standby, and
+# two spare for pg_basebackup and the like. A walsender serves each slot, and
+# Postgres 18 needs an origin for each.
+pg_replication_slots: >-
+  {{ [16, 2 * pg_spock_subscriptions | int + pg_physical_standbys | int + 2]
+     | max }}
+
+# The calculated parameters by name, which init_server compares pg_parameters
+# against.
+pg_sized_parameters: >-
+  {{ {
+       'max_worker_processes': pg_worker_processes | int,
+       'max_replication_slots': pg_replication_slots | int,
+       'max_wal_senders': pg_replication_slots | int,
+     }
+     | combine({
+         'max_active_replication_origins': pg_replication_slots | int,
+       } if pg_version | int >= 18 else {}) }}
+
+pg_default_parameters: >-
+  {{ {
+       'ssl': true,
+       'timezone': 'UTC',
+     }
+     | combine(pg_sized_parameters, {
+         'hot_standby_feedback': true,
+         'spock.enable_ddl_replication': true,
+         'spock.allow_ddl_from_functions': true,
+         'spock.include_ddl_repset': true,
+         'spock.conflict_resolution': 'last_update_wins',
+         'spock.save_resolutions': true,
+         'spock.conflict_log_level': 'DEBUG',
+       }) }}
 
 # What the collection itself depends on: where Postgres listens and with which
 # certificate, logical decoding and commit timestamps for Spock, the snowflake
