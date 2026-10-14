@@ -1,0 +1,29 @@
+---
+
+# init_server has already refused a pg_version ColdFront packages are not
+# published for.
+#
+# The Postgres extension package depends on the base Postgres package
+# install_pgedge already installed, plus pg_duckdb and the patched
+# DuckDB extensions. Its name differs by OS family: Debian nests the
+# version between "postgresql" and the extension name; RHEL suffixes
+# the version onto the extension name instead — confirmed against the
+# package lists on apt.pgedge.com and dnf.pgedge.com.
+
+- name: Install ColdFront and PostgreSQL packages
+  package:
+    name:
+    - >-
+      {{ 'pgedge-coldfront_' ~ pg_version
+         if ansible_facts['os_family'] == 'RedHat'
+         else 'pgedge-postgresql-' ~ pg_version ~ '-coldfront' }}
+    # Archiver, partitioner and compactor.
+    - pgedge-coldfront
+    # Needed by the community.postgresql modules setup_coldfront uses.
+    - pgedge-python3-psycopg2
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true

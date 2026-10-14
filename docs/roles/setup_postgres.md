@@ -60,6 +60,7 @@ This role uses the following parameters from the inventory file:
 | `is_ha_cluster` | Enable high availability cluster configuration mode. |
 | `pg_parameters` | Postgres configuration parameters applied over the collection's defaults. |
 | `pg_allow_restart` | Restart Postgres when a changed parameter needs it. |
+| `coldfront_enabled` | Add ColdFront's libraries and settings to the configuration. |
 
 See the [Configuration Reference](../configuration.md) for descriptions and
 defaults.
@@ -79,7 +80,8 @@ When `is_ha_cluster` is `false`, the role performs the following steps:
 2. Generate a self-signed SSL certificate and key, stored in `pg_data` with
    secure permissions.
 3. Write the Postgres configuration: the parameters the collection requires
-   (such as port, listen addresses, `wal_level` and the archive commands), the
+   (such as port, listen addresses, `wal_level` and the archive commands, and
+   ColdFront's libraries and settings where `coldfront_enabled` is set), the
    collection's defaults, and the inventory's `pg_parameters`. See
    [pg_parameters](../configuration/postgres.md#pg_parameters).
 4. Configure `pg_hba.conf` with least-privilege rules for all known users
@@ -132,6 +134,27 @@ parameters the installed release recognizes, records the answer in
 `pg_supports_output_plugin_libraries`, and writes the parameter only where it
 exists. Releases predating the fix neither restrict plugin loading nor
 recognize the parameter.
+
+### Postgres Instances for Other Roles
+
+Some roles need a plain Postgres instance of their own rather than a pgEdge
+Distributed Postgres node: `setup_lakekeeper` keeps Lakekeeper's catalog in
+one, for example. The role's `plain_instance` task file creates and starts
+such an instance with the same tasks that create a node's, from
+`pg_version`, `cluster_name`, `pg_port`, `pg_data` and `pg_service_name`,
+and configures nothing else: no Spock, Snowflake, cluster HBA rules or
+parameters. Roles that need one include it explicitly:
+
+```yaml
+- name: Ensure the Postgres instance exists and is running
+  include_role:
+    name: setup_postgres
+    tasks_from: plain_instance
+```
+
+On Debian, `pg_createcluster` is given `pg_port`, so the instance listens
+there even though the package's `main` cluster, stopped beforehand, is still
+configured on 5432.
 
 ## Usage Examples
 

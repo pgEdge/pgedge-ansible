@@ -222,3 +222,78 @@ patroni_namespace: /db/
 patroni_dcs:
   type: etcd3
   # parameters: intentionally omitted to trigger default substitution
+
+# ColdFront tiered storage. Set coldfront_enabled on the 'pgedge' group and
+# every node preloads ColdFront's libraries and carries its settings, which
+# setup_postgres writes with the rest of the Postgres configuration and applies
+# the same way, restarting one node at a time where pg_allow_restart allows.
+# install_coldfront has to run before setup_postgres, since Postgres will not
+# start with a library it cannot find. Simple clusters only, for now:
+# init_server refuses it on an HA cluster.
+
+coldfront_enabled: false
+
+# ColdFront's own least-privilege NOLOGIN role that pg_duckdb gates
+# DuckDB execution on (duckdb.postgres_role). Members reach the cold
+# tier without superuser via coldfront.grant_app_access(); superusers
+# always qualify regardless.
+coldfront_duckdb_role: coldfront_duckdb
+
+# The additional database ColdFront's tiered storage lives in, separate
+# from whatever general-purpose databases the cluster already lists in
+# db_names.
+coldfront_db: coldfront
+
+# Whether ColdFront coordinates cold-tier commits between nodes with its
+# Ricart-Agrawala bakery, upstream's "mesh" mode. The bakery needs
+# coldfront.dblink_self, which only true sets. With false, the default,
+# each node serializes only its own cold-tier commits with a local
+# advisory lock, as upstream's single-node "vanilla" mode does, so on
+# more than one node each Iceberg table must be written from one node
+# only. Setting this to true, and everything a real multi-zone Spock
+# mesh needs beyond it, is follow-up work.
+coldfront_mesh: false
+
+# The Postgres major versions ColdFront packages are published for.
+# init_server refuses coldfront_enabled for any other pg_version, before
+# anything is installed.
+coldfront_supported_pg_versions:
+- 16
+- 17
+- 18
+
+# Settings ColdFront shares with Lakekeeper, its Iceberg catalog. They live
+# here, rather than in the role that installs each service, because both need
+# to agree on them: the archiver writes to the object store directly, and
+# Lakekeeper's warehouse points at the same store to prove its credentials by
+# writing to it. A setting only one role reads belongs in that role's own
+# defaults instead, the way setup_lakekeeper keeps its own.
+
+lakekeeper_host: ""
+lakekeeper_port: 8181
+lakekeeper_warehouse: wh
+
+# Lakekeeper also serves Prometheus metrics on a second port, and exits
+# at startup if that port is taken. Shared because init_server checks it
+# for collisions and setup_lakekeeper writes it into the service
+# environment.
+lakekeeper_metrics_port: 9000
+
+# The password of the role Lakekeeper logs in to its catalog database
+# as. Here rather than in setup_lakekeeper, which uses it, so that
+# init_server can refuse the default, as it does for the other
+# passwords.
+lakekeeper_db_password: secret
+
+# ColdFront's cold tier writes to any S3-compatible object store. Real
+# AWS S3, MinIO, and a self-hosted store are all equally valid, and
+# this collection deploys none of them. coldfront_s3_endpoint stays
+# empty to use AWS's own endpoint resolution; set it to point at
+# another store instead.
+
+coldfront_s3_endpoint: ""
+coldfront_s3_region: us-east-1
+coldfront_s3_bucket: iceberg
+coldfront_s3_access_key: ""
+coldfront_s3_secret_key: ""
+coldfront_s3_path_style: true

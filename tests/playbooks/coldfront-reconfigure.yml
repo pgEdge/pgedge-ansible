@@ -1,0 +1,232 @@
+---
+# Re-apply the ColdFront and Lakekeeper roles to a deployed cluster, and
+# turn ColdFront off and on again on its running nodes.
+#
+# A fresh deployment installs ColdFront before Postgres first starts, so only
+# a change to a running cluster exercises what an existing cluster sees when
+# coldfront_enabled is set on it: setup_postgres writes ColdFront's libraries
+# and settings with the rest of its parameters and restarts each node to load
+# them. This checks what the collection promises:
+#
+#   - applying the roles with nothing changed changes nothing: Lakekeeper is
+#     not restarted and its warehouse not recreated or updated, and no node
+#     rewrites its configuration, reloads or restarts,
+#   - turning ColdFront off unloads its libraries, with no restart left
+#     pending,
+#   - turning it on again restarts each node to load them, with no restart
+#     left pending, after which setup_coldfront finds them loaded,
+#   - and applying the roles once more changes nothing again.
+
+# setup_postgres's HBA rules name the cluster's nodes by address, and an
+# address is a fact, so every host's facts have to be gathered first --
+# without become, as the deployment gathers them.
+
+- hosts: all
+  any_errors_fatal: true
+
+  tasks:
+  - name: Confirm every host in the inventory is reachable
+    ping:
+
+- hosts: lakekeeper
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    started_query: systemctl show --property=ExecMainStartTimestamp lakekeeper
+
+  tasks:
+  - name: Read when Lakekeeper started
+    command: "{{ started_query }}"
+    register: lakekeeper_started_before
+    changed_when: false
+
+  - name: Apply the Lakekeeper roles the host was deployed with
+    include_role:
+      name: "{{ item }}"
+    loop:
+    - install_lakekeeper
+    - setup_lakekeeper
+
+  - name: Read when Lakekeeper started
+    command: "{{ started_query }}"
+    register: lakekeeper_started_after
+    changed_when: false
+
+  - name: Assert Lakekeeper was left as it was
+    assert:
+      that:
+      - lakekeeper_env_file is not changed
+      - lakekeeper_warehouse_create is skipped
+      - lakekeeper_storage_update is skipped
+      - lakekeeper_started_after.stdout == lakekeeper_started_before.stdout
+      fail_msg: >
+        Applying the unchanged Lakekeeper roles to {{ inventory_hostname }}
+        rewrote its environment file, created its warehouse again, updated
+        its storage profile or restarted it:
+        {{ lakekeeper_started_before.stdout }} became
+        {{ lakekeeper_started_after.stdout }}.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    # When the server last started and last read its configuration. Neither
+    # moves unless something restarts or reloads it.
+    lifecycle_query: >-
+      SELECT pg_postmaster_start_time(), pg_conf_load_time()
+    libraries_query: >-
+      SELECT current_setting('shared_preload_libraries'),
+             (SELECT count(*) FROM pg_settings WHERE pending_restart)
+
+  # role_config's defaults reach the play only once the first include_role has
+  # made them public, and this is evaluated for that very task too.
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version | default(17) }}/bin:/usr/lib/postgresql/{{ pg_version | default(17) }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  - name: Read when each node started and last read its configuration
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -c "{{ lifecycle_query }}"
+    register: lifecycle_before
+    changed_when: false
+
+  - name: Apply the ColdFront roles the cluster was deployed with
+    include_role:
+      name: "{{ item }}"
+      # The checks below read role_config's variables.
+      public: true
+    loop:
+    - install_coldfront
+    - setup_postgres
+    - setup_coldfront
+
+  - name: Read when each node started and last read its configuration
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -c "{{ lifecycle_query }}"
+    register: lifecycle_after
+    changed_when: false
+
+  - name: Assert nothing was rewritten, reloaded or restarted
+    assert:
+      that:
+      - lifecycle_after.stdout == lifecycle_before.stdout
+      - pg_conf_block is not changed
+      - coldfront_config_file is not changed
+      fail_msg: >
+        Applying the unchanged ColdFront roles to {{ inventory_hostname }}
+        rewrote postgresql.conf or ColdFront's config.yaml, or reloaded or
+        restarted Postgres: start and load time went from
+        {{ lifecycle_before.stdout }} to {{ lifecycle_after.stdout }}.
+
+  - name: Turn ColdFront off
+    include_role:
+      name: setup_postgres
+    vars:
+      coldfront_enabled: false
+
+  - name: Read the libraries each node has loaded
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -F '|' -c "{{ libraries_query }}"
+    register: libraries_off
+    changed_when: false
+
+  - name: Assert ColdFront's libraries are unloaded with nothing pending
+    assert:
+      that:
+      - "'pg_duckdb' not in loaded"
+      - "'coldfront' not in loaded"
+      - "'spock' in loaded"
+      - pending == '0'
+      fail_msg: >
+        Postgres on {{ inventory_hostname }} has loaded {{ loaded }} with
+        {{ pending }} parameters waiting on a restart after ColdFront was
+        turned off.
+    vars:
+      loaded: "{{ libraries_off.stdout.split('|')[0].split(', ') }}"
+      pending: "{{ libraries_off.stdout.split('|')[1] }}"
+
+  - name: Read when each node started
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -c "SELECT pg_postmaster_start_time()"
+    register: started_off
+    changed_when: false
+
+  - name: Turn ColdFront on again
+    include_role:
+      name: "{{ item }}"
+    loop:
+    - setup_postgres
+    - setup_coldfront
+
+  - name: Read the libraries each node has loaded
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -F '|' -c "{{ libraries_query }}"
+    register: libraries_on
+    changed_when: false
+
+  - name: Read when each node started
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -c "SELECT pg_postmaster_start_time()"
+    register: started_on
+    changed_when: false
+
+  - name: Assert each node restarted to load ColdFront's libraries
+    assert:
+      that:
+      - started_on.stdout != started_off.stdout
+      - "'pg_duckdb' in loaded"
+      - "'coldfront' in loaded"
+      - pending == '0'
+      fail_msg: >
+        Postgres on {{ inventory_hostname }} has loaded {{ loaded }} with
+        {{ pending }} parameters waiting on a restart after ColdFront was
+        turned on; it started at {{ started_off.stdout }} before and
+        {{ started_on.stdout }} after.
+    vars:
+      loaded: "{{ libraries_on.stdout.split('|')[0].split(', ') }}"
+      pending: "{{ libraries_on.stdout.split('|')[1] }}"
+
+  - name: Read when each node started and last read its configuration
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -c "{{ lifecycle_query }}"
+    register: lifecycle_before
+    changed_when: false
+
+  - name: Apply the ColdFront roles once more
+    include_role:
+      name: "{{ item }}"
+    loop:
+    - setup_postgres
+    - setup_coldfront
+
+  - name: Read when each node started and last read its configuration
+    become: true
+    become_user: postgres
+    command: psql -d postgres -t -A -c "{{ lifecycle_query }}"
+    register: lifecycle_after
+    changed_when: false
+
+  - name: Assert nothing was rewritten, reloaded or restarted
+    assert:
+      that:
+      - lifecycle_after.stdout == lifecycle_before.stdout
+      - pg_conf_block is not changed
+      - coldfront_config_file is not changed
+      fail_msg: >
+        Applying the ColdFront roles a second time to {{ inventory_hostname }}
+        rewrote postgresql.conf or ColdFront's config.yaml, or reloaded or
+        restarted Postgres: start and load time went from
+        {{ lifecycle_before.stdout }} to {{ lifecycle_after.stdout }}.
