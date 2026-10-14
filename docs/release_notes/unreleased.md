@@ -225,7 +225,8 @@ values are the same as before, with the following exceptions:
   Move any such parameter into `pg_parameters` before upgrading.
 - `max_worker_processes` is now calculated from the number of zones, the
   databases in `db_names` and `max_parallel_workers`, where it was a fixed
-  `12`. Every cluster gets at least `16`, and most get `20` or more.
+  `12`. With the default `max_parallel_workers`, every cluster gets at least
+  `16`, and most get `20` or more.
   `max_replication_slots` and `max_wal_senders` are calculated as well, but
   never fall below the `16` they were before, so they change only on clusters
   large enough to need more. On Postgres 18, `max_active_replication_origins`
@@ -236,7 +237,10 @@ The worker, slot and origin changes take effect only after a restart. The run
 restarts each node that needs one, one node at a time, unless
 `pg_allow_restart` is `false`. All other changes apply with a reload. If
 `pg_parameters` already sets any of these parameters, the inventory's value
-still wins. `init_server` warns where that value is below the calculated one.
+still wins, but `init_server` now refuses one below the calculated value. An
+inventory that set `max_worker_processes` to `16`, for example, fails
+validation on a cluster that needs `20`. Raise the value or remove it from
+`pg_parameters` before upgrading.
 
 `setup_patroni` no longer restarts every member on every run. It restarts only
 members that Patroni reports as waiting on a restart, and the first node of a
@@ -290,13 +294,13 @@ same play to the top:
   `tests/render/check-validate.py` checks that `init_server` refuses protected
   parameters and an HA zone whose nodes disagree. The verify playbooks read the
   inventory's parameters back from every node. (EE-35)
-- `init_server` warns when `pg_parameters` sets `max_worker_processes`,
-  `max_replication_slots`, `max_wal_senders` or
+- `init_server` refuses an inventory whose `pg_parameters` sets
+  `max_worker_processes`, `max_replication_slots`, `max_wal_senders` or
   `max_active_replication_origins` below the value the collection calculates
-  for the cluster, or to `null`. The run continues, but a pool that small can
-  stop replication from starting. `tests/render/check-patroni.py` checks the
-  calculation against the worked examples in Spock's sizing guide, and
-  `tests/render/check-validate.py` checks the warning. (EE-36)
+  for the cluster, or to `null`, since a pool that small can stop replication
+  from starting. `tests/render/check-patroni.py` checks the calculation against
+  the worked examples in Spock's sizing guide, and
+  `tests/render/check-validate.py` checks the refusal. (EE-36)
 - New `wipe_cluster` role and `sample-playbooks/wipe-cluster/` playbook tear a
   cluster down for a redeployment or a recovery. They stop Postgres, Patroni,
   pgBouncer and the collection's etcd, remove the cluster from any other

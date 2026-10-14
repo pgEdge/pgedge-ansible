@@ -241,6 +241,14 @@ to `db_names` raises the values on every node, and the next run applies them.
 Every one of these parameters requires a restart, so `pg_allow_restart` decides
 whether the run restarts each node or leaves the restart pending.
 
+Removing a zone or a database from `db_names` lowers the values just as
+readily, but the collection does not drop the subscriptions and replication
+slots the removed zone or database leaves behind. If those slots outnumber the
+new `max_replication_slots`, Postgres refuses to start after the next restart.
+Before you remove a zone or a database, either drop its subscriptions and slots
+on every remaining node, or set the parameters in `pg_parameters` to their
+current values until you have.
+
 !!! warning "Overriding the calculated values"
 
     You can set any of these parameters in `pg_parameters`, and your value
@@ -251,10 +259,11 @@ whether the run restarts each node or leaves the restart pending.
     extensions that start their own background workers, such as `pg_cron`. If
     your nodes have either, add them to the totals yourself.
 
-    `init_server` prints a warning for every node where `pg_parameters` sets one
-    of these parameters below the calculated value, or sets it to `null`, which
-    falls back to Postgres's smaller built-in default. The run still continues.
-    Raise the value unless you are certain the cluster will never need it.
+    `init_server` refuses an inventory where `pg_parameters` sets one of these
+    parameters below the calculated value, or sets it to `null`, which falls
+    back to Postgres's smaller built-in default. A pool that small eventually
+    keeps Spock from starting a worker it needs, and replication stops. Raise
+    the value, or remove it from `pg_parameters` to use the calculated one.
 
 ### Ultra-HA Clusters
 

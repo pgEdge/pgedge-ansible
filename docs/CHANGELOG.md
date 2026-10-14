@@ -56,7 +56,7 @@ in full.
 - New `pg_allow_restart` parameter controls whether a run restarts Postgres to
   apply parameters that need a restart. (EE-35)
 - New Postgres reconfiguration check in the test suite. (EE-35)
-- `init_server` warns when `pg_parameters` sets a worker, slot, walsender or
+- `init_server` refuses `pg_parameters` that set a worker, slot, walsender or
   origin limit below what the cluster needs. (EE-36)
 
 ### Changed
