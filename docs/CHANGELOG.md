@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v2.0.0
 
 This release adds recovery of an existing cluster from its pgBackRest
 repository, and reworks when the collection takes a backup so that redeploying a
@@ -16,10 +16,10 @@ cluster can never discard the recovery point its repository was holding.
 HA cluster deployed that way fills its disk with unarchived WAL.
 `backup_repo_cipher` is now required, so the next run against an existing
 cluster stops in `init_server` until it is set. See
-[Upgrading from v1.1.0](release_notes/unreleased.md#upgrading-from-v110) before
+[Upgrading from v1.1.0](release_notes/v2.0.0.md#upgrading-from-v110) before
 upgrading.
 
-The [release notes](release_notes/unreleased.md#changes) describe each change
+The [release notes](release_notes/v2.0.0.md#changes) describe each change
 in full.
 
 ### Added
@@ -58,6 +58,8 @@ in full.
 - New Postgres reconfiguration check in the test suite. (EE-35)
 - `init_server` refuses `pg_parameters` that set a worker, slot, walsender or
   origin limit below what the cluster needs. (EE-36)
+- Pushing a version tag builds the collection and attaches it, with a signed
+  build provenance attestation, to a draft GitHub release. (EE-46)
 
 ### Changed
 
@@ -107,6 +109,8 @@ in full.
   5432. (EE-39)
 - `make build` rebuilds the tarball when any shipped file changes or is
   deleted. (EE-39)
+- `make build` works in a source tree downloaded from GitHub, which has no git
+  history, and no longer takes its version from an enclosing repository. (EE-46)
 
 ## v1.1.0
 

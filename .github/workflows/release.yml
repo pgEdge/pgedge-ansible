@@ -1,0 +1,66 @@
+name: Release
+
+# Pushing a version tag builds the collection tarball, records a signed build
+# provenance attestation for it, and attaches it to a draft GitHub release for
+# that tag. The draft is left for a person to review and publish.
+#
+# Anyone can then check that a downloaded tarball came from this workflow:
+#
+#   gh attestation verify pgedge-platform-X.Y.Z.tar.gz --repo pgEdge/pgedge-ansible
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: write      # create the release and upload the tarball
+  id-token: write      # sign the attestation
+  attestations: write  # store the attestation
+
+jobs:
+  release:
+    name: Build and attach collection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      # The version is passed from the tag rather than worked out by the
+      # Makefile, so the tarball is named for exactly the tag that was pushed.
+      - name: Build collection
+        run: |
+          make build VERSION="${GITHUB_REF_NAME#v}"
+          echo "TARBALL=pgedge-platform-${GITHUB_REF_NAME#v}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ env.TARBALL }}
+
+      # Re-running the workflow for a tag replaces the tarball on the existing
+      # release instead of failing, and never publishes a draft.
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A tag with a pre-release suffix, such as v2.0.0-rc.1, is marked as
+          # a pre-release so it never becomes the latest release.
+          PRERELEASE=
+          case "$GITHUB_REF_NAME" in *-*) PRERELEASE=--prerelease ;; esac
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$TARBALL" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$TARBALL" $PRERELEASE \
+              --draft --verify-tag --title "$GITHUB_REF_NAME" \
+              --notes "See the [Changelog](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/CHANGELOG.md) for the changes in this release."
+          fi

@@ -1,0 +1,4 @@
+# "git archive" expands the $Format placeholder in this file into the release
+# version, so the Makefile can build a downloaded source tree that has no git
+# history. See the Makefile header.
+.git_archival.txt export-subst
