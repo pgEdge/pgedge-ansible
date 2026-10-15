@@ -44,11 +44,17 @@ issues: https://github.com/pgEdge/pgedge-ansible/issues
 # at the top level; the "*/" form catches the same name at any depth below it,
 # because fnmatch's "*" also matches "/".
 #
+# The git metadata files are left out too: .git_archival.txt only tells the
+# Makefile which version to build, and nothing installed reads any of them.
+#
 # tests/ is left out entirely. It holds the Docker harness, inventories and
 # checks run from a checkout, and nothing in an installed collection reads it.
 build_ignore:
 - tests
 - .github
+- .gitignore
+- .gitattributes
+- .git_archival.txt
 - .claude
 - .ansible
 - site

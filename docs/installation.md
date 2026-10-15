@@ -45,8 +45,8 @@ cd pgedge-ansible
 make install
 ```
 
-The `make install` command reads the version from the `VERSION` file, builds
-a collection archive, and installs it for the current user. By default,
+The `make install` command takes the version from the repository's git tags,
+builds a collection archive, and installs it for the current user. By default,
 Ansible installs collections to `~/.ansible/collections/ansible_collections/`.
 
 After installation, verify that Ansible can locate the collection:

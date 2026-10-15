@@ -1,8 +1,16 @@
 # This Makefile helps to build, install or publish the Ansible
 # collection on the Galaxy platform.
 #
-# Target version can be passed with the PGEDGE_ANSIBLE_VERSION variable.
-# The default version is taken from the VERSION file content.
+# The collection's version is taken from the first of these that gives one:
+#
+#   1. VERSION=x.y.z on the command line or in the environment.
+#   2. "git describe", when this directory is the top of its own git checkout.
+#   3. .git_archival.txt, which "git archive" fills in when it exports the
+#      tree. GitHub builds its release tarballs and "Download ZIP" files this
+#      way, so a downloaded source tree still knows its version.
+#
+# A tree with none of these, such as a plain copy of the files, stops the build
+# rather than producing a tarball with a made-up version. Pass VERSION=x.y.z.
 #
 # Build the collection:
 #
@@ -17,8 +25,21 @@
 #   make install
 #
 
-VERSION ?= $(shell { git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"; } | sed 's/^v//')
 DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
+
+# git describe walks up the directory tree, so a source tarball unpacked inside
+# some other repository would report that repository's tags. Only trust git when
+# this directory is the top of the checkout. --always is left out on purpose: a
+# bare commit hash is not a version Galaxy accepts.
+ifeq ($(realpath $(shell git -C $(DIR) rev-parse --show-toplevel 2>/dev/null)),$(realpath $(DIR)))
+GIT_VERSION := $(shell git -C $(DIR) describe --tags --dirty --match 'v[0-9]*' 2>/dev/null | sed 's/^v//')
+endif
+
+# In a checkout the file still holds its unexpanded $Format placeholder, which
+# the pattern below rejects, so only an exported tree yields a version here.
+ARCHIVE_VERSION := $(shell sed -n 's/^v//; /^[0-9]/p' $(DIR)/.git_archival.txt 2>/dev/null)
+
+VERSION ?= $(or $(GIT_VERSION),$(ARCHIVE_VERSION))
 TARGET := $(DIR)/pgedge-platform-$(VERSION).tar.gz
 
 .PHONY: build clean install
@@ -40,6 +61,10 @@ SOURCES := $(shell find $(DIR)/roles $(DIR)/meta $(DIR)/docs $(DIR)/sample-playb
 	$(DIR)/mkdocs.yml $(DIR)/Makefile
 
 $(TARGET): $(SOURCES)
+	@test -n "$(VERSION)" || { \
+		echo "Cannot tell which version this is: no git tags and no .git_archival.txt." >&2; \
+		echo "Pass it explicitly, for example: make build VERSION=2.0.0" >&2; \
+		exit 1; }
 	sed -E 's/version:.*/version: "$(VERSION)"/g' $(DIR)/galaxy.template.yml > $(DIR)/galaxy.yml
 	ansible-galaxy collection build --force $(DIR)
 
