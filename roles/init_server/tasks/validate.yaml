@@ -552,25 +552,28 @@
 
 # coldfront_enabled puts ColdFront's settings among the parameters
 # setup_postgres writes, and they name the Lakekeeper catalog, so a node with
-# no lakekeeper_host would run with an endpoint that reaches nothing.
-# ColdFront has no HA support yet: setup_coldfront stores the object-store
-# credential on every node, which an HA replica refuses. Its packages exist
-# only for some Postgres releases, and install_coldfront would otherwise fail
-# on a package name after install_pgedge had already installed Postgres.
+# no lakekeeper_host would run with an endpoint that reaches nothing. Its
+# packages exist only for some Postgres releases, and install_coldfront would
+# otherwise fail on a package name after install_pgedge had already installed
+# Postgres.
+#
+# An HA cluster needs mesh mode. Its archiver, partitioner and compactor
+# connect through the zone's endpoint, since a replica is read-only, and
+# Patroni's pg_hba admits db_user through the zone's proxies only to the
+# databases in db_names, where only mesh mode puts coldfront_db.
 
-- name: Ensure ColdFront has a catalog, a release and a simple cluster
+- name: Ensure ColdFront has a catalog, a release and mesh mode under HA
   assert:
     that:
     - lakekeeper_host | length > 0
-    - not is_ha_cluster | bool
     - pg_version | int in coldfront_supported_pg_versions | map('int')
+    - coldfront_mesh | bool or not is_ha_cluster | bool
     fail_msg: >-
       coldfront_enabled is set on {{ inventory_hostname }}, which needs
       lakekeeper_host set to the address of the Lakekeeper catalog, a
       pg_version ColdFront packages are published for
       ({{ coldfront_supported_pg_versions | join(', ') }}; pg_version is
-      {{ pg_version }}), and a cluster without is_ha_cluster: ColdFront does
-      not support HA clusters yet.
+      {{ pg_version }}), and on an HA cluster coldfront_mesh set to true.
   when:
   - coldfront_enabled | bool
   - inventory_hostname in (groups.pgedge | default([]))

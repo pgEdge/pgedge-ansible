@@ -26,6 +26,26 @@
   - lakekeeper_health is success
   - (lakekeeper_health.json.health | default('')) == 'ok'
 
+# Under HA, ColdFront's SQL runs on each zone's leader only, and the replicas
+# receive its results through physical replication. After a failover the
+# leader need not be first_node_in_zone, so each node asks its own Postgres
+# whether it is a standby. Without HA every node is its own primary.
+
+- name: Ask Postgres whether this node is a standby
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: SELECT pg_is_in_recovery() AS standby
+  register: coldfront_recovery
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- name: Record whether this node runs ColdFront's SQL
+  set_fact:
+    coldfront_runs_sql: "{{ not coldfront_recovery.query_result[0].standby }}"
+
 # In mesh mode, ColdFront's tables join Spock's replication set, as
 # replication.yaml explains.
 
@@ -52,6 +72,9 @@
 # no_log hides the task's output, because the module returns the query
 # with the secret filled in and repeats the arguments in its error
 # message.
+#
+# Under HA a replica cannot make the call, so a leader does. The
+# replicas are covered below.
 
 - name: Point ColdFront at the object store
   community.postgresql.postgresql_query:
@@ -74,6 +97,39 @@
   become: true
   become_user: postgres
   when: coldfront_sets_secret | bool
+
+# Physical replication brings the row to a replica but not the DuckDB
+# secret: DuckDB keeps that in a file of its own, and a replica replays
+# the change without running the trigger that writes it. A replica also
+# cannot write the row. So once the row has arrived, each replica
+# writes its own DuckDB secret from it, with ColdFront's own function,
+# which only reads the table.
+
+- name: Wait for the storage secret to reach this replica
+  community.postgresql.postgresql_query:
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+    query: SELECT count(*) AS n FROM coldfront.storage_secret
+  register: coldfront_replica_secret
+  until: coldfront_replica_secret.query_result[0].n | int > 0
+  retries: 30
+  delay: 2
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: not coldfront_runs_sql | bool
+
+- name: Write this replica's DuckDB secret from the replicated row
+  community.postgresql.postgresql_query:
+    db: "{{ coldfront_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+    query: SELECT coldfront.materialize_storage_secret()
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: not coldfront_runs_sql | bool
 
 # The file holds db_password and the object-store secret, so --diff
 # leaves it out.

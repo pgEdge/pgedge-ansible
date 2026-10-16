@@ -158,7 +158,8 @@
       - settings.work_mem == '8192'
       - settings.max_worker_processes == '24'
       - settings.TimeZone == 'Etc/UTC'
-      - preload == ['spock', 'snowflake', 'pg_stat_statements', 'auto_explain']
+      - preload == ['spock', 'snowflake', 'pg_stat_statements']
+                   + coldfront_libraries + ['auto_explain']
       - pending | length == 0
       fail_msg: >
         Postgres on {{ inventory_hostname }} is not running with the inventory's
@@ -169,6 +170,10 @@
       preload: >-
         {{ settings.shared_preload_libraries | default('') | split(',')
            | map('trim') | list }}
+      # With ColdFront layered on, its libraries load before the inventory's.
+      coldfront_libraries: >-
+        {{ ['pg_duckdb', 'coldfront'] if coldfront_enabled | default(false)
+           | bool else [] }}
       pending: >-
         {{ rows | selectattr(3, 'eq', 't') | map('first') | list }}
 
