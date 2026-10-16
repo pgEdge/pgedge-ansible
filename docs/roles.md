@@ -131,9 +131,9 @@ and `install_repos` have run there as on every host. In the `pgedge` play,
 ColdFront's libraries and creates its role, database and extensions where
 `coldfront_enabled` is set, and `setup_coldfront` comes after
 `setup_pgedge`, once Lakekeeper is serving. Both are gated on
-`coldfront_enabled`. The `sample-playbooks/simple-cluster` playbook runs
-all four in that order, with Lakekeeper in a play for the `lakekeeper`
-group.
+`coldfront_enabled`. The `sample-playbooks/simple-cluster` and
+`sample-playbooks/ultra-ha` playbooks run all four in that order, with
+Lakekeeper in a play for the `lakekeeper` group.
 
 | Role | Description |
 |------|-------------|

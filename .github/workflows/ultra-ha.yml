@@ -40,6 +40,14 @@ on:
           - all
           - ssh
           - s3
+      coldfront:
+        description: >-
+          Also deploy ColdFront in mesh mode, with a Lakekeeper host and
+          SeaweedFS standing in for the object store, and check its cold tier.
+          The recovery test does not run with it.
+        type: boolean
+        required: false
+        default: false
       recover:
         description: >-
           Also rebuild the cluster from its backup repository and verify the
@@ -64,7 +72,7 @@ on:
 
 jobs:
   test:
-    name: Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}
+    name: Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}${{ inputs.coldfront && ' - coldfront' || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -77,10 +85,14 @@ jobs:
         -f tests/compose/ultra-ha-${{ matrix.os }}.yml
         ${{ matrix.dcs != 'etcd3' && format('-f tests/compose/dcs-{0}.yml', matrix.dcs) || '' }}
         ${{ matrix.backup == 's3' && '-f tests/compose/backup-s3.yml' || '' }}
+        ${{ inputs.coldfront && format('-f tests/compose/coldfront-{0}.yml', matrix.os) || '' }}
       DCS_VARS: ${{ matrix.dcs != 'etcd3' && format('-e @tests/vars/dcs-{0}.yml', matrix.dcs) || '' }}
       # The repository is layered onto the base inventory: the backup servers
       # for SSH, or the MinIO store's variables for S3, which may not have any.
       BACKUP_ARGS: ${{ matrix.backup == 's3' && '-e @tests/vars/backup-s3.yml' || '-i tests/inventories/ultra-ha-ssh.yml' }}
+      # ColdFront is layered onto the base inventory as well, always in mesh
+      # mode, which an HA cluster needs.
+      COLDFRONT_ARGS: ${{ inputs.coldfront && '-i tests/inventories/coldfront.yml -e @tests/vars/coldfront-mesh.yml' || '' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -129,7 +141,7 @@ jobs:
 
       - name: Wait for SSH
         run: |
-          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.30; do
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }}; do
             ready=0
             for i in $(seq 1 30); do
               ssh -i tests/.ssh/id_ed25519 \
@@ -175,7 +187,7 @@ jobs:
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/ultra-ha.yml \
-            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS
@@ -185,7 +197,7 @@ jobs:
           tests/check-idempotence.sh \
             tests/inventories/ultra-ha.yml \
             tests/playbooks/ultra-ha.yml \
-            $BACKUP_ARGS \
+            $BACKUP_ARGS $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS
@@ -194,7 +206,16 @@ jobs:
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-ultra-ha.yml \
-            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
+
+      - name: Verify the cold tier on every member
+        if: inputs.coldfront
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/verify/verify-ultra-ha-coldfront.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
 
@@ -204,7 +225,7 @@ jobs:
         run: |
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/pg-reconfigure.yml \
-            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
 
@@ -233,8 +254,10 @@ jobs:
       # starts from a working cluster and seeds it again; in that order the
       # targeted pass also restores across the timeline the first one created,
       # which is the case recover_postgres's timeline handling is for.
+      #
+      # Not with ColdFront: run-recovery-test.sh deploys without its layer.
       - name: Recover the cluster from its backup repository
-        if: ${{ inputs.recover }}
+        if: ${{ inputs.recover && !inputs.coldfront }}
         env:
           DEPLOY_PLAYBOOK_DIR: tests/playbooks
           RECOVER_TO: ${{ inputs.recover_to || 'both' }}
@@ -252,6 +275,28 @@ jobs:
       - name: Show container logs on failure
         if: failure()
         run: docker compose -p e2e $COMPOSE_ARGS logs
+
+      # The pgEdge and Lakekeeper containers log to their own journals rather
+      # than to docker, so Patroni's view of each member has to be fetched.
+      - name: Show Patroni and service status on failure
+        if: failure() && inputs.coldfront
+        run: |
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.32; do
+            echo "::group::$host"
+            ssh -i tests/.ssh/id_ed25519 \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=2 \
+              -o BatchMode=yes \
+              ansible@$host \
+              'for c in /etc/patroni/*.yml; do \
+                 [ -f "$c" ] && sudo -u postgres patronictl -c "$c" list; \
+               done; \
+               sudo systemctl status "patroni*" "pgedge-postgres-*" "postgresql@*" lakekeeper --no-pager -l; \
+               sudo journalctl -u "patroni*" -u "pgedge-postgres-*" -u "postgresql@*" -u lakekeeper --no-pager -n 200' \
+              || true
+            echo "::endgroup::"
+          done
 
       - name: Teardown
         if: always()

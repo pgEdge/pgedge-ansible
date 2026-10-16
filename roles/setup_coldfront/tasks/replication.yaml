@@ -4,7 +4,8 @@
 # coldfront_db: add ColdFront's tables to the node's default replication
 # set, as upstream's one-time mesh setup does. Without the bakery's
 # tables there, a peer's acknowledgements never reach the writer that
-# asked for them, and every claim waits forever.
+# asked for them, and every claim waits forever. Under HA this runs on
+# the leader, and the replicas receive it through physical replication.
 #
 # Membership is read first and only the missing tables are added, so a
 # re-run reports no change.
@@ -35,6 +36,7 @@
   changed_when: false
   become: true
   become_user: postgres
+  when: coldfront_runs_sql | bool
 
 # Upstream's own function for the bakery's tables, which also checks
 # membership before adding each one.
@@ -45,12 +47,17 @@
     login_port: "{{ pg_port }}"
     login_unix_socket: /var/run/postgresql
     query: SELECT coldfront._ensure_claims_replicated()
-  when: >-
+  when:
+  - coldfront_runs_sql | bool
+  - >-
     coldfront_unreplicated.query_result | map(attribute='name')
     | select('in', coldfront_bakery_tables) | list | length > 0
   changed_when: true
   become: true
   become_user: postgres
+
+# Ansible evaluates a loop before its condition, so the loop has to
+# tolerate the skipped check on a replica.
 
 - name: Add ColdFront's catalog tables to Spock's default replication set
   community.postgresql.postgresql_query:
@@ -62,8 +69,10 @@
     named_args:
       table: "{{ item }}"
   loop: >-
-    {{ coldfront_unreplicated.query_result | map(attribute='name')
-       | select('in', coldfront_catalog_tables) | list }}
+    {{ coldfront_unreplicated.query_result | default([])
+       | map(attribute='name') | select('in', coldfront_catalog_tables)
+       | list }}
+  when: coldfront_runs_sql | bool
   changed_when: true
   become: true
   become_user: postgres

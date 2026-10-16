@@ -7,6 +7,10 @@
 # Setting pgbouncer_enabled on the pgedge group also gives every node in it a
 # connection pooler in front of its own Postgres.
 #
+# Setting coldfront_enabled and coldfront_mesh on the pgedge group, and putting
+# the host that serves the Lakekeeper Iceberg catalog in the lakekeeper group,
+# adds ColdFront tiered storage. The inventory shows how.
+#
 # CHECK the README for how these roles work
 ---
 
@@ -22,6 +26,21 @@
 
   roles:
   - init_server
+
+# The Lakekeeper catalog every cold-tier commit goes through, on the
+# lakekeeper group's host; an inventory without that group skips this play.
+# It comes before the pgEdge nodes, because setup_coldfront fails if the
+# catalog is not already answering.
+
+- hosts: lakekeeper
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_repos
+  - install_lakekeeper
+  - setup_lakekeeper
 
 # Begin deployment by "bootstrapping" all pgedge nodes with running software:
 #
@@ -47,6 +66,13 @@
   - install_backrest
   - role: install_pgbouncer
     when: pgbouncer_enabled | bool
+
+  # Before setup_postgres, which preloads ColdFront's libraries where
+  # coldfront_enabled is set, and on every member, replicas included: Postgres
+  # will not start with a library it cannot find.
+
+  - role: install_coldfront
+    when: coldfront_enabled | bool
 
   # Before Postgres, and before Patroni. Two things need it there.
   #
@@ -82,7 +108,9 @@
   roles:
   - setup_haproxy
 
-# Then "wire" the pgEdge cluster members together using Ultra-HA design
+# Then "wire" the pgEdge cluster members together using Ultra-HA design, and
+# finish ColdFront, which needs each zone's Spock node in the ColdFront
+# database.
 
 - hosts: pgedge
 
@@ -91,6 +119,8 @@
 
   roles:
   - setup_pgedge
+  - role: setup_coldfront
+    when: coldfront_enabled | bool
 
 # Set up the backup server so it can reach the cluster's nodes.
 

@@ -65,9 +65,10 @@ in full.
 - New `coldfront_enabled` parameter adds ColdFront's libraries and settings to
   the Postgres configuration. New `lakekeeper_*` and `coldfront_s3_*`
   parameters locate the catalog and the object store. (EE-40)
-- `init_server` refuses ColdFront on an HA cluster, without a catalog or
-  complete object store settings, or on an unsupported `pg_version`, and a
-  Lakekeeper host with the default password or colliding ports. (EE-40)
+- `init_server` refuses ColdFront on an HA cluster without mesh mode, without
+  a catalog or complete object store settings, or on an unsupported
+  `pg_version`, and a Lakekeeper host with the default password or colliding
+  ports. (EE-40)
 - The `simple-cluster` sample playbook and end-to-end test can add ColdFront,
   with a ColdFront reconfiguration check. (EE-40)
 - `setup_postgres` gained a `plain_instance` task file for roles that need a
@@ -77,6 +78,11 @@ in full.
   `coldfront_db`. (EE-40)
 - New `coldfront_peer_alive_window_ms` parameter. (EE-40)
 - The simple-cluster end-to-end test can run ColdFront in mesh mode. (EE-40)
+- ColdFront runs on HA clusters in mesh mode. `setup_coldfront` runs its SQL
+  on each zone's leader, and each replica writes its own DuckDB secret.
+  (EE-40)
+- The `ultra-ha` sample playbook and end-to-end test can add ColdFront, in
+  mesh mode. (EE-40)
 
 ### Changed
 

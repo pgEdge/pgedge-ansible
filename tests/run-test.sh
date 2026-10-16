@@ -10,7 +10,7 @@ usage() {
   echo "  os:       debian12 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
   echo "  backup:   ssh (default) | s3 -- the repository; s3 is ultra-ha only"
-  echo "  coldfront: add ColdFront and Lakekeeper; simple-cluster only"
+  echo "  coldfront: add ColdFront and Lakekeeper, in mesh mode on ultra-ha"
   echo "  mesh:     with coldfront, run ColdFront in mesh mode"
   echo "  --keep:   don't tear down containers after test"
   exit 1
@@ -119,18 +119,17 @@ esac
 # ColdFront. The compose overlay adds the Lakekeeper host, and SeaweedFS for
 # the object store. The inventory layer adds the Lakekeeper host,
 # coldfront_enabled, and the settings that point both at each other.
-# init_server refuses ColdFront on an HA cluster, so only the simple cluster
-# takes it.
+# init_server refuses ColdFront on an HA cluster without mesh mode, so the
+# Ultra-HA scenario always runs it in mesh mode.
 COLDFRONT_INVENTORY="$SCRIPT_DIR/inventories/coldfront.yml"
 
 if [ "$COLDFRONT" = true ]; then
-  if [ "$SCENARIO" != "simple-cluster" ]; then
-    echo "ERROR: ColdFront is only tested with simple-cluster"
-    exit 1
-  fi
   COMPOSE_ARGS+=(-f "$SCRIPT_DIR/compose/coldfront-${OS}.yml")
   INVENTORY_ARGS+=(-i "$COLDFRONT_INVENTORY")
   PROJECT_NAME="${PROJECT_NAME}-coldfront"
+  if [ "$SCENARIO" = "ultra-ha" ]; then
+    MESH=true
+  fi
 fi
 
 # Mesh mode adds the ColdFront database to db_names and turns on

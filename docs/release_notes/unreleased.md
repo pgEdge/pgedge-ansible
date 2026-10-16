@@ -326,15 +326,15 @@ same play to the top:
 - New `lakekeeper_*` and `coldfront_s3_*` parameters locate the catalog and
   the S3-compatible object store behind the cold tier. Any S3-compatible
   store works, and the collection deploys none. (EE-40)
-- `init_server` refuses `coldfront_enabled` on an HA cluster, without
-  `lakekeeper_host`, without a bucket, region, access key and secret key for
-  the object store, with a `coldfront_s3_endpoint` that is not an
-  `http(s)://host[:port]` URL, or with a `pg_version` outside
-  `coldfront_supported_pg_versions`. It refuses a Lakekeeper host whose
-  `lakekeeper_db_password` is still the default, whose `pg_port`,
-  `lakekeeper_port` and `lakekeeper_metrics_port` collide, or that is also in
-  the `pgedge` group. Like every other host, the Lakekeeper host runs
-  `init_server` first. (EE-40)
+- `init_server` refuses `coldfront_enabled` on an HA cluster without
+  `coldfront_mesh`, without `lakekeeper_host`, without a bucket, region,
+  access key and secret key for the object store, with a
+  `coldfront_s3_endpoint` that is not an `http(s)://host[:port]` URL, or
+  with a `pg_version` outside `coldfront_supported_pg_versions`. It refuses
+  a Lakekeeper host whose `lakekeeper_db_password` is still the default,
+  whose `pg_port`, `lakekeeper_port` and `lakekeeper_metrics_port` collide,
+  or that is also in the `pgedge` group. Like every other host, the
+  Lakekeeper host runs `init_server` first. (EE-40)
 - The `sample-playbooks/simple-cluster/` playbook sets up ColdFront and its
   Lakekeeper host in the same run where `coldfront_enabled` is set, with a play
   for the `lakekeeper` group and the two ColdFront roles gated on
@@ -375,6 +375,35 @@ same play to the top:
   `tests/run-test.sh ... coldfront mesh` or the workflow's `mesh` input, and
   then checks that the bakery is armed and its tables replicate, and has every
   node write to one table at once. (EE-40)
+- ColdFront runs on HA clusters in mesh mode. Its libraries and settings
+  reach every member through the zone's Patroni configuration, which
+  `setup_patroni` keeps up to date with the rest of the parameters.
+  `setup_coldfront` asks each node's Postgres whether it is a standby, runs
+  its SQL on the leader only, and has each replica write its own DuckDB
+  secret from the replicated `coldfront.storage_secret` row with
+  `coldfront.materialize_storage_secret()`, since physical replication does
+  not carry the file DuckDB keeps it in. `setup_postgres` creates
+  ColdFront's role, database and extensions on each zone's first node while
+  it builds the zone. In a zone Patroni already runs, ColdFront's libraries
+  load only when `setup_patroni` restarts Postgres, after `setup_postgres`,
+  so turning ColdFront on for a running HA cluster takes `setup_patroni`
+  first, and `setup_postgres` stops and says so otherwise. The archiver,
+  partitioner and compactor connect through the zone's endpoint, the one
+  `setup_pgedge` subscribes through. `init_server` refuses ColdFront on an HA
+  cluster without `coldfront_mesh`, since Patroni's `pg_hba` admits `db_user`
+  through the zone's proxies only to the databases in `db_names`. (EE-40)
+- The `sample-playbooks/ultra-ha/` playbook sets up ColdFront in mesh mode and
+  its Lakekeeper host where `coldfront_enabled` is set, and its inventory shows
+  the settings. The Ultra-HA end-to-end test takes the ColdFront layer, always
+  in mesh mode, through `tests/run-test.sh ultra-ha ... coldfront` or the
+  workflow's `coldfront` input. Its verification now expects ColdFront's
+  libraries in the preload list where `coldfront_enabled` is set, and
+  `tests/verify/verify-ultra-ha-coldfront.yml` then checks that every member,
+  replicas included, loads ColdFront, has its bakery armed, replicates the
+  bakery's and catalog's tables and holds the storage secret, that both zones'
+  leaders can write to one table at once without losing a row, that every
+  member reads every row, and that a replica refuses a cold-tier write. The
+  recovery test does not run with ColdFront. (EE-40)
 - New `wipe_cluster` role and `sample-playbooks/wipe-cluster/` playbook tear a
   cluster down for a redeployment or a recovery. They stop Postgres, Patroni,
   pgBouncer and the collection's etcd, remove the cluster from any other

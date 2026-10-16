@@ -6,7 +6,8 @@ configures the archiver, partitioner and compactor. Postgres itself is
 configured for ColdFront by `setup_postgres`, which also creates ColdFront's
 role, database and extensions, where `coldfront_enabled` is set. In mesh
 mode the role also has ColdFront order cold-tier commits across the nodes of
-the Spock cluster.
+the Spock cluster. It works on HA clusters too, in mesh mode; see
+[Under HA](#under-ha).
 
 The role performs the following tasks on inventory hosts:
 
@@ -63,7 +64,8 @@ In the following example, the playbook sets ColdFront up only where
 The role checks the Lakekeeper catalog's `/health` endpoint before
 changing anything, and fails if the catalog has not answered within about
 30 seconds. Run `setup_lakekeeper` in an earlier play, as the
-`sample-playbooks/simple-cluster` playbook does.
+`sample-playbooks/simple-cluster` and `sample-playbooks/ultra-ha` playbooks
+do.
 
 ## Configuration
 
@@ -79,6 +81,8 @@ This role uses the following parameters from the inventory file:
 | `db_names` | In mesh mode, must list `coldfront_db`, which puts it into Spock. |
 | `pg_parameters` | Any `shared_preload_libraries` it names stay loaded beside ColdFront's. |
 | `db_user` / `db_password` | The cluster's existing admin user, reused as the archiver's, partitioner's and compactor's database identity rather than a bespoke role. |
+| `is_ha_cluster` | Whether the role's SQL runs on each zone's leader only (see [Under HA](#under-ha)). |
+| `proxy_node` / `proxy_port` | Under HA, the endpoint the archiver, partitioner and compactor connect through. |
 
 See the [ColdFront Configuration](../configuration/coldfront.md) reference
 for descriptions and defaults.
@@ -121,7 +125,8 @@ ALTER DATABASE dbt7 SET coldfront.local_pg_dsn =
 
 The archiver, partitioner and compactor run as the `coldfront` OS user,
 which the ColdFront package creates, and connect as `db_user` over TCP
-to `127.0.0.1`, where `pg_hba.conf` checks `db_password`.
+to `127.0.0.1`, where `pg_hba.conf` checks `db_password`. Under HA they
+connect to the zone's endpoint instead, as [Under HA](#under-ha) explains.
 
 ### Vanilla and mesh modes
 
@@ -179,6 +184,50 @@ every run.
 Upstream runs the archiver on one node only. This role writes
 `config.yaml` on every node and schedules none of the tools, so run the
 archiver on a single node.
+
+### Under HA
+
+On an HA cluster ColdFront's libraries and settings reach every member
+through the zone's Patroni configuration, which `setup_patroni` keeps up
+to date with the rest of the Postgres parameters, restarting the members
+that need it. Every member, replicas included, needs the ColdFront
+packages by then, so run `install_coldfront` on every node first.
+
+`setup_postgres` creates ColdFront's role, database and extensions on each
+zone's first node while it builds the zone, before Patroni takes over, and
+the replicas receive them through physical replication. In a zone Patroni
+already runs, Postgres loads newly enabled libraries only when
+`setup_patroni` restarts it, which comes after `setup_postgres`, so turning
+ColdFront on for a running HA cluster takes `setup_patroni` first;
+`setup_postgres` stops and says so otherwise.
+
+Under HA the role:
+
+- Requires `coldfront_mesh: true`, which `init_server` checks. The
+  archiver, partitioner and compactor connect through the zone's
+  endpoint, and Patroni's `pg_hba` admits `db_user` through the zone's
+  proxies only to the databases in `db_names`.
+- Asks each node's Postgres whether it is a standby, since after a
+  failover the leader is not necessarily `first_node_in_zone`. The role's
+  SQL runs on the leader only, and the replicas receive its results
+  through physical replication.
+- Has each replica write its own DuckDB secret from the replicated
+  `coldfront.storage_secret` row, with
+  `coldfront.materialize_storage_secret()`. Physical replication carries
+  the row but not the secret, which DuckDB keeps in a file of its own and
+  ColdFront's trigger writes only where the row is written, or applied
+  by Spock.
+- Points the archiver, partitioner and compactor at the zone's endpoint,
+  the one `setup_pgedge` subscribes through: `proxy_node` if set,
+  otherwise the zone's first HAProxy host, on `proxy_port`, otherwise the
+  zone's first node. A replica's own Postgres is a read-only standby.
+
+A replica serves cold-tier reads, and ColdFront refuses cold-tier writes
+on a standby. Patroni is configured to leave Spock's logical slots alone,
+so how Spock replication resumes after a zone fails over is decided by
+Spock and the Ultra-HA design, not by ColdFront. Until it resumes, the
+bakery in the other zones treats the failed-over zone as dead after
+`coldfront_peer_alive_window_ms` and carries on.
 
 ### DuckDB extension loading
 

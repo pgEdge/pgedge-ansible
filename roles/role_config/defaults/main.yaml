@@ -229,8 +229,8 @@ patroni_dcs:
 # the same way, restarting one node at a time where pg_allow_restart allows.
 # setup_postgres then creates ColdFront's role, database and extensions.
 # install_coldfront has to run before setup_postgres, since Postgres will not
-# start with a library it cannot find. Simple clusters only, for now:
-# init_server refuses it on an HA cluster.
+# start with a library it cannot find. An HA cluster needs coldfront_mesh as
+# well, which init_server checks.
 
 coldfront_enabled: false
 

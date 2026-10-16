@@ -291,3 +291,108 @@ address. Restrict access to `pooler_port` at the proxy or in the network. See
 authentication and sizing parameters, and
 [Proxy Configuration](configuration/proxy.md) for the port model and the
 connection budget.
+
+## Adding ColdFront Tiered Storage
+
+ColdFront keeps recent data in native Postgres partitions and archives older
+data to Apache Iceberg on S3-compatible storage, readable and writable through
+the same SQL. On an Ultra-HA cluster it runs in mesh mode, which orders
+cold-tier commits across the zones, and `init_server` refuses ColdFront on an
+HA cluster without it. Mesh mode needs the ColdFront database in `db_names`,
+so that `setup_pgedge` puts it into Spock with the cluster's other databases.
+
+Add the settings to the inventory, with the host that serves the Lakekeeper
+Iceberg catalog in a `lakekeeper` group of its own. The collection deploys no
+object store, so point the `coldfront_s3_*` settings at one that already
+exists, with its bucket created:
+
+```yaml
+all:
+  vars:
+    lakekeeper_host: 192.168.6.20
+    coldfront_s3_endpoint: https://s3.example.com
+    coldfront_s3_bucket: iceberg
+    coldfront_s3_access_key: "{{ vault_s3_access_key }}"
+    coldfront_s3_secret_key: "{{ vault_s3_secret_key }}"
+
+pgedge:
+  vars:
+    coldfront_enabled: true
+    coldfront_mesh: true
+    db_names:
+      - demo
+      - coldfront
+  # ... hosts as above ...
+
+lakekeeper:
+  vars:
+    lakekeeper_db_password: "{{ vault_lakekeeper_db_password }}"
+  hosts:
+    192.168.6.20:
+```
+
+Both groups read the catalog and object store settings, so they go under
+`all`. For AWS S3, leave `coldfront_s3_endpoint` empty, set
+`coldfront_s3_region`, and set `coldfront_s3_path_style` to `false`.
+
+Then add a play for the Lakekeeper host after `init_server`, since
+`setup_coldfront` fails if the catalog is not already serving, and the two
+ColdFront roles, gated on `coldfront_enabled`. `install_coldfront` goes with
+the other install roles, before `setup_postgres`, which preloads ColdFront's
+libraries and creates its database and extensions, and on every member,
+replicas included. `setup_coldfront` comes after `setup_pgedge`, since in mesh
+mode it adds ColdFront's tables to Spock's replication set:
+
+```yaml
+- hosts: lakekeeper
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - install_repos
+    - install_lakekeeper
+    - setup_lakekeeper
+
+- hosts: pgedge
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - install_repos
+    - install_pgedge
+    - install_etcd
+    - install_patroni
+    - install_backrest
+    - role: install_coldfront
+      when: coldfront_enabled | bool
+    - setup_backrest
+    - setup_postgres
+    - setup_etcd
+    - setup_patroni
+
+- hosts: haproxy
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - setup_haproxy
+
+- hosts: pgedge
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - setup_pgedge
+    - role: setup_coldfront
+      when: coldfront_enabled | bool
+```
+
+The `sample-playbooks/ultra-ha` playbook includes both. See
+[ColdFront Configuration](configuration/coldfront.md) for the catalog, object
+store and ColdFront parameters, and the
+[setup_coldfront](roles/setup_coldfront.md#under-ha) role page for how
+ColdFront runs on each zone's leader and replicas.

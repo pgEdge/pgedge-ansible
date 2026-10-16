@@ -12,14 +12,15 @@
 # The tools run as the coldfront OS user, the only one that can read
 # this file, so the DSN goes over TCP, where pg_hba.conf checks the
 # password. Over the Unix socket peer authentication would refuse
-# db_user.
+# db_user. On an HA cluster the DSN names the zone's endpoint rather
+# than this node, since a replica's own Postgres is a read-only standby.
 #
 # Each string is written as a JSON string, which YAML reads as a
 # double-quoted scalar, so no value can change the file's structure.
 ---
 
 postgres:
-  dsn: {{ ('host=127.0.0.1 port=' ~ pg_port
+  dsn: {{ ('host=' ~ coldfront_tools_host ~ ' port=' ~ coldfront_tools_port
            ~ ' dbname=' ~ libpq_quote(coldfront_db)
            ~ ' user=' ~ libpq_quote(db_user)
            ~ ' password=' ~ libpq_quote(db_password)

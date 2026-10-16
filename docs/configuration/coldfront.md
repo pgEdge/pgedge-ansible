@@ -12,17 +12,20 @@ and `setup_lakekeeper` build the catalog as a separate, dedicated host.
 The `sample-playbooks/simple-cluster` playbook runs all four where
 `coldfront_enabled` is set: a play for the `lakekeeper` group first, then
 the `pgedge` play, with `install_coldfront` before `setup_postgres` and
-`setup_coldfront` after `setup_pgedge`.
+`setup_coldfront` after `setup_pgedge`. The `sample-playbooks/ultra-ha`
+playbook does the same on an Ultra-HA cluster, in mesh mode.
 
-The simple-cluster end-to-end test covers ColdFront with a Lakekeeper host
-and SeaweedFS standing in for the object store. To run that variant locally,
-pass `coldfront` after the operating system:
+The simple-cluster and Ultra-HA end-to-end tests cover ColdFront with a
+Lakekeeper host and SeaweedFS standing in for the object store. To run that
+variant locally, pass `coldfront` after the operating system:
 
 ```bash
 ./tests/run-test.sh simple-cluster debian12 coldfront
+./tests/run-test.sh ultra-ha debian12 coldfront
 ```
 
-Add `mesh` as well to run ColdFront in mesh mode.
+Add `mesh` as well to run the simple cluster's ColdFront in mesh mode. The
+Ultra-HA test always runs it in mesh mode.
 
 ## Lakekeeper Parameters
 
@@ -178,9 +181,10 @@ extensions.
   before any that `pg_parameters` names, and writes ColdFront's settings
   with the rest of the Postgres configuration. They are parameters the
   collection controls, so `init_server` refuses `pg_parameters` that sets
-  them, and it refuses `coldfront_enabled` on an HA cluster, without
-  `lakekeeper_host` or complete `coldfront_s3_*` settings, or with a
-  `pg_version` outside `coldfront_supported_pg_versions`.
+  them, and it refuses `coldfront_enabled` on an HA cluster without
+  `coldfront_mesh`, without `lakekeeper_host` or complete `coldfront_s3_*`
+  settings, or with a `pg_version` outside
+  `coldfront_supported_pg_versions`.
   `install_coldfront` has to run before `setup_postgres`, which restarts
   Postgres to load the libraries, one node at a time, unless
   `pg_allow_restart` is `false`, and then creates `coldfront_duckdb_role`,
@@ -234,7 +238,8 @@ written from one node only.
 setup. It needs `coldfront_db` listed in `db_names`, so that the database
 joins Spock alongside the others, and `init_server` refuses it otherwise.
 The [setup_coldfront](../roles/setup_coldfront.md) role page covers what
-else it sets up.
+else it sets up. An HA cluster requires `true`, and `init_server` refuses
+ColdFront there otherwise.
 
 In the following example, the inventory turns mesh mode on for every
 pgEdge node:

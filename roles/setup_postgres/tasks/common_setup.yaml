@@ -116,12 +116,14 @@
 
 # ColdFront's role, database and extensions, wherever coldfront_enabled is set:
 # the NOLOGIN role pg_duckdb gates DuckDB execution on, and the database of its
-# own that ColdFront's tiered storage lives in.
+# own that ColdFront's tiered storage lives in. In an HA zone this file runs on
+# the first node, and the replicas receive them through physical replication.
 #
 # Creating the extensions needs ColdFront's libraries loaded, and Postgres
 # loads them only when it starts, so ask it what it has loaded first. A restart
 # that pg_allow_restart held back then stops the run here, with its reason,
-# rather than at CREATE EXTENSION.
+# rather than at CREATE EXTENSION. So does an HA zone Patroni already runs,
+# where only setup_patroni restarts Postgres, after this role.
 
 - name: Read the libraries Postgres has loaded
   community.postgresql.postgresql_query:
@@ -143,8 +145,10 @@
     fail_msg: >-
       Postgres on {{ inventory_hostname }} has loaded
       {{ loaded | join(', ') }}, not ColdFront's libraries, so ColdFront's
-      extensions cannot be created yet. setup_postgres restarts Postgres to
-      load them only where pg_allow_restart allows. Restart it, then run
+      extensions cannot be created yet. Postgres loads them when it restarts,
+      which setup_postgres does only where pg_allow_restart allows, and which
+      in an HA zone Patroni already runs only setup_patroni does, after this
+      role. Restart Postgres, through setup_patroni in such a zone, then run
       setup_postgres again.
     quiet: true
   vars:

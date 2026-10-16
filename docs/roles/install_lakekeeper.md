@@ -39,7 +39,8 @@ data node.
 ```
 
 Apply `init_server` to the Lakekeeper host first, as to every host. The
-`sample-playbooks/simple-cluster` playbook does so in the same play:
+`sample-playbooks/simple-cluster` playbook does so in the same play, and
+`sample-playbooks/ultra-ha` in its first play, which runs it on every host:
 
 ```yaml
 - hosts: lakekeeper
