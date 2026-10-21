@@ -73,7 +73,7 @@ pg_path: /opt/postgresql/17
   - For RHEL-family systems, the default is
     `{{ pg_home }}/{{ pg_version }}/data`.
   - For Debian-family systems, the default is
-    `{{ pg_home }}/{{ pg_version }}/main`.
+    `{{ pg_home }}/{{ pg_version }}/{{ cluster_name }}`.
 
 In the following example, the inventory specifies a custom data directory:
 
@@ -316,8 +316,8 @@ The following table shows the values by OS family:
 
 | Variable | Debian value | RHEL value | Description |
 |----------|-------------|------------|-------------|
-| pg_config_dir | /etc/postgresql/VERSION/main | pg_data | Path to the PostgreSQL configuration directory. |
-| pg_service_name | postgresql@VERSION-main | postgresql-VERSION | Systemd service name for PostgreSQL. |
-| patroni_service_name | patroni@VERSION-main | patroni | Systemd service name for Patroni. |
+| pg_config_dir | /etc/postgresql/VERSION/CLUSTER | pg_data | Path to the PostgreSQL configuration directory. |
+| pg_service_name | postgresql@VERSION-CLUSTER | pgedge-postgres-VERSION | Systemd service name for PostgreSQL. |
+| patroni_service_name | patroni@VERSION-CLUSTER | patroni | Systemd service name for Patroni. |
 | nodes_in_zone | (computed) | (computed) | List of all pgedge hosts in the same zone as the current node. |
 | pg_supports_output_plugin_libraries | (detected) | (detected) | Whether the installed Postgres release recognizes `output_plugin_libraries`. |
