@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- The configuration reference gives the Debian defaults of `pg_data`,
+  `pg_config_dir`, `pg_service_name` and `patroni_service_name` as named after
+  `cluster_name`, as the collection sets them, rather than after `main`, and
+  names the RHEL Postgres service `pgedge-postgres-VERSION`.
+
 ## v2.0.0
 
 This release adds recovery of an existing cluster from its pgBackRest

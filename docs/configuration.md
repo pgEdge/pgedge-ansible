@@ -218,7 +218,7 @@ system uses non-standard locations.
 |-----------|---------------|--------------|-------------|
 | pg_home | /var/lib/postgresql | /var/lib/pgsql | Home directory for the postgres OS user. |
 | pg_path | /usr/lib/postgresql/VERSION | /usr/pgsql-VERSION | Path to PostgreSQL binaries. |
-| pg_data | pg_home/VERSION/main | pg_home/VERSION/data | Path to the PostgreSQL data directory. |
+| pg_data | pg_home/VERSION/CLUSTER | pg_home/VERSION/data | Path to the PostgreSQL data directory. |
 
 ## Internal Variables
 
