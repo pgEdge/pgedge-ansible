@@ -217,7 +217,7 @@ tiered-storage add-on and its Lakekeeper catalog:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| coldfront_enabled | false | Whether the pgEdge nodes run ColdFront. `setup_postgres` adds its libraries and settings to the Postgres configuration and creates its role, database and extensions. |
+| coldfront_enabled | false | Whether the pgEdge nodes run ColdFront. `setup_postgres` adds its libraries and settings to the Postgres configuration, and `setup_coldfront_db` creates its role, database and extensions. |
 | lakekeeper_host | (none) | Address the Lakekeeper catalog is reached at. |
 | lakekeeper_port | 8181 | Port the Iceberg REST catalog and management API listen on. |
 | lakekeeper_warehouse | wh | Name of the Iceberg warehouse ColdFront writes through. |

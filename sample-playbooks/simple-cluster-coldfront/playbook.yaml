@@ -1,0 +1,72 @@
+# This playbook will create a standard pgEdge cluster with ColdFront tiered
+# storage, which the simple-cluster playbook leaves out.
+#
+# Make sure all nodes are in the pgedge node group, with coldfront_enabled set
+# on it, and the host that serves the Lakekeeper Iceberg catalog in the
+# lakekeeper group. The inventory shows how.
+#
+# Set pgbouncer_enabled on the pgedge group to give every node a connection
+# pooler in front of its own Postgres.
+#
+# CHECK the README for how these roles work
+---
+
+# Gather facts for every host in the inventory before any role runs.
+#
+# Roles read other hosts' addresses out of hostvars to build access rules --
+# setup_pgbouncer's HBA file names this zone's proxies, setup_postgres names the
+# cluster's nodes -- and those addresses are facts, which exist only for a host
+# some play has gathered them on. This play is what guarantees they are all
+# there, whatever the inventory happens to contain: a cluster with no proxy
+# hosts renders the same either way, and one that gains them later does not
+# start failing on a loop over a host no play has touched.
+#
+# Deliberately no 'become'. These facts include the account Ansible logs in as,
+# which role_config derives the backup repository's owner and path from, and
+# gathering them under become records root instead.
+
+- hosts: all
+  any_errors_fatal: true
+
+  tasks:
+  - name: Confirm every host in the inventory is reachable
+    ping:
+
+# The Lakekeeper catalog every cold-tier commit goes through, on the
+# lakekeeper group's host. It comes before the pgEdge nodes, because
+# setup_coldfront fails if the catalog is not already answering.
+
+- hosts: lakekeeper
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+  - install_repos
+  - install_lakekeeper
+  - setup_lakekeeper
+
+- hosts: pgedge
+
+  collections:
+  - pgedge.platform
+
+  # install_coldfront comes before setup_postgres, which preloads ColdFront's
+  # libraries, and Postgres will not start with a library it cannot find.
+  # setup_coldfront_db then creates ColdFront's role, database and extensions,
+  # before setup_pgedge puts the database into Spock in mesh mode.
+
+  roles:
+  - init_server
+  - install_repos
+  - install_pgedge
+  - role: install_pgbouncer
+    when: pgbouncer_enabled | bool
+  - install_coldfront
+  - setup_postgres
+  - setup_coldfront_db
+  - role: setup_pgbouncer
+    when: pgbouncer_enabled | bool
+  - setup_pgedge
+  - setup_coldfront

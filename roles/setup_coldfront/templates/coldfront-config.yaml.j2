@@ -14,6 +14,8 @@
 # password. Over the Unix socket peer authentication would refuse
 # db_user. On an HA cluster the DSN names the zone's endpoint rather
 # than this node, since a replica's own Postgres is a read-only standby.
+# No sslmode is set, so the connection takes the driver's default, prefer,
+# and uses TLS wherever Postgres offers it, as setup_pgedge's do.
 #
 # Each string is written as a JSON string, which YAML reads as a
 # double-quoted scalar, so no value can change the file's structure.
@@ -23,8 +25,7 @@ postgres:
   dsn: {{ ('host=' ~ coldfront_tools_host ~ ' port=' ~ coldfront_tools_port
            ~ ' dbname=' ~ libpq_quote(coldfront_db)
            ~ ' user=' ~ libpq_quote(db_user)
-           ~ ' password=' ~ libpq_quote(db_password)
-           ~ ' sslmode=disable') | to_json }}
+           ~ ' password=' ~ libpq_quote(db_password)) | to_json }}
 
 iceberg:
   warehouse: {{ lakekeeper_warehouse | to_json }}

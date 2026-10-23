@@ -186,7 +186,7 @@
 
   - name: Create a decoupled Iceberg table on the first zone's leader
     community.postgresql.postgresql_query:
-      db: "{{ coldfront_db }}"
+      login_db: "{{ coldfront_db }}"
       login_unix_socket: /var/run/postgresql
       query: >-
         SELECT coldfront.create_iceberg_table(%(schema)s, %(table)s,
@@ -205,7 +205,7 @@
 
   - name: Insert rows into the Iceberg table
     community.postgresql.postgresql_query:
-      db: "{{ coldfront_db }}"
+      login_db: "{{ coldfront_db }}"
       login_unix_socket: /var/run/postgresql
       query: >-
         INSERT INTO {{ coldfront_schema }}.e2e_events (id, ts, note)
@@ -253,7 +253,7 @@
 
   - name: Count the rows from every member
     community.postgresql.postgresql_query:
-      db: "{{ coldfront_db }}"
+      login_db: "{{ coldfront_db }}"
       login_unix_socket: /var/run/postgresql
       query: "SELECT count(*) AS n FROM {{ coldfront_schema }}.e2e_events"
     register: coldfront_count

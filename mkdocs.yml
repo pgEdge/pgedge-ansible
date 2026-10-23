@@ -96,6 +96,7 @@ nav:
       - install_lakekeeper: roles/install_lakekeeper.md
       - setup_lakekeeper: roles/setup_lakekeeper.md
       - install_coldfront: roles/install_coldfront.md
+      - setup_coldfront_db: roles/setup_coldfront_db.md
       - setup_coldfront: roles/setup_coldfront.md
   - Troubleshooting:
       - Troubleshooting: troubleshooting.md

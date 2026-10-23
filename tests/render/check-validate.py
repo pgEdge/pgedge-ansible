@@ -6,12 +6,13 @@ would break the cluster, and an HA zone whose nodes disagree on them. It also
 refuses ColdFront where its settings could not work: without a catalog or a
 complete object store, on a Postgres release it has no packages for, or on an
 HA cluster, and a Lakekeeper host with the default catalog password, colliding
-ports, or a place in the pgedge group as well. ColdFront's settings are the
-collection's own once it is enabled, so pg_parameters may set them only where
-it is not. The e2e inventories are ones the validation accepts, so the
-refusals are checked here instead, without any containers: the validation
-reads only the inventory and the controller's own facts, so each case runs the
-real tasks against hosts that are the controller itself.
+ports, or a place in the pgedge group as well. The settings ColdFront depends
+on are the collection's own once it is enabled, so pg_parameters may set them
+only where it is not; its tuning settings it may set either way. The e2e
+inventories are ones the validation accepts, so the refusals are checked here
+instead, without any containers: the validation reads only the inventory and
+the controller's own facts, so each case runs the real tasks against hosts
+that are the controller itself.
 
 Each case names the inventory's hosts and whether the run must pass. A host is
 in the pgedge group unless its "groups" entry names others. A refusal must
@@ -177,8 +178,14 @@ CASES = [
     ("ColdFront's mesh settings",
      {"n1": {**NODE, "coldfront_mesh": True,
              "db_names": ["demo", "coldfront"],
-             "pg_parameters": {"wal_receiver_status_interval": "10s"}}},
-     False, ["wal_receiver_status_interval (the collection requires"]),
+             "pg_parameters": {"coldfront.dblink_self": "dbname=coldfront"}}},
+     False, ["coldfront.dblink_self (the collection requires"]),
+    ("ColdFront's mesh tuning",
+     {"n1": {**NODE, "coldfront_mesh": True,
+             "db_names": ["demo", "coldfront"],
+             "pg_parameters": {"wal_receiver_status_interval": "2s",
+                               "coldfront.peer_alive_window_ms": 10000}}},
+     True, []),
     ("ColdFront and its Lakekeeper host",
      {"n1": NODE, "k1": LAKEKEEPER},
      True, []),

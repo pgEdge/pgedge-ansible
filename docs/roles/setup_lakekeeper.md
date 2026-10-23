@@ -6,9 +6,9 @@ commits through.
 
 The role performs the following tasks on inventory hosts:
 
-- Create and start the catalog's own Postgres instance, with
-  `setup_postgres`'s `plain_instance` task file, the same tasks that create
-  a pgEdge Distributed Postgres node's instance.
+- Create and start the catalog's own Postgres instance: `initdb` into
+  `lakekeeper_pg_data`, run by a `lakekeeper-postgres` service unit the
+  role writes, listening on `pg_port` at the loopback address only.
 - Check that the S3-compatible object store is reachable from this host,
   since creating the warehouse makes Lakekeeper write to the bucket to
   prove the credentials work.
@@ -34,8 +34,6 @@ This role requires the following roles for normal operation:
 
 - `role_config` provides shared configuration variables to the role.
 - `install_lakekeeper` installs the Lakekeeper and Postgres packages.
-- `setup_postgres` provides the tasks that create the catalog's Postgres
-  instance.
 
 ## When to Use
 
@@ -64,6 +62,8 @@ This role uses the following parameters from the inventory file:
 | `lakekeeper_port` | Port Lakekeeper's REST catalog and management API listen on. Shared with `setup_coldfront`. |
 | `lakekeeper_metrics_port` | Port for Lakekeeper's Prometheus metrics endpoint. Written into the service environment here. |
 | `lakekeeper_warehouse` | Name of the Iceberg warehouse this role creates over the object store. Shared with `setup_coldfront`. |
+| `pg_port` | Port the catalog's Postgres instance listens on, at the loopback address only. |
+| `lakekeeper_pg_data` | Data directory of the catalog's Postgres instance. Defaults to `lakekeeper` beside the platform's usual data directories. |
 | `lakekeeper_db` | Name of the private catalog database. |
 | `lakekeeper_db_user` | Database role that owns the catalog database. |
 | `lakekeeper_db_password` | Password for `lakekeeper_db_user`. Declared in `role_config`, and `init_server` refuses the default. |
@@ -74,6 +74,19 @@ See the [Configuration Reference](../configuration.md) for descriptions and
 defaults.
 
 ## How It Works
+
+### The catalog's Postgres instance
+
+The catalog's Postgres instance belongs to this role alone. It is not
+created by `setup_postgres` and shares nothing with a pgEdge Distributed
+Postgres node's: the role initializes it with `initdb`, with peer
+authentication over the Unix socket and SCRAM over TCP, and runs it with a
+service unit of its own, the same way on Debian and RHEL. A changed unit,
+such as a new `pg_port`, restarts the instance.
+
+On Debian, installing the server package creates and starts a `main`
+cluster on 5432. Where `pg_port` is 5432, the role stops that cluster and
+marks it `manual`, so it does not take the port back at boot.
 
 ### Reachability
 
@@ -157,6 +170,8 @@ the restart is caught by the next run.
 
 | File | New / Modified | Explanation |
 |------|----------------|-------------|
+| `/etc/systemd/system/lakekeeper-postgres.service` | New | Runs the catalog's Postgres instance. |
+| `lakekeeper_pg_data` | New | The catalog's Postgres data directory. |
 | `/etc/lakekeeper/encryption.key` | New | Encrypts the S3 credential Lakekeeper stores for the warehouse. Generated once; a new key makes existing warehouse secrets unrecoverable. |
 | `/etc/lakekeeper/lakekeeper.env` | New | Database DSN, encryption key, bind address, and ports the systemd unit reads. |
 

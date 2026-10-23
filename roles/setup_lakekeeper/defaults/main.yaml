@@ -4,8 +4,11 @@
 # nodes reach it on, for a host where those differ.
 lakekeeper_bind_ip: "{{ lakekeeper_host }}"
 
-# Catalog state. This Postgres instance exists for Lakekeeper alone.
-# lakekeeper_db_password is in role_config, so init_server can check it.
+# Catalog state. This Postgres instance exists for Lakekeeper alone, and
+# listens on pg_port. lakekeeper_db_password is in role_config, so
+# init_server can check it.
+lakekeeper_pg_data: "{{ pg_home }}/{{ pg_version }}/lakekeeper"
+lakekeeper_pg_service_name: lakekeeper-postgres
 lakekeeper_db: lakekeeper
 lakekeeper_db_user: lakekeeper
 

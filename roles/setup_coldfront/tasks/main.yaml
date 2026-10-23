@@ -78,7 +78,7 @@
 
 - name: Point ColdFront at the object store
   community.postgresql.postgresql_query:
-    db: "{{ coldfront_db }}"
+    login_db: "{{ coldfront_db }}"
     login_port: "{{ pg_port }}"
     login_unix_socket: /var/run/postgresql
     query: >-
@@ -107,7 +107,7 @@
 
 - name: Wait for the storage secret to reach this replica
   community.postgresql.postgresql_query:
-    db: "{{ coldfront_db }}"
+    login_db: "{{ coldfront_db }}"
     login_port: "{{ pg_port }}"
     login_unix_socket: /var/run/postgresql
     query: SELECT count(*) AS n FROM coldfront.storage_secret
@@ -122,7 +122,7 @@
 
 - name: Write this replica's DuckDB secret from the replicated row
   community.postgresql.postgresql_query:
-    db: "{{ coldfront_db }}"
+    login_db: "{{ coldfront_db }}"
     login_port: "{{ pg_port }}"
     login_unix_socket: /var/run/postgresql
     query: SELECT coldfront.materialize_storage_secret()

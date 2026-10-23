@@ -5,15 +5,19 @@ Postgres node: recent data stays in native Postgres partitions, older data
 archives to Apache Iceberg on S3-compatible storage, and both are readable
 and writable through the same SQL. It depends on Lakekeeper, the Iceberg
 REST catalog every cold-tier commit goes through, and an S3-compatible
-object store behind that catalog. The `install_coldfront` and
-`setup_coldfront` roles configure the add-on itself; `install_lakekeeper`
-and `setup_lakekeeper` build the catalog as a separate, dedicated host.
+object store behind that catalog. The `install_coldfront`,
+`setup_coldfront_db` and `setup_coldfront` roles configure the add-on
+itself; `install_lakekeeper` and `setup_lakekeeper` build the catalog as a
+separate, dedicated host.
 
-The `sample-playbooks/simple-cluster` playbook runs all four where
-`coldfront_enabled` is set: a play for the `lakekeeper` group first, then
-the `pgedge` play, with `install_coldfront` before `setup_postgres` and
-`setup_coldfront` after `setup_pgedge`. The `sample-playbooks/ultra-ha`
-playbook does the same on an Ultra-HA cluster, in mesh mode.
+ColdFront is optional, so its sample playbooks and inventories are kept
+apart from the plain ones. The `sample-playbooks/simple-cluster-coldfront`
+playbook runs all five: a play for the `lakekeeper` group first, then the
+`pgedge` play, with `install_coldfront` before `setup_postgres`,
+`setup_coldfront_db` after it, and `setup_coldfront` after `setup_pgedge`.
+The `sample-playbooks/ultra-ha-coldfront` playbook does the same on an
+Ultra-HA cluster, in mesh mode, with `setup_coldfront_db` after
+`setup_patroni`.
 
 The simple-cluster and Ultra-HA end-to-end tests cover ColdFront with a
 Lakekeeper host and SeaweedFS standing in for the object store. To run that
@@ -57,7 +61,9 @@ builds it. Set them once, in a scope both host groups can see.
 - Default: `9000`
 - Description: Port for Lakekeeper's Prometheus metrics. Must differ from
   `lakekeeper_port` and `pg_port`, or Lakekeeper exits at startup;
-  `init_server` refuses ports that collide on the Lakekeeper host.
+  `init_server` refuses ports that collide on the Lakekeeper host. On that
+  host, `pg_port` is the port the catalog's own Postgres instance listens
+  on, at the loopback address only.
 
 ### lakekeeper_warehouse
 
@@ -84,6 +90,14 @@ builds it. Set them once, in a scope both host groups can see.
 - Description: Password for `lakekeeper_db_user`. `init_server` refuses to
   run while it is still the default, so set it on the `lakekeeper` group,
   from Ansible Vault like the other passwords.
+
+### lakekeeper_pg_data
+
+- Type: String
+- Default: `{{ pg_home }}/{{ pg_version }}/lakekeeper`
+- Description: Data directory of the catalog's own Postgres instance,
+  which `setup_lakekeeper` creates and runs as the `lakekeeper-postgres`
+  service.
 
 ### lakekeeper_namespace
 
@@ -166,10 +180,10 @@ coldfront_s3_secret_key: "{{ vault_s3_secret_key }}"
 ## ColdFront Parameters
 
 The following parameters control ColdFront on the pgEdge nodes.
-`setup_postgres` reads them as well as `install_coldfront` and
-`setup_coldfront`, since ColdFront's settings are among the Postgres
-parameters it writes, and it creates ColdFront's role, database and
-extensions.
+`setup_postgres` (or `setup_patroni` on an HA cluster) reads them as well
+as the ColdFront roles, since ColdFront's settings are among the Postgres
+parameters it writes. `setup_coldfront_db` creates ColdFront's role,
+database and extensions.
 
 ### coldfront_enabled
 
@@ -179,18 +193,19 @@ extensions.
   `pgedge` group. `setup_postgres` then adds `pg_duckdb` and `coldfront`
   to `shared_preload_libraries`, after the collection's own libraries and
   before any that `pg_parameters` names, and writes ColdFront's settings
-  with the rest of the Postgres configuration. They are parameters the
-  collection controls, so `init_server` refuses `pg_parameters` that sets
-  them, and it refuses `coldfront_enabled` on an HA cluster without
-  `coldfront_mesh`, without `lakekeeper_host` or complete `coldfront_s3_*`
-  settings, or with a `pg_version` outside
-  `coldfront_supported_pg_versions`.
+  with the rest of the Postgres configuration. The settings ColdFront
+  depends on are parameters the collection controls, so `init_server`
+  refuses `pg_parameters` that sets them; its tuning settings are defaults
+  `pg_parameters` may override (see [Tuning](#tuning)). `init_server` also
+  refuses `coldfront_enabled` on an HA cluster without `coldfront_mesh`,
+  without `lakekeeper_host` or complete `coldfront_s3_*` settings, or with
+  a `pg_version` outside `coldfront_supported_pg_versions`.
   `install_coldfront` has to run before `setup_postgres`, which restarts
   Postgres to load the libraries, one node at a time, unless
-  `pg_allow_restart` is `false`, and then creates `coldfront_duckdb_role`,
-  `coldfront_db` and the `pg_duckdb` and `coldfront` extensions. The sample
-  playbook runs `install_coldfront` and `setup_coldfront` only where
-  `coldfront_enabled` is set.
+  `pg_allow_restart` is `false`. `setup_coldfront_db` then creates
+  `coldfront_duckdb_role`, `coldfront_db` and the `pg_duckdb` and
+  `coldfront` extensions. The sample playbooks run the ColdFront roles only
+  where `coldfront_enabled` is set.
 
 ### coldfront_duckdb_role
 
@@ -253,16 +268,28 @@ pgedge:
     - coldfront
 ```
 
-### coldfront_peer_alive_window_ms
+## Tuning
 
-- Type: Integer
-- Default: `5000`
-- Description: In mesh mode, how long, in milliseconds, a peer may go
-  without reporting replication progress before ColdFront stops waiting
-  for its acknowledgement and treats it as dead. Sets
-  `coldfront.peer_alive_window_ms`, at upstream's default. Raise it on
-  slow or lossy links between nodes, where a live peer can otherwise be
-  ruled dead.
+ColdFront's tuning settings are defaults, which
+[pg_parameters](postgres.md#pg_parameters) may override like any other:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `coldfront.iceberg_async_parquet` | `on` | ColdFront's asynchronous Parquet writing, which the collection turns on. |
+| `coldfront.peer_alive_window_ms` | `5000` | Mesh mode only. How long, in milliseconds, a peer may go without reporting replication progress before the bakery stops waiting for its acknowledgement and treats it as dead. Upstream's default. |
+| `wal_receiver_status_interval` | `1s` | Mesh mode only. How often each node reports replication progress, so an idle peer stays inside the window above. |
+
+Raise `coldfront.peer_alive_window_ms` on slow or lossy links between
+nodes, where a live peer can otherwise be ruled dead. Keep
+`wal_receiver_status_interval` well inside it, or every idle peer looks
+dead to the bakery.
+
+```yaml
+pgedge:
+  vars:
+    pg_parameters:
+      coldfront.peer_alive_window_ms: 10000
+```
 
 ## Object Store
 

@@ -139,9 +139,11 @@ into the Postgres configuration, and because ColdFront shares several of
 them with Lakekeeper, its Iceberg catalog:
 
 - `coldfront_enabled` adds ColdFront to the pgEdge nodes. Where it is set,
-  `pg_coldfront_parameters` holds ColdFront's settings, which join
-  `pg_required_parameters`, and `pg_coldfront_preload_libraries` adds
-  `pg_duckdb` and `coldfront` to `pg_preload_libraries`.
+  `pg_coldfront_parameters` holds the settings ColdFront depends on, which
+  join `pg_required_parameters`; `pg_coldfront_default_parameters` holds
+  its tuning settings, which join `pg_default_parameters`, so
+  `pg_parameters` may override them; and `pg_coldfront_preload_libraries`
+  adds `pg_duckdb` and `coldfront` to `pg_preload_libraries`.
 - `coldfront_duckdb_role`, `coldfront_db`, and `coldfront_mesh` name the
   role DuckDB execution is gated on and ColdFront's database, and choose
   whether nodes coordinate their cold-tier commits. Each appears in one of

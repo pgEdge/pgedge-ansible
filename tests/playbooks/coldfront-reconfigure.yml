@@ -14,7 +14,7 @@
 #   - turning ColdFront off unloads its libraries, with no restart left
 #     pending,
 #   - turning it on again restarts each node to load them, with no restart
-#     left pending, after which setup_postgres finds them loaded,
+#     left pending, after which setup_coldfront_db finds them loaded,
 #   - and applying the roles once more changes nothing again.
 
 # setup_postgres's HBA rules name the cluster's nodes by address, and an
@@ -105,6 +105,7 @@
     loop:
     - install_coldfront
     - setup_postgres
+    - setup_coldfront_db
     - setup_coldfront
 
   - name: Read when each node started and last read its configuration
@@ -166,6 +167,7 @@
       name: "{{ item }}"
     loop:
     - setup_postgres
+    - setup_coldfront_db
     - setup_coldfront
 
   - name: Read the libraries each node has loaded
@@ -210,6 +212,7 @@
       name: "{{ item }}"
     loop:
     - setup_postgres
+    - setup_coldfront_db
     - setup_coldfront
 
   - name: Read when each node started and last read its configuration

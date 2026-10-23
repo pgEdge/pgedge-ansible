@@ -300,6 +300,8 @@ the same SQL. On an Ultra-HA cluster it runs in mesh mode, which orders
 cold-tier commits across the zones, and `init_server` refuses ColdFront on an
 HA cluster without it. Mesh mode needs the ColdFront database in `db_names`,
 so that `setup_pgedge` puts it into Spock with the cluster's other databases.
+ColdFront is optional, so it has a sample playbook and inventory of its own,
+in `sample-playbooks/ultra-ha-coldfront`, beside the plain `ultra-ha` ones.
 
 Add the settings to the inventory, with the host that serves the Lakekeeper
 Iceberg catalog in a `lakekeeper` group of its own. The collection deploys no
@@ -336,12 +338,14 @@ Both groups read the catalog and object store settings, so they go under
 `coldfront_s3_region`, and set `coldfront_s3_path_style` to `false`.
 
 Then add a play for the Lakekeeper host after `init_server`, since
-`setup_coldfront` fails if the catalog is not already serving, and the two
-ColdFront roles, gated on `coldfront_enabled`. `install_coldfront` goes with
+`setup_coldfront` fails if the catalog is not already serving, and the three
+ColdFront roles. `install_coldfront` goes with
 the other install roles, before `setup_postgres`, which preloads ColdFront's
-libraries and creates its database and extensions, and on every member,
-replicas included. `setup_coldfront` comes after `setup_pgedge`, since in mesh
-mode it adds ColdFront's tables to Spock's replication set:
+libraries, and on every member, replicas included. `setup_coldfront_db`
+follows `setup_patroni`, to create ColdFront's database and extensions on
+each zone's leader before `setup_pgedge` puts the database into Spock.
+`setup_coldfront` comes after `setup_pgedge`, since in mesh mode it adds
+ColdFront's tables to Spock's replication set:
 
 ```yaml
 - hosts: lakekeeper
@@ -365,12 +369,12 @@ mode it adds ColdFront's tables to Spock's replication set:
     - install_etcd
     - install_patroni
     - install_backrest
-    - role: install_coldfront
-      when: coldfront_enabled | bool
+    - install_coldfront
     - setup_backrest
     - setup_postgres
     - setup_etcd
     - setup_patroni
+    - setup_coldfront_db
 
 - hosts: haproxy
 
@@ -387,11 +391,10 @@ mode it adds ColdFront's tables to Spock's replication set:
 
   roles:
     - setup_pgedge
-    - role: setup_coldfront
-      when: coldfront_enabled | bool
+    - setup_coldfront
 ```
 
-The `sample-playbooks/ultra-ha` playbook includes both. See
+The `sample-playbooks/ultra-ha-coldfront` playbook includes both. See
 [ColdFront Configuration](configuration/coldfront.md) for the catalog, object
 store and ColdFront parameters, and the
 [setup_coldfront](roles/setup_coldfront.md#under-ha) role page for how

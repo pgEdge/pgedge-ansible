@@ -17,38 +17,6 @@
 #
 #   pgbouncer_enabled: true
 #   pgbouncer_auth_password: <a real password>
-#
-# To add ColdFront tiered storage, set coldfront_enabled on the pgedge group
-# and put the host that serves the Lakekeeper Iceberg catalog in a lakekeeper
-# group. On an HA cluster ColdFront runs in mesh mode, which orders cold-tier
-# commits across the zones and needs the ColdFront database in db_names as
-# well. Both groups read the catalog and object store settings, so those go
-# under all. This collection deploys no object store. Point
-# coldfront_s3_endpoint at an S3-compatible store whose bucket already exists;
-# for AWS S3, leave it empty, set coldfront_s3_region, and set
-# coldfront_s3_path_style to false.
-#
-#   all:
-#     vars:
-#       lakekeeper_host: 192.168.6.20
-#       coldfront_s3_endpoint: https://s3.example.com
-#       coldfront_s3_bucket: iceberg
-#       coldfront_s3_access_key: <the store's access key>
-#       coldfront_s3_secret_key: <the store's secret key>
-#
-#   pgedge:
-#     vars:
-#       coldfront_enabled: true
-#       coldfront_mesh: true
-#       db_names:
-#       - demo
-#       - coldfront
-#
-#   lakekeeper:
-#     vars:
-#       lakekeeper_db_password: <a real password>
-#     hosts:
-#       192.168.6.20:
 
 # PgBackRest encrypts the repository with this, and it has no default: a
 # generated password would have to be identical on every run and also

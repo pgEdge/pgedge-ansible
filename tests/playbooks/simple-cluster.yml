@@ -96,6 +96,10 @@
       name: setup_postgres
 
   - include_role:
+      name: setup_coldfront_db
+    when: coldfront_enabled | default(false) | bool
+
+  - include_role:
       name: setup_pgbouncer
     when: pgbouncer_enabled | default(false) | bool
 

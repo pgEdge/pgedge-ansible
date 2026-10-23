@@ -167,7 +167,9 @@ sizing parameters.
 
 ColdFront keeps recent data in native Postgres partitions and archives older
 data to Apache Iceberg on S3-compatible storage, readable and writable through
-the same SQL. It is opt-in: set `coldfront_enabled` on the `pgedge` group, and
+the same SQL. It is optional, so it has a sample playbook and inventory of its
+own, in `sample-playbooks/simple-cluster-coldfront`, beside the plain
+`simple-cluster` ones. Set `coldfront_enabled` on the `pgedge` group, and
 put the host that serves the Lakekeeper Iceberg catalog, which every cold-tier
 commit goes through, in a `lakekeeper` group of its own. The collection
 deploys no object store, so point the `coldfront_s3_*` settings at one that
@@ -213,11 +215,11 @@ cold-tier commits, so write any one Iceberg table from a single node. Set
 commits across every node instead.
 
 Add a play for the Lakekeeper host ahead of the pgEdge nodes, since
-`setup_coldfront` fails if the catalog is not already serving, and add the two
-ColdFront roles to the `pgedge` play, gated on `coldfront_enabled`.
+`setup_coldfront` fails if the catalog is not already serving, and add the
+three ColdFront roles to the `pgedge` play.
 `install_coldfront` comes before `setup_postgres`, which preloads ColdFront's
-libraries and creates its database and extensions, and `setup_coldfront` comes
-after `setup_pgedge`:
+libraries, `setup_coldfront_db` follows `setup_postgres` to create ColdFront's
+database and extensions, and `setup_coldfront` comes after `setup_pgedge`:
 
 ```yaml
 - hosts: lakekeeper
@@ -240,14 +242,13 @@ after `setup_pgedge`:
     - init_server
     - install_repos
     - install_pgedge
-    - role: install_coldfront
-      when: coldfront_enabled | bool
+    - install_coldfront
     - setup_postgres
+    - setup_coldfront_db
     - setup_pgedge
-    - role: setup_coldfront
-      when: coldfront_enabled | bool
+    - setup_coldfront
 ```
 
-The `sample-playbooks/simple-cluster` playbook includes both. See
+The `sample-playbooks/simple-cluster-coldfront` playbook includes both. See
 [ColdFront Configuration](configuration/coldfront.md) for the catalog, object
 store and ColdFront parameters.

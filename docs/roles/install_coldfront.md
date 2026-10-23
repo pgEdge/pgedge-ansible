@@ -29,7 +29,8 @@ ColdFront is opt-in per cluster, through `coldfront_enabled` on the
 `pgedge` group. Add this role to the `pgedge` play of a cluster playbook,
 after `install_pgedge` and before `setup_postgres`. `setup_postgres` then
 preloads ColdFront's libraries, and Postgres will not start with a library
-it cannot find. Follow `setup_pgedge` with `setup_coldfront`.
+it cannot find. Follow `setup_postgres` with `setup_coldfront_db`, and
+`setup_pgedge` with `setup_coldfront`.
 
 In the following example, the playbook installs and sets up ColdFront only
 where `coldfront_enabled` is set:
@@ -44,6 +45,8 @@ where `coldfront_enabled` is set:
     - role: install_coldfront
       when: coldfront_enabled | bool
     - setup_postgres
+    - role: setup_coldfront_db
+      when: coldfront_enabled | bool
     - setup_pgedge
     - role: setup_coldfront
       when: coldfront_enabled | bool
@@ -52,7 +55,7 @@ where `coldfront_enabled` is set:
 ColdFront also needs Lakekeeper (`install_lakekeeper` and
 `setup_lakekeeper`) serving before `setup_coldfront` runs, and an
 S3-compatible object store reachable from this host. The
-`sample-playbooks/simple-cluster` playbook sets up Lakekeeper in a play of
+`sample-playbooks/simple-cluster-coldfront` playbook sets up Lakekeeper in a play of
 its own ahead of this one, for the `lakekeeper` group. See the
 [ColdFront Configuration](../configuration/coldfront.md) reference for the
 settings both need.

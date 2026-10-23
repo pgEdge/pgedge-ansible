@@ -3,8 +3,10 @@
 The `setup_coldfront` role points the ColdFront extensions at the
 Lakekeeper catalog and the S3-compatible object store behind it, and
 configures the archiver, partitioner and compactor. Postgres itself is
-configured for ColdFront by `setup_postgres`, which also creates ColdFront's
-role, database and extensions, where `coldfront_enabled` is set. In mesh
+configured for ColdFront by `setup_postgres`, and ColdFront's role, database
+and extensions are created by
+[`setup_coldfront_db`](setup_coldfront_db.md), where `coldfront_enabled` is
+set. In mesh
 mode the role also has ColdFront order cold-tier commits across the nodes of
 the Spock cluster. It works on HA clusters too, in mesh mode; see
 [Under HA](#under-ha).
@@ -34,15 +36,16 @@ This role requires the following roles for normal operation:
 - `install_coldfront` installs the ColdFront packages.
 - `setup_postgres` and `setup_pgedge` bring up the pgEdge Distributed
   Postgres node this role configures. `setup_postgres` also writes
-  ColdFront's libraries and settings into its configuration, and creates
-  ColdFront's role, database and extensions, wherever `coldfront_enabled`
-  is set.
+  ColdFront's libraries and settings into its configuration wherever
+  `coldfront_enabled` is set.
+- `setup_coldfront_db` creates ColdFront's role, database and extensions.
 
 ## When to Use
 
 ColdFront is opt-in per cluster, through `coldfront_enabled` on the
 `pgedge` group. Execute this role after `setup_pgedge`, with
-`install_coldfront` placed before `setup_postgres`.
+`install_coldfront` placed before `setup_postgres` and `setup_coldfront_db`
+between `setup_postgres` and `setup_pgedge`.
 
 In the following example, the playbook sets ColdFront up only where
 `coldfront_enabled` is set:
@@ -56,6 +59,8 @@ In the following example, the playbook sets ColdFront up only where
     - role: install_coldfront
       when: coldfront_enabled | bool
     - setup_postgres
+    - role: setup_coldfront_db
+      when: coldfront_enabled | bool
     - setup_pgedge
     - role: setup_coldfront
       when: coldfront_enabled | bool
@@ -64,8 +69,8 @@ In the following example, the playbook sets ColdFront up only where
 The role checks the Lakekeeper catalog's `/health` endpoint before
 changing anything, and fails if the catalog has not answered within about
 30 seconds. Run `setup_lakekeeper` in an earlier play, as the
-`sample-playbooks/simple-cluster` and `sample-playbooks/ultra-ha` playbooks
-do.
+`sample-playbooks/simple-cluster-coldfront` and
+`sample-playbooks/ultra-ha-coldfront` playbooks do.
 
 ## Configuration
 
@@ -73,7 +78,7 @@ This role uses the following parameters from the inventory file:
 
 | Parameter | Use Case |
 |-----------|----------|
-| `coldfront_enabled` | Gates the role. Where it is set, `setup_postgres` has loaded ColdFront's libraries and created its extensions. |
+| `coldfront_enabled` | Gates the role. Where it is set, `setup_postgres` has loaded ColdFront's libraries and `setup_coldfront_db` has created its extensions. |
 | `coldfront_db` | Name of the additional database ColdFront's tiered storage lives in. |
 | `lakekeeper_host` / `lakekeeper_port` / `lakekeeper_warehouse` | Locates the Iceberg catalog this node writes through. |
 | `coldfront_s3_*` | Locates and authenticates to the S3-compatible object store. |
@@ -96,16 +101,18 @@ ColdFront's libraries and settings are part of the Postgres configuration
 the rest of the collection's parameters. `pg_duckdb` and `coldfront` join
 `shared_preload_libraries` after the collection's own libraries and
 before any that `pg_parameters` names, so enabling ColdFront never
-disables Spock replication. ColdFront's settings are parameters the
-collection controls, so `init_server` refuses `pg_parameters` that sets
-any of them. See
-[pg_parameters](../configuration/postgres.md#pg_parameters).
+disables Spock replication. The settings ColdFront depends on are
+parameters the collection controls, so `init_server` refuses
+`pg_parameters` that sets any of them; its tuning settings are defaults
+`pg_parameters` may override. See
+[pg_parameters](../configuration/postgres.md#pg_parameters) and
+[Tuning](../configuration/coldfront.md#tuning).
 
 `setup_postgres` restarts Postgres to load the libraries the way it
 applies any parameter that needs a restart: one node at a time, and only
-where `pg_allow_restart` allows. It then checks that they have loaded
-before it creates ColdFront's role, database and extensions, since the
-extensions cannot be created until they have.
+where `pg_allow_restart` allows. `setup_coldfront_db` then checks that
+they have loaded before it creates ColdFront's role, database and
+extensions, since the extensions cannot be created until they have.
 
 ### Database connections
 
@@ -154,9 +161,10 @@ silently dropped.
   `snowflake.node` is already set to each node's `zone`.
 - `setup_postgres` writes `coldfront.dblink_self`,
   `coldfront.peer_alive_window_ms` and `wal_receiver_status_interval` with
-  ColdFront's other settings, and creates the `dblink` extension, which the
-  bakery's claim and release go through, with ColdFront's other extensions.
-  It creates them before `setup_pgedge` puts the database into Spock, as
+  ColdFront's other settings. `setup_coldfront_db` creates the `dblink`
+  extension, which the bakery's claim and release go through, with
+  ColdFront's other extensions. It creates them before `setup_pgedge` puts
+  the database into Spock, as
   upstream's mesh setup does, because Spock replicates a `CREATE EXTENSION`
   issued once a database has a Spock node to the other nodes, which create
   the extension themselves.
@@ -168,7 +176,7 @@ silently dropped.
   `coldfront.deferred_acks` stays local, as upstream intends.
 
 The bakery treats a peer whose `pg_stat_replication.reply_time` is older
-than `coldfront_peer_alive_window_ms` as dead and stops waiting for its
+than `coldfront.peer_alive_window_ms` as dead and stops waiting for its
 acknowledgement. `wal_receiver_status_interval` is set to one second so
 that an idle peer still reports progress well inside that window. The same
 rule means that during a network partition both sides can write the same
@@ -193,13 +201,12 @@ to date with the rest of the Postgres parameters, restarting the members
 that need it. Every member, replicas included, needs the ColdFront
 packages by then, so run `install_coldfront` on every node first.
 
-`setup_postgres` creates ColdFront's role, database and extensions on each
-zone's first node while it builds the zone, before Patroni takes over, and
-the replicas receive them through physical replication. In a zone Patroni
-already runs, Postgres loads newly enabled libraries only when
-`setup_patroni` restarts it, which comes after `setup_postgres`, so turning
-ColdFront on for a running HA cluster takes `setup_patroni` first;
-`setup_postgres` stops and says so otherwise.
+`setup_coldfront_db` runs after `setup_patroni` and creates ColdFront's
+role, database and extensions on each zone's leader, and the replicas
+receive them through physical replication. Turning ColdFront on for a
+running HA cluster needs no extra step, since `setup_patroni` restarts the
+members to load the libraries, where `pg_allow_restart` allows, before
+`setup_coldfront_db` runs.
 
 Under HA the role:
 
@@ -227,7 +234,7 @@ on a standby. Patroni is configured to leave Spock's logical slots alone,
 so how Spock replication resumes after a zone fails over is decided by
 Spock and the Ultra-HA design, not by ColdFront. Until it resumes, the
 bakery in the other zones treats the failed-over zone as dead after
-`coldfront_peer_alive_window_ms` and carries on.
+`coldfront.peer_alive_window_ms` and carries on.
 
 ### DuckDB extension loading
 
@@ -251,4 +258,5 @@ object-store credential is an upsert, the configuration file is rewritten
 only when its content changes, and the mesh mode's replication-set
 additions check membership first. The role creates no roles, databases or
 extensions, writes no Postgres configuration and restarts nothing;
-`setup_postgres` does all three.
+`setup_coldfront_db` does the first, and `setup_postgres` or
+`setup_patroni` the other two.

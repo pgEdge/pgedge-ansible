@@ -1,13 +1,97 @@
 ---
 
-# Lakekeeper keeps its catalog in a Postgres instance of its own on this host,
-# which setup_postgres creates the way it creates a pgEdge Distributed Postgres
-# node's, without configuring it as one.
+# Lakekeeper keeps its catalog in a Postgres instance of its own on this host.
+# The instance is this role's alone: initialized with initdb into
+# lakekeeper_pg_data and run by a service unit the role writes, the same way on
+# every platform, so it shares nothing with the instances setup_postgres builds
+# for pgEdge Distributed Postgres nodes. It listens on pg_port at the loopback
+# address only, which is all Lakekeeper needs.
+#
+# On Debian, installing the server package creates and starts a "main"
+# cluster on 5432. Where that is pg_port, it is stopped and marked manual, so
+# that it does not take the port back when the host boots.
 
-- name: Ensure the catalog's Postgres instance exists and is running
-  include_role:
-    name: setup_postgres
-    tasks_from: plain_instance
+- name: Check for the package's own Postgres cluster
+  stat:
+    path: "/etc/postgresql/{{ pg_version }}/main/start.conf"
+  register: lakekeeper_debian_main
+  when:
+  - ansible_os_family == 'Debian'
+  - pg_port | int == 5432
+
+- block:
+  - name: Stop the package's own Postgres cluster
+    service:
+      name: "postgresql@{{ pg_version }}-main"
+      state: stopped
+      enabled: false
+
+  - name: Keep the package's own Postgres cluster from starting at boot
+    copy:
+      dest: "/etc/postgresql/{{ pg_version }}/main/start.conf"
+      content: "manual\n"
+      owner: postgres
+      group: postgres
+      mode: "0644"
+
+  become: true
+  when:
+  - lakekeeper_debian_main is not skipped
+  - lakekeeper_debian_main.stat.exists
+
+- name: Create the catalog's data directory
+  file:
+    path: "{{ lakekeeper_pg_data }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+  become: true
+
+- name: Initialize the catalog's Postgres instance
+  command:
+    argv:
+    - "{{ pg_path }}/bin/initdb"
+    - -D
+    - "{{ lakekeeper_pg_data }}"
+    - --encoding=UTF8
+    - --locale=C
+    - --auth-local=peer
+    - --auth-host=scram-sha-256
+  args:
+    creates: "{{ lakekeeper_pg_data }}/PG_VERSION"
+  become: true
+  become_user: postgres
+
+- name: Write the catalog's Postgres service unit
+  template:
+    src: lakekeeper-postgres.service.j2
+    dest: "/etc/systemd/system/{{ lakekeeper_pg_service_name }}.service"
+    mode: "0644"
+  register: lakekeeper_pg_unit
+  become: true
+
+# A changed unit is a changed command line, such as a new pg_port, which only
+# a restart applies.
+
+- name: Start the catalog's Postgres instance
+  systemd:
+    name: "{{ lakekeeper_pg_service_name }}"
+    daemon_reload: "{{ lakekeeper_pg_unit is changed }}"
+    enabled: true
+    state: "{{ 'restarted' if lakekeeper_pg_unit is changed else 'started' }}"
+  become: true
+
+- name: Wait for the catalog's Postgres instance to accept connections
+  community.postgresql.postgresql_ping:
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  register: lakekeeper_pg_ping
+  until: lakekeeper_pg_ping.is_available
+  retries: 30
+  delay: 1
+  become: true
+  become_user: postgres
 
 # Creating a warehouse below makes Lakekeeper write to the bucket to
 # prove the credentials work, so the store has to be reachable from here
@@ -46,7 +130,7 @@
 - name: Create the extensions Lakekeeper's migration needs
   community.postgresql.postgresql_ext:
     name: "{{ item }}"
-    db: "{{ lakekeeper_db }}"
+    login_db: "{{ lakekeeper_db }}"
     login_port: "{{ pg_port }}"
     login_unix_socket: /var/run/postgresql
   loop:

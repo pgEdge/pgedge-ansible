@@ -23,20 +23,24 @@ in full.
   a catalog or complete object store settings, or on an unsupported
   `pg_version`, and a Lakekeeper host with the default password or colliding
   ports. (EE-40)
-- The `simple-cluster` sample playbook and end-to-end test can add ColdFront,
-  with a ColdFront reconfiguration check. (EE-40)
-- `setup_postgres` gained a `plain_instance` task file for roles that need a
-  Postgres instance of their own. (EE-40)
+- New `simple-cluster-coldfront` sample playbook and inventory deploy a simple
+  cluster with ColdFront, and the end-to-end test can add ColdFront, with a
+  ColdFront reconfiguration check. (EE-40)
+- New `setup_coldfront_db` role creates ColdFront's role, database and
+  extensions before `setup_pgedge`. (EE-40)
 - `coldfront_mesh` orders ColdFront's cold-tier commits across every node of a
   Spock cluster. `init_server` refuses it unless `db_names` lists
   `coldfront_db`. (EE-40)
-- New `coldfront_peer_alive_window_ms` parameter. (EE-40)
+- ColdFront's tuning settings, `coldfront.iceberg_async_parquet`,
+  `coldfront.peer_alive_window_ms` and `wal_receiver_status_interval`, are
+  defaults `pg_parameters` may override. (EE-40)
 - The simple-cluster end-to-end test can run ColdFront in mesh mode. (EE-40)
 - ColdFront runs on HA clusters in mesh mode. `setup_coldfront` runs its SQL
   on each zone's leader, and each replica writes its own DuckDB secret.
   (EE-40)
-- The `ultra-ha` sample playbook and end-to-end test can add ColdFront, in
-  mesh mode. (EE-40)
+- New `ultra-ha-coldfront` sample playbook and inventory deploy an Ultra-HA
+  cluster with ColdFront in mesh mode, and the end-to-end test can add
+  ColdFront. (EE-40)
 
 ### Fixed
 

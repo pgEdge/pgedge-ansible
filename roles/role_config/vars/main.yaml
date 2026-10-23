@@ -232,7 +232,7 @@ pg_default_parameters: >-
          'spock.conflict_resolution': 'last_update_wins',
          'spock.save_resolutions': true,
          'spock.conflict_log_level': 'DEBUG',
-       }) }}
+       }, pg_coldfront_default_parameters) }}
 
 # What the collection itself depends on: where Postgres listens and with which
 # certificate, logical decoding and commit timestamps for Spock, the snowflake
@@ -264,9 +264,10 @@ pg_required_parameters: >-
          else {})
      | combine(pg_coldfront_parameters) }}
 
-# ColdFront's settings, where coldfront_enabled is set. Each follows another
-# setting or the packages install_coldfront installs, so they are required
-# parameters, and a cluster without ColdFront gets none of them.
+# ColdFront's settings, where coldfront_enabled is set. Those that follow
+# another setting or the packages install_coldfront installs are required
+# parameters; the tuning ones are defaults below, which pg_parameters may
+# override. A cluster without ColdFront gets none of them.
 #
 # duckdb.autoinstall_known_extensions has to stay off. With it on, a missing
 # extension file makes DuckDB fetch the unpatched upstream build, which fails
@@ -279,12 +280,6 @@ pg_required_parameters: >-
 # instance. It runs as the postgres OS user, so over the Unix socket only the
 # postgres role passes peer authentication. coldfront.dblink_self turns on
 # the commit coordination between nodes, so only coldfront_mesh sets it.
-#
-# The bakery treats a peer whose pg_stat_replication.reply_time is older than
-# coldfront.peer_alive_window_ms as dead. With Postgres's default
-# wal_receiver_status_interval of 10 seconds every idle peer would look dead,
-# so in mesh mode each node reports replication progress every second, as
-# upstream sets it.
 
 pg_coldfront_parameters: >-
   {{ {} if not coldfront_enabled | bool else {
@@ -301,12 +296,26 @@ pg_coldfront_parameters: >-
          'host=/var/run/postgresql port=' ~ pg_port ~ ' dbname=' ~ coldfront_db
          ~ ' user=postgres application_name=coldfront_pglocal',
        'coldfront.iceberg_bakery_patch': true,
-       'coldfront.iceberg_async_parquet': true,
      } | combine({
        'coldfront.dblink_self':
          'host=/var/run/postgresql port=' ~ pg_port ~ ' dbname=' ~ coldfront_db
          ~ ' user=postgres application_name=coldfront_dblink',
-       'coldfront.peer_alive_window_ms': coldfront_peer_alive_window_ms | int,
+     } if coldfront_mesh | bool else {}) }}
+
+# ColdFront's tuning defaults, part of pg_default_parameters.
+#
+# The bakery treats a peer whose pg_stat_replication.reply_time is older than
+# coldfront.peer_alive_window_ms as dead. With Postgres's default
+# wal_receiver_status_interval of 10 seconds every idle peer would look dead,
+# so in mesh mode each node reports replication progress every second, as
+# upstream sets it. An inventory that changes either must keep the interval
+# well inside the window.
+
+pg_coldfront_default_parameters: >-
+  {{ {} if not coldfront_enabled | bool else {
+       'coldfront.iceberg_async_parquet': true,
+     } | combine({
+       'coldfront.peer_alive_window_ms': 5000,
        'wal_receiver_status_interval': '1s',
      } if coldfront_mesh | bool else {}) }}
 

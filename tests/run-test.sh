@@ -47,7 +47,13 @@ fi
 
 COMPOSE_FILE="$SCRIPT_DIR/compose/${SCENARIO}-${OS}.yml"
 INVENTORY="$SCRIPT_DIR/inventories/${SCENARIO}.yml"
-PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}/playbook.yaml"
+# ColdFront is optional, so its sample playbooks live beside the plain ones
+# rather than inside them.
+if [ "$COLDFRONT" = true ]; then
+  PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}-coldfront/playbook.yaml"
+else
+  PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}/playbook.yaml"
+fi
 VERIFY_PLAYBOOK="$SCRIPT_DIR/verify/verify-${SCENARIO}.yml"
 PROJECT_NAME="pgedge-test-${SCENARIO}-${OS}"
 

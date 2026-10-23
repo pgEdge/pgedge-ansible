@@ -256,12 +256,6 @@ coldfront_db: coldfront
 # be written from one node only.
 coldfront_mesh: false
 
-# In mesh mode, how long, in milliseconds, a peer may go without
-# reporting replication progress before the bakery stops waiting for
-# its acknowledgement and treats it as dead. This sets
-# coldfront.peer_alive_window_ms, at upstream's default.
-coldfront_peer_alive_window_ms: 5000
-
 # The Postgres major versions ColdFront packages are published for.
 # init_server refuses coldfront_enabled for any other pg_version, before
 # anything is installed.

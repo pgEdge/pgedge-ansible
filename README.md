@@ -128,11 +128,15 @@ Sample playbooks are provided in the
 [sample-playbooks](./sample-playbooks) directory:
 
 - [simple-cluster](./sample-playbooks/simple-cluster) - Deploys a standard
-  three-node pgEdge Distributed Postgres cluster, optionally with the
-  ColdFront tiered-storage add-on and a Lakekeeper catalog host.
+  three-node pgEdge Distributed Postgres cluster.
 - [ultra-ha](./sample-playbooks/ultra-ha) - Deploys a two-zone Ultra-HA
-  cluster with Patroni, etcd, HAProxy, and PgBackRest, optionally with the
-  ColdFront tiered-storage add-on in mesh mode and a Lakekeeper catalog host.
+  cluster with Patroni, etcd, HAProxy, and PgBackRest.
+- [simple-cluster-coldfront](./sample-playbooks/simple-cluster-coldfront) -
+  The simple cluster with the ColdFront tiered-storage add-on and a
+  Lakekeeper catalog host.
+- [ultra-ha-coldfront](./sample-playbooks/ultra-ha-coldfront) - The
+  Ultra-HA cluster with the ColdFront tiered-storage add-on in mesh mode and
+  a Lakekeeper catalog host.
 
 Run a playbook with the following command, substituting your inventory file
 path:

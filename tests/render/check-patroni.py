@@ -119,6 +119,7 @@ def hostvars_for(hosts_with_facts):
 # sizing layers read the cluster's shape and max_parallel_workers, and
 # pg_default_parameters is built from them.
 PARAMETER_LAYERS = ("pg_coldfront_parameters",
+                    "pg_coldfront_default_parameters",
                     "pg_coldfront_preload_libraries",
                     "pg_user_parameters",
                     "zone_list", "nodes_in_zone", "pg_spock_nodes",
@@ -191,7 +192,6 @@ def parameters(pg_parameters, backups, zone=1, shape=ULTRA_HA,
                pg_default_preload_libraries=
                role_vars["pg_default_preload_libraries"],
                coldfront_enabled=coldfront, coldfront_mesh=mesh,
-               coldfront_peer_alive_window_ms=5000,
                coldfront_duckdb_role="coldfront_duckdb",
                coldfront_db="coldfront", lakekeeper_host="10.0.0.30",
                lakekeeper_port=8181, lakekeeper_warehouse="wh",
@@ -464,8 +464,9 @@ def check_parameters(e, template):
         print(f"ok       {label}")
 
     # coldfront_mesh adds the DSN that arms the bakery, and the settings that
-    # keep an idle peer from looking dead to it. Its database is then one of
-    # db_names, so the sizing counts its Spock manager and subscriptions.
+    # keep an idle peer from looking dead to it, which are defaults an
+    # inventory may tune. Its database is then one of db_names, so the sizing
+    # counts its Spock manager and subscriptions.
     meshed = dict(ULTRA_HA, db_names=["demo", "coldfront"])
     layers = parameters({}, True, shape=meshed, coldfront=True, mesh=True)
     dcs = layers["pg_effective_parameters"]
@@ -476,6 +477,11 @@ def check_parameters(e, template):
         "status interval": dcs.get("wal_receiver_status_interval") == "1s",
         "peer window": str(dcs.get("coldfront.peer_alive_window_ms"))
             == "5000",
+        "tunables not required": not any(
+            name in layers["pg_required_parameters"]
+            for name in ("wal_receiver_status_interval",
+                         "coldfront.peer_alive_window_ms",
+                         "coldfront.iceberg_async_parquet")),
         "database counted": int(layers["pg_connectable_dbs"])
             == int(plain["pg_connectable_dbs"]) + 1,
         "subscriptions counted": int(layers["pg_spock_subscriptions"])
