@@ -60,6 +60,9 @@ services:
   # fail. weed shell exits 0 even when the command inside it failed, so
   # its status cannot end the loop. Asking the filer whether the bucket
   # is there can only succeed once it really is.
+  # weed shell started before the master answers can wait for it
+  # indefinitely, so each attempt is cut off after 30 seconds and the
+  # loop tries again.
   seaweedfs-init:
     image: chrislusf/seaweedfs:3.80
     depends_on:
@@ -72,7 +75,8 @@ services:
         until wget -q -O /dev/null
         http://192.168.6.31:8888/buckets/iceberg/;
         do echo 's3.bucket.create -name iceberg'
-        | weed shell -master=192.168.6.31:9333 -filer=192.168.6.31:8888;
+        | timeout 30 weed shell -master=192.168.6.31:9333
+        -filer=192.168.6.31:8888;
         sleep 2; done
     networks:
       pgedge-test: {}
