@@ -169,6 +169,7 @@ names the setting to change instead.
 | `data_directory` | `pg_data` |
 | `hba_file` | `custom_hba_rules` |
 | `config_file`, `ident_file`, `unix_socket_directories` | The collection. |
+| The `duckdb.*` and `coldfront.*` settings ColdFront depends on | The ColdFront settings, where `coldfront_enabled` is set. Its tuning settings may be overridden. See [ColdFront Configuration](coldfront.md#tuning). |
 
 The collection's other defaults can be overridden. These defaults include
 `ssl`, `timezone`, `hot_standby_feedback` and the Spock conflict and DDL

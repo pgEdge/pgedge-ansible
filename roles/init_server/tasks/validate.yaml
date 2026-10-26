@@ -203,6 +203,17 @@
     fail_msg: "A host cannot be in both the 'pgedge' and 'backup' groups."
   run_once: true
 
+# The same for the Lakekeeper host. Its catalog store is a Postgres instance of
+# its own listening on pg_port, so on a pgEdge node it would contend with the
+# node's own instance for that port.
+
+- name: Ensure no host is in both the pgedge and lakekeeper groups
+  assert:
+    that:
+    - groups.pgedge | default([]) | intersect(groups.lakekeeper | default([])) | length == 0
+    fail_msg: "A host cannot be in both the 'pgedge' and 'lakekeeper' groups."
+  run_once: true
+
 # Pooling is a property of the cluster, not of a node: pgbouncer_enabled belongs
 # on the 'pgedge' group, and every pgEdge node then runs a pooler in front of its
 # own Postgres. Per-node values are rejected here rather than honoured, because
@@ -537,6 +548,118 @@
   when:
   - is_ha_cluster | bool
   - inventory_hostname in (groups.pgedge | default([]))
+
+# coldfront_enabled puts ColdFront's settings among the parameters
+# setup_postgres writes, and they name the Lakekeeper catalog, so a node with
+# no lakekeeper_host would run with an endpoint that reaches nothing. Its
+# packages exist only for some Postgres releases, and install_coldfront would
+# otherwise fail on a package name after install_pgedge had already installed
+# Postgres.
+#
+# An HA cluster needs mesh mode. Its archiver, partitioner and compactor
+# connect through the zone's endpoint, since a replica is read-only, and
+# Patroni's pg_hba admits db_user through the zone's proxies only to the
+# databases in db_names, where only mesh mode puts coldfront_db.
+
+- name: Ensure ColdFront has a catalog, a release and mesh mode under HA
+  assert:
+    that:
+    - lakekeeper_host | length > 0
+    - pg_version | int in coldfront_supported_pg_versions | map('int')
+    - coldfront_mesh | bool or not is_ha_cluster | bool
+    fail_msg: >-
+      coldfront_enabled is set on {{ inventory_hostname }}, which needs
+      lakekeeper_host set to the address of the Lakekeeper catalog, a
+      pg_version ColdFront packages are published for
+      ({{ coldfront_supported_pg_versions | join(', ') }}; pg_version is
+      {{ pg_version }}), and on an HA cluster coldfront_mesh set to true.
+  when:
+  - coldfront_enabled | bool
+  - inventory_hostname in (groups.pgedge | default([]))
+
+# Mesh mode orders commits through tables Spock replicates in coldfront_db,
+# and setup_postgres and setup_pgedge put a database into Spock only when
+# db_names lists it.
+
+- name: Ensure ColdFront's mesh mode has its database in Spock
+  assert:
+    that:
+    - coldfront_db in db_names
+    fail_msg: >-
+      coldfront_mesh is set on {{ inventory_hostname }}, which needs
+      coldfront_db ({{ coldfront_db }}) listed in db_names, so that
+      setup_postgres and setup_pgedge put it into Spock alongside
+      {{ db_names | join(', ') }}.
+  when:
+  - coldfront_enabled | bool
+  - coldfront_mesh | bool
+  - inventory_hostname in (groups.pgedge | default([]))
+
+# The object store settings, checked as the backup repository's S3 settings
+# are and for the same reason. The credentials have no default, and left empty
+# they fail only when Lakekeeper first writes to the bucket, or, on a node, when
+# ColdFront first archives, long after the deployment has finished. Asked of
+# both kinds of host that use them, since an inventory may set them on one
+# group alone.
+
+- name: Ensure the ColdFront object store settings are complete
+  assert:
+    that:
+    - s3_problems | length == 0
+    fail_msg: >-
+      ColdFront's object store needs coldfront_s3_bucket, coldfront_s3_region,
+      coldfront_s3_access_key and coldfront_s3_secret_key set -- the keys from
+      Ansible Vault, beside the passwords -- and coldfront_s3_endpoint either
+      empty, for AWS S3, or a URL of the form http(s)://host[:port]. Missing or
+      invalid on {{ inventory_hostname }}: {{ s3_problems | join(', ') }}.
+  vars:
+    s3_problems: >-
+      {{ ['coldfront_s3_bucket', 'coldfront_s3_region',
+          'coldfront_s3_access_key', 'coldfront_s3_secret_key']
+         | reject('in', s3_given) | list
+         + (['coldfront_s3_endpoint'] if coldfront_s3_endpoint | length > 0
+              and coldfront_s3_endpoint is not
+                match('^https?://[^/:]+(:[0-9]+)?/?$')
+            else []) }}
+    s3_given: >-
+      {{ {'coldfront_s3_bucket': coldfront_s3_bucket,
+          'coldfront_s3_region': coldfront_s3_region,
+          'coldfront_s3_access_key': coldfront_s3_access_key,
+          'coldfront_s3_secret_key': coldfront_s3_secret_key}
+         | dict2items | selectattr('value') | map(attribute='key') | list }}
+  when: >-
+    (coldfront_enabled | bool
+     and inventory_hostname in (groups.pgedge | default([])))
+    or inventory_hostname in (groups.lakekeeper | default([]))
+
+- name: Ensure the Lakekeeper catalog password has been changed
+  assert:
+    that:
+    - lakekeeper_db_password != 'secret'
+    fail_msg: >-
+      lakekeeper_db_password is still set to the default value 'secret'. It is
+      the password of Lakekeeper's catalog database, written to the service's
+      environment file, so it must be set explicitly.
+  when: inventory_hostname in (groups.lakekeeper | default([]))
+
+# A Lakekeeper host binds its catalog's Postgres and Lakekeeper's two ports, and
+# Lakekeeper exits at startup if either of its own is taken. A SeaweedFS release
+# from 4.x onward starts its own built-in Iceberg catalog on 8181, Lakekeeper's
+# default, whenever its S3 gateway is enabled.
+
+- name: Ensure the ports on a Lakekeeper host do not collide
+  assert:
+    that:
+    - service_ports | count == service_ports | unique | count
+    fail_msg: >-
+      pg_port, lakekeeper_port and lakekeeper_metrics_port must differ on
+      {{ inventory_hostname }}, which binds all three; they are
+      {{ pg_port }}, {{ lakekeeper_port }} and {{ lakekeeper_metrics_port }}.
+  vars:
+    service_ports: >-
+      {{ [pg_port, lakekeeper_port, lakekeeper_metrics_port]
+         | map('int') | list }}
+  when: inventory_hostname in (groups.lakekeeper | default([]))
 
 # Ensure that only "supported" DCS types are used. These are pulled from the
 # Patroni documentation:

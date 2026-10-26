@@ -1,0 +1,42 @@
+---
+
+lakekeeper_url: "http://{{ lakekeeper_host }}:{{ lakekeeper_port }}"
+
+# ColdFront's own tables Spock replicates in mesh mode. claims and
+# claim_acks carry the bakery's protocol between nodes; storage_secret
+# carries the object-store credential; partition_config, tiered_views
+# and archive_watermark let a table provisioned on one node be used on
+# the others. coldfront.deferred_acks stays local, as upstream intends.
+coldfront_bakery_tables:
+- coldfront.claims
+- coldfront.claim_acks
+
+coldfront_catalog_tables:
+- coldfront.storage_secret
+- coldfront.partition_config
+- coldfront.tiered_views
+- coldfront.archive_watermark
+
+# Whether this node calls coldfront.set_storage_secret(). Only a node
+# that runs ColdFront's SQL can, which under HA means a zone's leader.
+# In mesh mode one call serves the cluster, made in the zone of the
+# first pgEdge host: the row reaches the other zones through Spock, and
+# an ENABLE ALWAYS trigger on coldfront.storage_secret materializes each
+# node's own DuckDB secret as Spock applies it. Outside mesh mode every
+# node makes its own call.
+coldfront_sets_secret: >-
+  {{ coldfront_runs_sql | bool
+     and (not coldfront_mesh | bool
+          or zone | string == hostvars[groups['pgedge'] | first].zone
+                             | string) }}
+
+# Where the archiver, partitioner and compactor connect. Without HA,
+# the node's own Postgres over TCP. Under HA a replica's own Postgres is
+# a read-only standby, so they connect through the zone's endpoint that
+# setup_pgedge subscribes through, which reaches the current leader.
+coldfront_tools_host: >-
+  {{ '127.0.0.1' if not is_ha_cluster | bool
+     else proxy_node if proxy_node > ''
+     else proxies_in_zone | first if proxies_in_zone
+     else first_node_in_zone }}
+coldfront_tools_port: "{{ proxy_port if is_ha_cluster | bool else pg_port }}"

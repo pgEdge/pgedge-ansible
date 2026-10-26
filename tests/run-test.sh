@@ -5,11 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
-  echo "Usage: $0 <scenario> <os> [dcs] [backup] [--keep]"
+  echo "Usage: $0 <scenario> <os> [dcs] [backup] [coldfront] [mesh] [--keep]"
   echo "  scenario: simple-cluster | ultra-ha"
   echo "  os:       debian12 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
   echo "  backup:   ssh (default) | s3 -- the repository; s3 is ultra-ha only"
+  echo "  coldfront: add ColdFront and Lakekeeper, in mesh mode on ultra-ha"
+  echo "  mesh:     with coldfront, run ColdFront in mesh mode"
   echo "  --keep:   don't tear down containers after test"
   exit 1
 }
@@ -18,7 +20,9 @@ SCENARIO="${1:-}"
 OS="${2:-}"
 DCS="etcd3"
 BACKUP="ssh"
+COLDFRONT=false
 KEEP=false
+MESH=false
 
 # Everything after the OS is recognised by its value, so the DCS and the backup
 # type can each be given without the other.
@@ -26,6 +30,8 @@ for arg in "${@:3}"; do
   case "$arg" in
     --keep) KEEP=true ;;
     ssh|s3) BACKUP="$arg" ;;
+    coldfront) COLDFRONT=true ;;
+    mesh) MESH=true ;;
     *) DCS="$arg" ;;
   esac
 done
@@ -34,9 +40,20 @@ if [ -z "$SCENARIO" ] || [ -z "$OS" ]; then
   usage
 fi
 
+if [ "$MESH" = true ] && [ "$COLDFRONT" = false ]; then
+  echo "ERROR: mesh applies only with coldfront"
+  exit 1
+fi
+
 COMPOSE_FILE="$SCRIPT_DIR/compose/${SCENARIO}-${OS}.yml"
 INVENTORY="$SCRIPT_DIR/inventories/${SCENARIO}.yml"
-PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}/playbook.yaml"
+# ColdFront is optional, so its sample playbooks live beside the plain ones
+# rather than inside them.
+if [ "$COLDFRONT" = true ]; then
+  PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}-coldfront/playbook.yaml"
+else
+  PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}/playbook.yaml"
+fi
 VERIFY_PLAYBOOK="$SCRIPT_DIR/verify/verify-${SCENARIO}.yml"
 PROJECT_NAME="pgedge-test-${SCENARIO}-${OS}"
 
@@ -104,6 +121,29 @@ case "$BACKUP" in
     usage
     ;;
 esac
+
+# ColdFront. The compose overlay adds the Lakekeeper host, and SeaweedFS for
+# the object store. The inventory layer adds the Lakekeeper host,
+# coldfront_enabled, and the settings that point both at each other.
+# init_server refuses ColdFront on an HA cluster without mesh mode, so the
+# Ultra-HA scenario always runs it in mesh mode.
+COLDFRONT_INVENTORY="$SCRIPT_DIR/inventories/coldfront.yml"
+
+if [ "$COLDFRONT" = true ]; then
+  COMPOSE_ARGS+=(-f "$SCRIPT_DIR/compose/coldfront-${OS}.yml")
+  INVENTORY_ARGS+=(-i "$COLDFRONT_INVENTORY")
+  PROJECT_NAME="${PROJECT_NAME}-coldfront"
+  if [ "$SCENARIO" = "ultra-ha" ]; then
+    MESH=true
+  fi
+fi
+
+# Mesh mode adds the ColdFront database to db_names and turns on
+# coldfront_mesh, on top of the ColdFront layer.
+if [ "$MESH" = true ]; then
+  EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/coldfront-mesh.yml")
+  PROJECT_NAME="${PROJECT_NAME}-mesh"
+fi
 
 # Set by Step 8b when it stages the etcd authority for the reconfigure run.
 CA_VARS=""
@@ -199,6 +239,29 @@ if [ "$BACKUP" = "s3" ]; then
     "${INVENTORY_ARGS[@]}" --private-key "$SCRIPT_DIR/.ssh/id_ed25519"
 fi
 
+# Step 4d: Wait for ColdFront's object store bucket
+# The compose overlay creates the bucket from a side container, which can
+# still be running once every host answers SSH. setup_lakekeeper writes
+# to the bucket to prove the warehouse credentials work, and fails
+# rather than waits if the bucket is not there yet. Each check gives up
+# after 2s, so a filer that accepts the connection but never answers
+# cannot keep the loop waiting indefinitely.
+if [ "$COLDFRONT" = true ]; then
+  FILER=$(sed -n 's/^ *seaweedfs_filer: *//p' "$COLDFRONT_INVENTORY")
+  BUCKET=$(sed -n 's/^ *coldfront_s3_bucket: *//p' "$COLDFRONT_INVENTORY")
+  echo "==> Step 4d: Waiting for the $BUCKET bucket..."
+  ELAPSED=0
+  until curl -sf --max-time 2 -o /dev/null "$FILER/buckets/$BUCKET/"; do
+    ELAPSED=$((ELAPSED + 2))
+    if [ $ELAPSED -ge 60 ]; then
+      echo "ERROR: Bucket $BUCKET did not appear within 60s"
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "    Bucket $BUCKET ready"
+fi
+
 # Step 5: Build and install Ansible collection
 echo "==> Step 5: Building and installing Ansible collection..."
 cd "$PROJECT_DIR"
@@ -240,6 +303,17 @@ else
   echo "==> Step 8: No verification playbook found, skipping"
 fi
 
+# Step 8a: ColdFront's own checks, on top of the scenario's.
+if [ "$COLDFRONT" = true ]; then
+  echo "==> Step 8a: Running the ColdFront verification playbook..."
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/verify/verify-${SCENARIO}-coldfront.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+fi
+
 # Step 8b: Changed Postgres parameters reach a running cluster, through
 # postgresql.conf on a simple cluster and Patroni's store on an HA one,
 # restarting only the nodes that need it.
@@ -272,6 +346,18 @@ PY
     --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
     "${EXTRA_VARS[@]}" \
     "${RECONFIGURE_VARS[@]}" \
+    -v
+fi
+
+# Step 8c: Re-applying the ColdFront and Lakekeeper roles changes nothing, and
+# ColdFront turned on for a running cluster restarts each node to load it.
+if [ "$COLDFRONT" = true ] && [ "$SCENARIO" = "simple-cluster" ]; then
+  echo "==> Step 8c: Checking the ColdFront roles on a running cluster..."
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/playbooks/coldfront-reconfigure.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
     -v
 fi
 

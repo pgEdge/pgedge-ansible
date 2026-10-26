@@ -162,3 +162,93 @@ deployment, because the pooler looks each client's stored credential up rather
 than keeping a password list of its own. See
 [Pooling Configuration](configuration/pooling.md) for the pool mode, TLS, and
 sizing parameters.
+
+## Adding ColdFront Tiered Storage
+
+ColdFront keeps recent data in native Postgres partitions and archives older
+data to Apache Iceberg on S3-compatible storage, readable and writable through
+the same SQL. It is optional, so it has a sample playbook and inventory of its
+own, in `sample-playbooks/simple-cluster-coldfront`, beside the plain
+`simple-cluster` ones. Set `coldfront_enabled` on the `pgedge` group, and
+put the host that serves the Lakekeeper Iceberg catalog, which every cold-tier
+commit goes through, in a `lakekeeper` group of its own. The collection
+deploys no object store, so point the `coldfront_s3_*` settings at one that
+already exists, with its bucket created.
+
+The following inventory adds ColdFront to all three nodes:
+
+```yaml
+all:
+  vars:
+    ansible_user: pgedge
+    lakekeeper_host: 192.168.6.20
+    coldfront_s3_endpoint: https://s3.example.com
+    coldfront_s3_bucket: iceberg
+    coldfront_s3_access_key: coldfront
+    coldfront_s3_secret_key: secret
+
+pgedge:
+  vars:
+    db_password: secret
+    coldfront_enabled: true
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 2
+    192.168.6.12:
+      zone: 3
+
+lakekeeper:
+  vars:
+    lakekeeper_db_password: catalogsecret
+  hosts:
+    192.168.6.20:
+```
+
+Both groups read the catalog and object store settings, so they go under
+`all`. For AWS S3, leave `coldfront_s3_endpoint` empty, set
+`coldfront_s3_region`, and set `coldfront_s3_path_style` to `false`. With
+`coldfront_mesh` at its default of `false`, each node serializes only its own
+cold-tier commits, so write any one Iceberg table from a single node. Set
+`coldfront_mesh` to `true`, and add `coldfront_db` to `db_names`, to order
+commits across every node instead.
+
+Add a play for the Lakekeeper host ahead of the pgEdge nodes, since
+`setup_coldfront` fails if the catalog is not already serving, and add the
+three ColdFront roles to the `pgedge` play.
+`install_coldfront` comes before `setup_postgres`, which preloads ColdFront's
+libraries, `setup_coldfront_db` follows `setup_postgres` to create ColdFront's
+database and extensions, and `setup_coldfront` comes after `setup_pgedge`:
+
+```yaml
+- hosts: lakekeeper
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - init_server
+    - install_repos
+    - install_lakekeeper
+    - setup_lakekeeper
+
+- hosts: pgedge
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - init_server
+    - install_repos
+    - install_pgedge
+    - install_coldfront
+    - setup_postgres
+    - setup_coldfront_db
+    - setup_pgedge
+    - setup_coldfront
+```
+
+The `sample-playbooks/simple-cluster-coldfront` playbook includes both. See
+[ColdFront Configuration](configuration/coldfront.md) for the catalog, object
+store and ColdFront parameters.

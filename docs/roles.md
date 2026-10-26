@@ -76,7 +76,7 @@ the restored zone. See [Recovering a Cluster from Backup](recovery.md).
 
 ## Role Categories
 
-The roles in this collection fall into five categories.
+The roles in this collection fall into six categories.
 
 ### Configuration Foundation
 
@@ -120,3 +120,30 @@ The roles in this collection fall into five categories.
 |------|-------------|
 | [`recover_postgres`](roles/recover_postgres.md) | Builds the cluster's Postgres from a backup, in place of `setup_postgres`. |
 | [`wipe_cluster`](roles/wipe_cluster.md) | Tears down every cluster component except the backups, ahead of a redeployment or a recovery. |
+
+### ColdFront Tiered Storage
+
+These roles are optional and not part of the numbered execution order
+above. `install_lakekeeper` and `setup_lakekeeper` build a dedicated
+Lakekeeper host, independent of any pgEdge cluster, after `init_server`
+and `install_repos` have run there as on every host. In the `pgedge` play,
+`install_coldfront` comes before `setup_postgres`, which preloads
+ColdFront's libraries where `coldfront_enabled` is set.
+`setup_coldfront_db` creates ColdFront's role, database and extensions
+after `setup_postgres`, or `setup_patroni` on an HA cluster, and before
+`setup_pgedge`. `setup_coldfront` comes after `setup_pgedge`, once
+Lakekeeper is serving. The `sample-playbooks/simple-cluster-coldfront` and
+`sample-playbooks/ultra-ha-coldfront` playbooks run all five in that order,
+with Lakekeeper in a play for the `lakekeeper` group; the plain
+`simple-cluster` and `ultra-ha` playbooks leave ColdFront out.
+
+| Role | Description |
+|------|-------------|
+| [`install_lakekeeper`](roles/install_lakekeeper.md) | Installs Lakekeeper and the Postgres packages for its catalog. |
+| [`setup_lakekeeper`](roles/setup_lakekeeper.md) | Creates Lakekeeper's catalog instance and bootstraps the warehouse. |
+| [`install_coldfront`](roles/install_coldfront.md) | Installs the ColdFront tiered-storage extension. |
+| [`setup_coldfront_db`](roles/setup_coldfront_db.md) | Creates ColdFront's role, database and extensions. |
+| [`setup_coldfront`](roles/setup_coldfront.md) | Configures the ColdFront tiered-storage extension. |
+
+See the [ColdFront Configuration](configuration/coldfront.md) reference
+for how these roles fit together.

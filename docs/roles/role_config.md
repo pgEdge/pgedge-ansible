@@ -132,6 +132,43 @@ skips each check that already holds a value, so repeated inclusion costs
 nothing and an inventory may set a check directly when the binary is
 unreachable.
 
+### ColdFront and Lakekeeper Settings
+
+ColdFront's settings are defined here because `setup_postgres` writes them
+into the Postgres configuration, and because ColdFront shares several of
+them with Lakekeeper, its Iceberg catalog:
+
+- `coldfront_enabled` adds ColdFront to the pgEdge nodes. Where it is set,
+  `pg_coldfront_parameters` holds the settings ColdFront depends on, which
+  join `pg_required_parameters`; `pg_coldfront_default_parameters` holds
+  its tuning settings, which join `pg_default_parameters`, so
+  `pg_parameters` may override them; and `pg_coldfront_preload_libraries`
+  adds `pg_duckdb` and `coldfront` to `pg_preload_libraries`.
+- `coldfront_duckdb_role`, `coldfront_db`, and `coldfront_mesh` name the
+  role DuckDB execution is gated on and ColdFront's database, and choose
+  whether nodes coordinate their cold-tier commits. Each appears in one of
+  ColdFront's settings.
+- `coldfront_supported_pg_versions` lists the Postgres releases ColdFront
+  packages are published for, which `init_server` checks `pg_version`
+  against.
+- `lakekeeper_host`, `lakekeeper_port`, and `lakekeeper_warehouse` locate the
+  Iceberg REST catalog and name the warehouse ColdFront writes through.
+- `lakekeeper_metrics_port` sets the port Lakekeeper serves Prometheus
+  metrics on. It lives here rather than in either Lakekeeper role because
+  `init_server` checks it for collisions and `setup_lakekeeper`
+  writes it into the service environment.
+- `coldfront_s3_endpoint`, `coldfront_s3_region`, `coldfront_s3_bucket`,
+  `coldfront_s3_access_key`, `coldfront_s3_secret_key`, and
+  `coldfront_s3_path_style` locate and authenticate to the S3-compatible
+  object store behind the cold tier. This is deliberately generic: real AWS
+  S3, MinIO, and a self-hosted store are all equally valid backends, and
+  this collection deploys none of them. `coldfront_s3_endpoint` stays empty
+  to use AWS's own endpoint resolution; set it to point at another store
+  instead.
+
+The AI DBA Workbench, a separate monitoring product, is out of scope for
+now; its settings will land here alongside its own roles.
+
 ### Platform-Specific Values
 
 The `pg_service_name` variable contains the appropriate service name for the

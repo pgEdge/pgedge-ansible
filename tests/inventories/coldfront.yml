@@ -1,0 +1,41 @@
+# Layered onto a scenario's inventory to add ColdFront: coldfront_enabled on
+# the pgEdge nodes, the Lakekeeper host that tests/compose/coldfront-*.yml
+# adds, and the catalog and object store settings both groups read. Pass it
+# after the scenario's own:
+#
+#   ansible-playbook -i tests/inventories/simple-cluster.yml \
+#                    -i tests/inventories/coldfront.yml ...
+#
+# coldfront_enabled comes from the inventory rather than from -e, which
+# outranks everything, because coldfront-reconfigure.yml turns ColdFront off
+# by passing coldfront_enabled to setup_postgres.
+#
+# run-test.sh also reads seaweedfs_filer and coldfront_s3_bucket from this
+# file, to wait for the bucket before any playbook starts.
+
+all:
+  vars:
+    lakekeeper_host: 192.168.6.32
+    # Path-style addressing, because virtual-hosted style would need a
+    # wildcard DNS entry per bucket that the test network has no way to
+    # serve. Real S3 wants the opposite, which is why the parameter exists.
+    coldfront_s3_endpoint: http://192.168.6.31:8333
+    coldfront_s3_region: us-east-1
+    coldfront_s3_bucket: iceberg
+    coldfront_s3_access_key: coldfront
+    coldfront_s3_secret_key: coldfrontsecret
+    coldfront_s3_path_style: true
+    # SeaweedFS's filer answers on 8888 without requiring a signed request,
+    # which is how run-test.sh and the test playbooks wait for the bucket the
+    # compose overlay creates in a side container.
+    seaweedfs_filer: http://192.168.6.31:8888
+
+pgedge:
+  vars:
+    coldfront_enabled: true
+
+lakekeeper:
+  vars:
+    lakekeeper_db_password: TestPass654
+  hosts:
+    192.168.6.32:

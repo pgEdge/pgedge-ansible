@@ -1,0 +1,99 @@
+# This inventory will produce an HA cluster with the following:
+#
+# * 2 zones
+# * 3 pgEdge nodes in each zone
+# * 1 HAProxy node in each zone
+# * 1 Backup node in each zone
+# * ColdFront tiered storage on every pgEdge node, in mesh mode
+# * 1 Lakekeeper host serving the Iceberg catalog ColdFront commits through
+#
+# To add a pooled endpoint, set pgbouncer_enabled on the pgedge group below,
+# along with pgbouncer_auth_password, which the playbook refuses to leave at
+# its default. Every pgEdge node then runs a pooler in front of its own
+# Postgres, and HAProxy serves pooler_port (6432) beside proxy_port (5432).
+#
+# Pooling is a property of the cluster, like is_ha_cluster, and not of a node.
+# The pooled listener health-checks Patroni's leader endpoint, so a zone that
+# pooled only some of its nodes would lose that endpoint the moment the leader
+# moved to one of the others.
+#
+#   pgbouncer_enabled: true
+#   pgbouncer_auth_password: <a real password>
+
+# PgBackRest encrypts the repository with this, and it has no default: a
+# generated password would have to be identical on every run and also
+# unguessable, and nothing can be both. It belongs under 'all' rather than
+# under 'pgedge', because the backup servers render the same repository
+# configuration and have to arrive at the same value as the nodes they serve:
+#
+#   all:
+#     vars:
+#       backup_repo_cipher: "{{ vault_backup_repo_cipher }}"
+#
+# Or leave PgBackRest's own encryption off and let the storage layer do it,
+# which is the arrangement that permits key rotation -- again under 'all', for
+# the same reason:
+#
+#   all:
+#     vars:
+#       backup_repo_cipher_type: none
+
+# Both groups read the catalog and object store settings, so those go under
+# all. This collection deploys no object store. Point coldfront_s3_endpoint at
+# an S3-compatible store whose bucket already exists; for AWS S3, leave it
+# empty, set coldfront_s3_region, and set coldfront_s3_path_style to false.
+# The keys belong in Ansible Vault, beside the passwords.
+
+all:
+  vars:
+    lakekeeper_host: 192.168.6.20
+    coldfront_s3_endpoint: https://s3.example.com
+    coldfront_s3_bucket: iceberg
+    coldfront_s3_access_key: "{{ vault_coldfront_s3_access_key }}"
+    coldfront_s3_secret_key: "{{ vault_coldfront_s3_secret_key }}"
+
+# On an HA cluster ColdFront runs in mesh mode, which orders cold-tier commits
+# across the zones and needs the ColdFront database in db_names as well.
+
+pgedge:
+  vars:
+    db_password: secret
+    is_ha_cluster: true
+    coldfront_enabled: true
+    coldfront_mesh: true
+    db_names:
+    - demo
+    - coldfront
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 1
+    192.168.6.12:
+      zone: 1
+    192.168.6.13:
+      zone: 2
+    192.168.6.14:
+      zone: 2
+    192.168.6.15:
+      zone: 2
+
+haproxy:
+  hosts:
+    192.168.6.16:
+      zone: 1
+    192.168.6.17:
+      zone: 2
+
+backup:
+  hosts:
+    192.168.6.18:
+      zone: 1
+    192.168.6.19:
+      zone: 2
+
+lakekeeper:
+  vars:
+    lakekeeper_db_password: secret
+  hosts:
+    192.168.6.20:
