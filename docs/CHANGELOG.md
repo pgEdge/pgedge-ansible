@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+The [release notes](release_notes/unreleased.md#changes) describe each change
+in full.
+
+### Fixed
+
+- A database added to `db_names` reaches a running cluster. On Ultra-HA,
+  `setup_postgres` and `setup_pgedge` write to each zone's current leader
+  rather than its first node, and `setup_patroni` reloads Patroni so the new
+  `pg_hba` rules take effect. On a simple cluster, `setup_postgres` reloads
+  Postgres when `pg_hba.conf` changes. (EE-44)
+- `setup_patroni` no longer times out on a zone whose leader has moved off its
+  first node, and `setup_postgres` no longer rewrites the `pg_hba.conf` and
+  `postgresql.conf` of a node Patroni manages. (EE-44)
+- New `zone_primary` task file in `role_config` finds the node running each
+  zone's primary, for any role that writes to the zone. `finalize_backrest`
+  uses it in place of its own lookup. (EE-44)
+- Removing a database from `db_names` no longer shrinks the calculated worker,
+  walsender, slot and origin pools beneath what the running cluster still
+  uses. A new `sizing_floor` task file in `role_config` reads the databases,
+  replication origins and slots on each zone's primary, and the calculation
+  never goes below them. (EE-44)
+
 ## v2.1.0
 
 This release adds ColdFront tiered storage, which keeps recent data in native

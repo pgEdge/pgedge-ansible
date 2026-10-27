@@ -1,0 +1,95 @@
+---
+
+# Read what the zone's running Postgres holds into pg_sizing_floor, which
+# role_config's sizing formulas never go beneath. Anything that writes the
+# sized parameters includes this first.
+#
+# db_names says what the cluster should replicate, not what it does: a name
+# removed from it leaves its database, Spock node, subscriptions and slots in
+# place. Sized from db_names alone, the pools would shrink beneath them at the
+# next restart. Spock would then fail to start the workers it needs, and
+# Postgres refuses to start at all with more slots on disk than
+# max_replication_slots allows. So the floor counts what is there:
+#
+#   - every database that accepts connections, where Spock starts a manager,
+#   - every replication origin, which Spock creates for each subscription and
+#     drops with it,
+#   - and every replication slot.
+#
+# It is read on the zone's primary, which in an HA zone holds the physical
+# slots and whose configuration every member shares. A zone not yet built has
+# nothing to read: without HA, no initialized data directory; with HA, no
+# patroni.yml, which setup_postgres builds the first node before. A built zone
+# whose Postgres does not answer fails here, since sizing it from the inventory
+# alone might shrink what it needs.
+
+- name: Find the node that runs this zone's primary
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
+
+- name: Check whether this zone has been built
+  stat:
+    path: >-
+      {{ patroni_config_dir ~ '/' ~ patroni_config_file if is_ha_cluster | bool
+         else pg_data ~ '/PG_VERSION' }}
+  register: sizing_floor_built
+  become: true
+  when: inventory_hostname == zone_primary
+
+- name: Read what this zone's running Postgres uses
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT (SELECT count(*) FROM pg_database WHERE datallowconn) AS databases,
+             (SELECT count(*) FROM pg_replication_origin) AS subscriptions,
+             (SELECT count(*) FROM pg_replication_slots) AS slots
+  register: sizing_floor_usage
+  until: sizing_floor_usage.query_result is defined
+  retries: 6
+  delay: 5
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: postgres
+  when:
+  - inventory_hostname == zone_primary
+  - sizing_floor_built.stat.exists
+
+- name: Ensure this zone's running Postgres answered
+  assert:
+    that:
+    - sizing_floor_usage.query_result is defined
+    fail_msg: >-
+      Postgres on {{ inventory_hostname }} leads zone {{ zone }}, which has
+      been built, but it did not answer: {{ sizing_floor_usage.msg
+      | default('no reason given') }}. The collection sizes Postgres's worker
+      and slot pools no smaller than what the running cluster uses, and cannot
+      tell what that is while it is down. Start it, and run this again.
+  when: sizing_floor_usage is not skipped
+
+- name: Record what this zone's running Postgres uses
+  set_fact:
+    pg_sizing_floor: >-
+      {{ hostvars[zone_primary].sizing_floor_usage.query_result
+         | default([{}]) | first }}
+
+# init_server checked pg_parameters against the inventory before anything was
+# running. A value it allowed may still be beneath what the cluster now holds.
+
+- name: Ensure pg_parameters leaves Spock the pools it already uses
+  assert:
+    that:
+    - pg_undersized_parameters | length == 0
+    fail_msg: >-
+      pg_parameters on {{ inventory_hostname }} sets
+      {{ pg_undersized_parameters | join('; ') }}. Zone {{ zone }} already
+      holds {{ pg_sizing_floor.databases }} databases,
+      {{ pg_sizing_floor.subscriptions }} subscriptions and
+      {{ pg_sizing_floor.slots }} replication slots, and a smaller pool keeps
+      Spock from starting the workers it needs, or Postgres from starting at
+      all. Raise them, or remove them from pg_parameters to use the calculated
+      values.
+  when: pg_sizing_floor | length > 0

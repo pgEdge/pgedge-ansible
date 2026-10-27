@@ -105,16 +105,25 @@ The role performs the following steps:
 2. Generate the Patroni configuration file. On RHEL systems the file is named
    `patroni.yml`; on Debian systems the file is named
    `{{ pg_version }}-{{ cluster_name }}.yml`. Both files are stored in
-   `/etc/patroni/`.
+   `/etc/patroni/`. On a zone that is already running, the worker and slot
+   pools never shrink beneath what its leader uses; see
+   [Sizing Floor](role_config.md#sizing-floor).
 3. Disable the native Postgres systemd service so Patroni has exclusive control
    of the Postgres lifecycle.
 4. Start Patroni on the designated primary node and wait for the cluster
    primary to become available.
 5. Start Patroni on all replica nodes. Patroni rebuilds each replica from the
    primary using streaming replication.
-6. Wait for the cluster to reach a running state (up to 30 retries with a
-   10-second delay between attempts).
-7. Restart Postgres through Patroni to apply settings and clear the
+6. Reload Patroni on any node where it was already running and the
+   configuration file changed. Patroni reads the file only when it starts or
+   reloads, and the file's local settings, such as the `pg_hba` rules, never
+   pass through the zone's configuration store. The reload has Patroni
+   rewrite `pg_hba.conf` and reload Postgres, so a database added to
+   `db_names` is open to the other zones' subscriptions.
+7. Wait for the zone's leader to reach a running state (up to 30 retries with
+   a 10-second delay between attempts). The leader is whichever node Patroni
+   reports, which after a failover is not the zone's first node.
+8. Restart Postgres through Patroni to apply settings and clear the
    "Pending Restart" flag.
 
 ### Postgres Settings Managed by Patroni
@@ -204,10 +213,8 @@ restoring, and `pg_clonecluster` is the fallback.
 
 ## Idempotency
 
-This role has limited idempotency. The role regenerates configuration files,
-disables the native Postgres service, and restarts Patroni and Postgres on
-subsequent runs to ensure configuration changes apply.
-
-!!! warning "Configuration Updates"
-    Changes to Patroni configuration require a service restart. The role
-    performs this automatically via `patronictl restart`.
+This role is idempotent and safe to re-run on a running cluster, including
+one whose leaders Patroni has moved off each zone's first node. The role
+regenerates the configuration file, reloads Patroni only where the file
+changed, and restarts Postgres through `patronictl restart` only where Patroni
+reports a restart pending.

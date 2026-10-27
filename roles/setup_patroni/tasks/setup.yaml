@@ -19,6 +19,14 @@
   become: true
   when: replica_from_backup | bool
 
+# The sizing in patroni.yml and the zone's store never drops beneath what the
+# zone's running leader uses.
+
+- name: Read what the zone's Postgres already uses
+  include_role:
+    name: role_config
+    tasks_from: sizing_floor
+
 - name: Create configuration file for Patroni node
   template:
     src: templates/patroni.yml.j2
@@ -27,6 +35,7 @@
     owner: postgres
     group: postgres
   become: true
+  register: patroni_config
   # The file holds the superuser and replication passwords, and --diff would
   # print both.
   diff: false
@@ -61,7 +70,27 @@
     enabled: true
     state: started
   become: true
+  register: patroni_joined
   when: inventory_hostname != first_node_in_zone
+
+# A running Patroni reads patroni.yml only when it starts or is told to reload,
+# and the file's local settings never pass through the zone's store. pg_hba is
+# the one that matters most: it names every database in db_names, so a database
+# added to a running zone stays closed to the other zones' subscriptions, which
+# arrive through the proxies, until Patroni rewrites pg_hba.conf from the new
+# file. A reload has it do that and reload Postgres, and flags anything that
+# needs a restart, which the restart steps below then see. A Patroni this run
+# started has read the file already.
+
+- name: Reload Patroni to apply its changed configuration
+  systemd_service:
+    name: "{{ patroni_service_name }}"
+    state: reloaded
+  become: true
+  when:
+  - patroni_config is changed
+  - patroni_takeover is not changed
+  - patroni_joined is not changed
 
 # Wait for Patroni to become ready before sending it commands.
 

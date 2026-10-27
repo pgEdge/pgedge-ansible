@@ -13,7 +13,8 @@ The role performs the following tasks on inventory hosts:
 - Enable DDL replication via Spock.
 - Subscribe the current node to every other zone in the cluster.
 
-In HA clusters, the role runs only on the first node in each zone.
+In HA clusters, the role runs only on each zone's primary, which after a
+failover is not the zone's first node.
 Subscriptions target the HAProxy node in the remote zone when one is
 available.
 
@@ -101,8 +102,10 @@ where all nodes replicate to all other nodes.
 ### HA Deployment
 
 When `is_ha_cluster` is `true`, the role creates zone-based connections
-through HAProxy. It creates Spock nodes only on the first node in each zone
-and subscribes each zone to every other zone. The subscription connection
+through HAProxy. It creates Spock nodes only on each zone's primary, as
+[Zone Primary](role_config.md#zone-primary) finds it, and subscribes each zone
+to every other zone. A database added to `db_names` on a running cluster gets
+its Spock node and subscriptions the same way. The subscription connection
 target is selected in the following priority order:
 
 1. The `proxy_node` variable, if set.

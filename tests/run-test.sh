@@ -397,6 +397,22 @@ if [ "$SCENARIO" = "ultra-ha" ] && [ "$DCS" = "etcd3" ]; then
     -v
 fi
 
+# Step 10: A database added to db_names reaches a running cluster, on Ultra-HA
+# with each zone's leader moved off its first node. Not with ColdFront: mesh
+# mode sets db_names as an extra variable, which no role variable can extend.
+# Like Step 8b, setup_patroni signs against the authority staged by the
+# deployment.
+if [ "$COLDFRONT" = false ]; then
+  echo "==> Step 10: Checking a database added to db_names is applied..."
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/playbooks/db-add.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    "${RECONFIGURE_VARS[@]}" \
+    -v
+fi
+
 echo ""
 echo "========================================="
 echo "  TEST PASSED: ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP}${REPO_LAYOUT:+, repo=$REPO_LAYOUT})"

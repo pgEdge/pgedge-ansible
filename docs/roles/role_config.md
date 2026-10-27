@@ -91,6 +91,9 @@ the formulas in
 - `pg_sized_parameters` maps each calculated Postgres parameter to its value.
   `pg_default_parameters` includes it, and `init_server` compares
   `pg_parameters` against it.
+- `pg_undersized_parameters` lists each calculated parameter `pg_parameters`
+  sets below its calculated value, which `init_server` and the `sizing_floor`
+  task file both refuse.
 
 OS-specific shortcut variables include the following computed values:
 
@@ -131,6 +134,69 @@ The `setup_postgres` and `setup_patroni` roles both include it. The task file
 skips each check that already holds a value, so repeated inclusion costs
 nothing and an inventory may set a check directly when the binary is
 unreachable.
+
+### Zone Primary
+
+Anything that writes to a zone has to run on the node running its primary,
+because a replica is read-only. On a non-HA cluster that is the zone's only
+node. On an HA cluster it is wherever Patroni last put the leader, which after
+a failover or switchover is not the zone's first node. The role provides a
+`zone_primary` task file that finds that node and records its inventory name
+as the `zone_primary` fact on every node of the zone:
+
+```yaml
+- name: Find the node that runs this zone's primary
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
+
+- name: Write something to the zone
+  ...
+  when: inventory_hostname == zone_primary
+```
+
+On an HA cluster, every node whose Patroni service is running asks
+`patronictl list` for the zone's leader, and the answers are pooled, so a node
+new to the zone or a run limited to part of it still finds the leader. Until
+Patroni runs anywhere in the zone, the zone is being built and its first node
+is the primary. Once Patroni runs, the task file waits briefly for an
+election to settle, then stops unless Patroni reports exactly one leader among
+the zone's nodes.
+
+The `setup_postgres`, `setup_pgedge` and `finalize_backrest` roles include
+it.
+
+### Sizing Floor
+
+The worker and slot formulas count the databases in `db_names`, but removing a
+database from `db_names` leaves its Spock node, subscriptions and replication
+slots in place. Sized from the inventory alone, the pools would shrink beneath
+what the cluster still uses at the next restart. Spock would then fail to start
+the workers it needs, and Postgres refuses to start at all when it finds more
+replication slots than `max_replication_slots` allows.
+
+The role provides a `sizing_floor` task file that reads what the zone's primary
+uses and records it as the `pg_sizing_floor` fact:
+
+- `databases` counts the databases that accept connections, including any
+  created outside `db_names`.
+- `subscriptions` counts replication origins. Spock creates one for each
+  subscription and drops it with the subscription.
+- `slots` counts replication slots, logical and physical.
+
+`pg_connectable_dbs`, `pg_spock_subscriptions` and `pg_replication_slots` each
+take the larger of the inventory's value and the floor. The pools therefore
+grow with `db_names` but shrink only once a database is actually gone. A zone
+that has not been built yet has no floor: on a simple cluster, the node has no
+initialized data directory, and on an HA cluster, the zone's primary has no
+Patroni configuration file. A zone that has been built but whose Postgres does
+not answer stops the run, because the role cannot tell what it needs. The task
+file also refuses a `pg_parameters` value below the floor, which `init_server`
+cannot check before the cluster is running.
+
+`setup_postgres` includes it before writing `postgresql.conf` on a simple
+cluster, and `setup_patroni` includes it before writing `patroni.yml` and the
+zone's store.
 
 ### ColdFront and Lakekeeper Settings
 

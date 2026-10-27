@@ -110,9 +110,9 @@ the zone's primary drives them instead. A pgEdge node's `pgbackrest.conf` names
 only its own Postgres, so a replica cannot take a backup: PgBackRest stops with
 "unable to find primary cluster". On a non-HA cluster the primary is the zone's
 first node. On an HA cluster it is whichever node Patroni reports as leader,
-which after a failover is no longer the first node; the role asks
-`patronictl list` before it writes anything, and stops if the zone does not
-have exactly one leader among its nodes. The backup database user is created on
+which after a failover is no longer the first node; the role finds it through
+[Zone Primary](role_config.md#zone-primary) before it writes anything, and
+stops if the zone does not have exactly one leader among its nodes. The backup database user is created on
 the same node, since a replica is read-only.
 
 ### Repository Identity

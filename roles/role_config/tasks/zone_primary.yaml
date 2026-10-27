@@ -1,0 +1,78 @@
+---
+
+# Find the node running this zone's primary and record it as zone_primary on
+# every node of the zone. Anything that writes to a zone has to run there: a
+# replica is read-only, and in S3 mode its pgbackrest.conf names only its own
+# Postgres.
+#
+# A non-HA zone is one node, and that node is its primary. An HA zone's primary
+# is wherever Patroni last put it, which after a failover or switchover is not
+# the zone's first node, so Patroni is asked. Every node whose Patroni is
+# running asks, and the answers are pooled through hostvars, so a node new to
+# the zone and a run limited to part of it still find the leader.
+#
+# Until Patroni runs somewhere in the zone, nothing has a leader to report:
+# the zone is being built, and the first node is the one setup_postgres
+# initializes and Patroni then bootstraps from. Once Patroni runs, it has to
+# report exactly one leader. Falling back to the first node then would send
+# writes to what may well be a replica.
+#
+# patronictl shows Host as host:port once any member runs on a port other than
+# 5432 (or two members share a host), so the port is stripped before the name
+# is compared with the inventory. pipefail keeps a patronictl failure from
+# passing as an empty list. A zone mid-election has no leader for a cycle or
+# two, which the retries wait out.
+
+- name: Check whether Patroni is running on this node
+  systemd_service:
+    name: "{{ patroni_service_name }}"
+  register: zone_primary_patroni
+  become: true
+  when: is_ha_cluster | bool
+
+- name: Ask Patroni which node leads this zone
+  shell: |-
+    set -o pipefail
+    {{ ctl }} list {{ patroni_scope }} -f json \
+        | jq -r '.[] | select(.Role == "Leader") | .Host | sub(":[0-9]+$"; "")'
+  args:
+    executable: /bin/bash
+  vars:
+    ctl: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
+  register: zone_primary_leader
+  until: zone_primary_leader.stdout_lines | length == 1
+  retries: 12
+  delay: 5
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: postgres
+  when:
+  - is_ha_cluster | bool
+  - zone_primary_patroni.status.ActiveState | default('') == 'active'
+
+- name: Ensure Patroni reported exactly one leader among this zone's nodes
+  assert:
+    that:
+    - zone_primary_leader.rc == 0
+    - zone_primary_leader.stdout_lines | length == 1
+    - zone_primary_leader.stdout | trim in nodes_in_zone
+    fail_msg: >-
+      Patroni cluster {{ patroni_scope }} should have one leader among
+      {{ nodes_in_zone | join(', ') }}, but patronictl list reported
+      {{ zone_primary_leader.stdout_lines | join(', ')
+         if zone_primary_leader.stdout_lines | default([]) else 'none' }}
+      {{- (': ' ~ zone_primary_leader.stderr | trim)
+          if zone_primary_leader.stderr | default('') | trim else '' }}.
+      Nothing can be written to the zone until it has a leader; see
+      'patronictl list {{ patroni_scope }}' on {{ inventory_hostname }}.
+  when: zone_primary_leader is not skipped
+
+- name: Record which node runs this zone's primary
+  set_fact:
+    zone_primary: "{{ leaders | first if leaders else first_node_in_zone }}"
+  vars:
+    leaders: >-
+      {{ nodes_in_zone | map('extract', hostvars)
+         | map(attribute='zone_primary_leader.stdout_lines', default=[])
+         | flatten | map('trim') | unique | list }}

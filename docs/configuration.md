@@ -78,7 +78,7 @@ access:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| db_names | [demo] | List of database names for the Spock cluster. At least one name is required. Any database in the list that does not already exist will be created and owned by db_user. |
+| db_names | [demo] | List of database names for the Spock cluster. At least one name is required. Any database in the list that does not already exist will be created and owned by db_user. A name added to a running cluster is created and added to Spock the next time the deployment playbook runs. |
 | db_user | admin | Database superuser username. Must differ from the OS user running the installation. |
 | db_password | secret | Password for db_user. |
 | pgedge_user | pgedge | Internal user for node-to-node Spock connections. |

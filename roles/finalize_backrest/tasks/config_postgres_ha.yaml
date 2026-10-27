@@ -52,7 +52,7 @@
 
 # The first backup cannot finish until archiving works, and Patroni applies a
 # store change on its own schedule rather than when edit-config returns. Only
-# the leader archives, so only the leader is waited for; find_leader has
+# the leader archives, so only the leader is waited for; setup_client has
 # already found it, and refused to go on without one.
 
 - name: Wait for Postgres to take up the archive command

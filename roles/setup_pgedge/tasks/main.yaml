@@ -2,10 +2,20 @@
 
 - include_tasks: user_access.yaml
 
+# Under HA, Spock's node and subscriptions live in each zone's primary, and the
+# replicas receive them through physical replication. After a failover the
+# primary need not be the zone's first node.
+
+- name: Find the node that runs this zone's primary
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
+  when: is_ha_cluster
+
 - include_tasks: ha_setup.yaml
   when:
   - is_ha_cluster
-  - inventory_hostname == first_node_in_zone
+  - inventory_hostname == zone_primary
 
 - include_tasks: setup.yaml
   when:

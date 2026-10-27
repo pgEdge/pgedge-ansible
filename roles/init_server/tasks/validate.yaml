@@ -555,17 +555,7 @@
       or remove them from pg_parameters to use the calculated values. See
       "Worker and Replication Sizing" in the Postgres configuration docs.
   vars:
-    undersized: >-
-      {% set found = [] %}
-      {%- for name, sized in pg_sized_parameters.items()
-            if name in pg_user_parameters %}
-      {%-   set given = pg_user_parameters[name] %}
-      {%-   if given is none or given | int < sized %}
-      {%-     set _ = found.append(name ~ ' to '
-                ~ ('null' if given is none else given)
-                ~ ' where the cluster needs at least ' ~ sized) %}
-      {%-   endif %}
-      {%- endfor %}{{ found }}
+    undersized: "{{ pg_undersized_parameters }}"
   when: inventory_hostname in (groups.pgedge | default([]))
 
 # An HA zone keeps one Postgres configuration, in Patroni's store, for every

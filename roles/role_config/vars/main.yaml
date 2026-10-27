@@ -181,12 +181,24 @@ pg_config_dir: >-
 # multiple of four to leave room to grow, and the slot total never falls below
 # 16, the fixed value earlier releases used: shrinking max_replication_slots
 # beneath the slots a node already holds stops Postgres from starting.
+#
+# Nor does any of them fall below what the running cluster uses. A database
+# removed from db_names keeps its Spock node, its subscriptions and their
+# slots, so sizing from db_names alone would shrink every pool beneath them at
+# the next restart. sizing_floor reads what the zone's primary actually holds
+# into pg_sizing_floor, and D, S and the slot total each take the larger of the
+# two. The floor goes down only once the database itself is gone. A cluster
+# not yet built has no floor.
 
 pg_spock_nodes: "{{ zone_list | length }}"
 
-pg_connectable_dbs: "{{ (db_names + ['postgres', 'template1']) | unique | length }}"
+pg_connectable_dbs: >-
+  {{ [(db_names + ['postgres', 'template1']) | unique | length,
+      (pg_sizing_floor | default({})).databases | default(0) | int] | max }}
 
-pg_spock_subscriptions: "{{ db_names | length * (pg_spock_nodes | int - 1) }}"
+pg_spock_subscriptions: >-
+  {{ [db_names | length * (pg_spock_nodes | int - 1),
+      (pg_sizing_floor | default({})).subscriptions | default(0) | int] | max }}
 
 pg_physical_standbys: "{{ nodes_in_zone | length - 1 if is_ha_cluster | bool else 0 }}"
 
@@ -204,8 +216,8 @@ pg_worker_processes: >-
 # two spare for pg_basebackup and the like. A walsender serves each slot, and
 # Postgres 18 needs an origin for each.
 pg_replication_slots: >-
-  {{ [16, 2 * pg_spock_subscriptions | int + pg_physical_standbys | int + 2]
-     | max }}
+  {{ [16, 2 * pg_spock_subscriptions | int + pg_physical_standbys | int + 2,
+      (pg_sizing_floor | default({})).slots | default(0) | int] | max }}
 
 # The calculated parameters by name, which init_server compares pg_parameters
 # against.
@@ -218,6 +230,21 @@ pg_sized_parameters: >-
      | combine({
          'max_active_replication_origins': pg_replication_slots | int,
        } if pg_version | int >= 18 else {}) }}
+
+# Each calculated parameter pg_parameters sets below its calculated value, or to
+# null, which falls back to Postgres's own smaller default, as 'name to value
+# where the cluster needs at least N'.
+pg_undersized_parameters: >-
+  {% set found = [] %}
+  {%- for name, sized in pg_sized_parameters.items()
+        if name in pg_user_parameters %}
+  {%-   set given = pg_user_parameters[name] %}
+  {%-   if given is none or given | int < sized %}
+  {%-     set _ = found.append(name ~ ' to '
+            ~ ('null' if given is none else given)
+            ~ ' where the cluster needs at least ' ~ sized) %}
+  {%-   endif %}
+  {%- endfor %}{{ found }}
 
 pg_default_parameters: >-
   {{ {

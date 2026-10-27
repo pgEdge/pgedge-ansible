@@ -242,23 +242,23 @@ to `db_names` raises the values on every node, and the next run applies them.
 Every one of these parameters requires a restart, so `pg_allow_restart` decides
 whether the run restarts each node or leaves the restart pending.
 
-Removing a zone or a database from `db_names` lowers the values just as
-readily, but the collection does not drop the subscriptions and replication
-slots the removed zone or database leaves behind. If those slots outnumber the
-new `max_replication_slots`, Postgres refuses to start after the next restart.
-Before you remove a zone or a database, either drop its subscriptions and slots
-on every remaining node, or set the parameters in `pg_parameters` to their
-current values until you have.
+Removing a database from `db_names` does not lower the values while the
+database still exists. The collection does not drop the database, its Spock
+node, or its subscriptions and replication slots, so each run reads what the
+zone's primary actually uses and never sizes the pools below it. The values
+come down on the next run after the database itself is dropped. See
+[Sizing Floor](../roles/role_config.md#sizing-floor).
 
 !!! warning "Overriding the calculated values"
 
     You can set any of these parameters in `pg_parameters`, and your value
     replaces the calculation completely. The collection does not raise it as the
     cluster grows. If you set one, calculate it yourself with the formulas
-    above, and recalculate it whenever you add a zone or a database. The
-    formulas cannot account for databases created outside `db_names`, or for
-    extensions that start their own background workers, such as `pg_cron`. If
-    your nodes have either, add them to the totals yourself.
+    above, and recalculate it whenever you add a zone or a database. A value
+    below what a running cluster already uses is refused. The formulas count a
+    database created outside `db_names` only once it exists, and cannot
+    account for extensions that start their own background workers, such as
+    `pg_cron`. If your nodes have these, add them to the totals yourself.
 
     `init_server` refuses an inventory where `pg_parameters` sets one of these
     parameters below the calculated value, or sets it to `null`, which falls
