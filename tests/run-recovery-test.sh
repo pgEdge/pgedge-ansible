@@ -28,7 +28,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 usage() {
   echo "Usage: $0 <scenario> <os> [dcs] [backup] [pass] [-- extra ansible args...]"
   echo "  scenario: ultra-ha (the only recoverable scenario)"
-  echo "  os:       debian12 | rocky9"
+  echo "  os:       debian12 | debian13 | ubuntu2404 | ubuntu2604 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
   echo "  backup:   ssh (default) | s3 -- as the deployment was given"
   echo "  pass:     latest (default) restores to the end of the archive;"

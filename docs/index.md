@@ -26,7 +26,10 @@ The collection supports the following deployment topologies:
 The collection has been validated on the following Linux platforms:
 
 - Debian 12 (Bookworm)
-- Rocky 9
+- Debian 13 (Trixie)
+- Ubuntu 24.04 (Noble Numbat)
+- Ubuntu 26.04 (Resolute Raccoon)
+- Rocky Linux 9
 
 The collection may also work on other Debian or RHEL variants, but
 compatibility with those distributions has not been validated.
