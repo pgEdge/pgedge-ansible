@@ -38,9 +38,35 @@ hosts:
 
 ## Configuration
 
-This role uses no custom parameters beyond the shared `repo_name` parameter.
-The role handles all repository configuration automatically based on the
-detected operating system.
+Beyond the shared `repo_name` parameter, the role takes a client certificate
+for the gated pgEdge repositories. The repositories authenticate clients with
+mutual TLS, and `pgedge-release` ships its repository definitions disabled, so
+without a certificate the role installs `pgedge-release` and stops: the
+repositories stay disabled and no pgEdge package will install.
+
+Supply the certificate and its matching key as a pair. Either give the PEM
+contents inline:
+
+| Parameter | Description |
+| --- | --- |
+| `pgedge_client_cert` | PEM contents of the client certificate: the leaf followed by its issuing intermediate. |
+| `pgedge_client_key` | PEM contents of the matching private key. |
+
+or point the role at files on the Ansible controller, which it reads and
+copies to the target:
+
+| Parameter | Description |
+| --- | --- |
+| `pgedge_client_cert_src` | Path on the controller to the certificate file. |
+| `pgedge_client_key_src` | Path on the controller to the key file. |
+
+The inline parameters take precedence. Both halves of a pair are required --
+a certificate without its key, or a key without its certificate, leaves the
+repositories disabled just as supplying neither does.
+
+The certificate and key are written to `/etc/pki/pgedge` on RHEL-based systems
+and `/etc/pgedge` on Debian-based systems, then validated by
+`pgedge-subscription-manager`, which enables the repositories on success.
 
 ## How It Works
 
