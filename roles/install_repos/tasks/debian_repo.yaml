@@ -6,6 +6,7 @@
     - curl
     - gnupg2
     - lsb-release
+    - openssl
     state: present
   retries: 5
   delay: 20
@@ -13,9 +14,10 @@
   until: result is success
   become: true
 
+# downloads.pgedge.com, not apt.pgedge.com -- see rhel_repo.yaml.
 - name: Install the pgEdge repo package
   apt:
-    deb: 'https://apt.pgedge.com/repodeb/pgedge-release_latest_all.deb'
+    deb: 'https://downloads.pgedge.com/repodeb/pgedge-release_latest_all.deb'
     state: present
   retries: 5
   delay: 20
@@ -23,7 +25,9 @@
   until: result is success
   become: true
 
-- name: Update APT cache to include pgEdge packages
+# Harmless while the pgEdge source is still disabled, and other roles expect a
+# fresh cache even when no client certificate was supplied.
+- name: Update APT cache
   apt:
     update_cache: true
   become: true

@@ -1,0 +1,84 @@
+---
+
+# The repositories authenticate clients with mutual TLS. pgedge-release ships
+# them disabled and pgedge-subscription-manager enables them once a certificate
+# is installed and verified, so this runs after the repo package.
+
+- name: Decide whether a client certificate was supplied
+  set_fact:
+    pgedge_have_client_cert: >-
+      {{ ((pgedge_client_cert | length > 0) or (pgedge_client_cert_src | length > 0))
+         and ((pgedge_client_key | length > 0) or (pgedge_client_key_src | length > 0)) }}
+
+- name: Warn when no client certificate was supplied
+  debug:
+    msg: >-
+      No pgEdge client certificate supplied: the repositories stay disabled and
+      pgEdge packages will not install. Set pgedge_client_cert and
+      pgedge_client_key (or the _src variants).
+  when: not pgedge_have_client_cert
+
+- name: Install the client certificate
+  when: pgedge_have_client_cert
+  become: true
+  block:
+  - name: Create the pgEdge configuration directory
+    file:
+      path: "{{ pgedge_cert_dir }}"
+      state: directory
+      owner: root
+      group: root
+      mode: '0755'
+
+  - name: Write the client certificate from a variable
+    copy:
+      content: "{{ pgedge_client_cert | trim }}\n"
+      dest: "{{ pgedge_cert_dir }}/client.crt"
+      owner: root
+      group: root
+      mode: '0644'
+    when: pgedge_client_cert | length > 0
+    no_log: true
+
+  - name: Copy the client certificate from the controller
+    copy:
+      src: "{{ pgedge_client_cert_src }}"
+      dest: "{{ pgedge_cert_dir }}/client.crt"
+      owner: root
+      group: root
+      mode: '0644'
+    when: pgedge_client_cert | length == 0
+
+  # Mode and ownership are left to pgedge-subscription-manager: apt drops
+  # privileges to _apt before fetching, so the key has to be readable by that
+  # user on Debian but root-only on RHEL.
+  - name: Write the client key from a variable
+    copy:
+      content: "{{ pgedge_client_key | trim }}\n"
+      dest: "{{ pgedge_cert_dir }}/client.key"
+      owner: root
+      group: root
+      mode: '0600'
+    when: pgedge_client_key | length > 0
+    no_log: true
+
+  - name: Copy the client key from the controller
+    copy:
+      src: "{{ pgedge_client_key_src }}"
+      dest: "{{ pgedge_cert_dir }}/client.key"
+      owner: root
+      group: root
+      mode: '0600'
+    when: pgedge_client_key | length == 0
+    no_log: true
+
+  - name: Validate the certificate and enable the pgEdge repositories
+    command: >-
+      pgedge-subscription-manager install
+      {{ pgedge_cert_dir }}/client.crt {{ pgedge_cert_dir }}/client.key --force
+    register: pgedge_sm
+    changed_when: true
+
+  - name: Show what the subscription manager did
+    debug:
+      var: pgedge_sm.stdout_lines

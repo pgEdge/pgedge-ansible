@@ -1,3 +1,7 @@
 ---
 
 repo: "{{ repo_name if repo_name in ('release', 'staging', 'daily') else 'release' }}"
+
+# Where pgedge-subscription-manager keeps the client certificate. It differs by
+# family and the manager derives the same paths itself.
+pgedge_cert_dir: "{{ '/etc/pki/pgedge' if ansible_os_family == 'RedHat' else '/etc/pgedge' }}"

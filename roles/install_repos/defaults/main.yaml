@@ -1,1 +1,12 @@
 ---
+
+# Client certificate for the gated pgEdge repositories. Supply the PEM contents
+# (leaf followed by the issuing intermediate) and the matching key, or point
+# pgedge_client_cert_src / pgedge_client_key_src at files on the controller.
+# Leaving all four empty installs pgedge-release and stops: the repositories
+# stay disabled, which is deliberate -- an enabled repository the host cannot
+# authenticate to fails every package operation, not just pgEdge's.
+pgedge_client_cert: ""
+pgedge_client_key: ""
+pgedge_client_cert_src: ""
+pgedge_client_key_src: ""

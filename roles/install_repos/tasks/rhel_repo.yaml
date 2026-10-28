@@ -1,5 +1,7 @@
 ---
 
+# downloads.pgedge.com, not dnf.pgedge.com: the gated repository cannot serve
+# the package that configures access to it.
 - name: Install the pgEdge repo GPG Keys
   rpm_key:
     key: https://dnf.pgedge.com/keys/pgedge-rsa.pub
@@ -8,7 +10,7 @@
 
 - name: Install the pgEdge repo package
   dnf:
-    name: https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+    name: https://downloads.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
     state: present
   retries: 5
   delay: 20
