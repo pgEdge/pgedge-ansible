@@ -1,0 +1,97 @@
+---
+
+# Install psql on a client host from PGDG rather than from the distribution,
+# so the client tests run the same psql everywhere. Each distribution ships
+# its own major version, and its output changes between them: psql 18 prints
+# \conninfo as a table, where earlier releases print one line. Set
+# client_pg_version to test another release of the client.
+#
+# A client host is not a pgEdge node, so the pgEdge repository is not there to
+# draw on, and PGDG keeps the client independent of the server packages under
+# test.
+
+- name: Install the PGDG repository on Debian-family client hosts
+  when: ansible_facts['os_family'] == 'Debian'
+  block:
+  - name: Install PGDG prerequisite packages
+    apt:
+      name:
+      - ca-certificates
+      - curl
+      state: present
+      update_cache: true
+    retries: 5
+    delay: 20
+    register: result
+    until: result is success
+
+  - name: Create the APT keyring directory
+    file:
+      path: /etc/apt/keyrings
+      state: directory
+      mode: '0755'
+
+  - name: Fetch the PGDG signing key
+    get_url:
+      url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+      dest: /etc/apt/keyrings/pgdg.asc
+      mode: '0644'
+    retries: 5
+    delay: 20
+    register: result
+    until: result is success
+
+  - name: Configure the PGDG repository
+    copy:
+      dest: /etc/apt/sources.list.d/pgdg.sources
+      mode: '0644'
+      content: |
+        Types: deb
+        URIs: https://apt.postgresql.org/pub/repos/apt
+        Suites: {{ ansible_facts['distribution_release'] }}-pgdg
+        Components: main
+        Signed-By: /etc/apt/keyrings/pgdg.asc
+
+- name: Install the PGDG repository on RHEL-family client hosts
+  dnf:
+    name: >-
+      https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{
+      ansible_facts['distribution_major_version'] }}-{{
+      ansible_facts['architecture'] }}/pgdg-redhat-repo-latest.noarch.rpm
+    state: present
+    disable_gpg_check: true
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Install the Postgres {{ client_pg_version }} client
+  package:
+    name: >-
+      {{ 'postgresql' ~ client_pg_version
+         if ansible_facts['os_family'] == 'RedHat'
+         else 'postgresql-client-' ~ client_pg_version }}
+    state: present
+    update_cache: true
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+
+# Debian's psql is a wrapper that runs the newest client installed, and PGDG's
+# RPMs put theirs on the PATH through alternatives, so either could be a
+# different release than the one just installed.
+- name: Ask psql which release it is
+  command: psql --version
+  register: client_psql_version
+  changed_when: false
+
+- name: Assert psql is the Postgres {{ client_pg_version }} client
+  assert:
+    that: >-
+      client_psql_version.stdout is
+      search(' ' ~ client_pg_version ~ '[.]')
+    fail_msg: >-
+      Expected the Postgres {{ client_pg_version }} client, but psql reports
+      "{{ client_psql_version.stdout }}".

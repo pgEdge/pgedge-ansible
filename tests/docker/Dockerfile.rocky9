@@ -1,4 +1,6 @@
-FROM rockylinux:9
+# Rocky's own image, which follows the current 9.x release. The Docker Hub
+# library image stopped at 9.3, whose PGDG repositories are gone.
+FROM rockylinux/rockylinux:9
 
 RUN cat <<EOF > /etc/dnf/dnf.conf
 [main]

@@ -129,3 +129,23 @@ changes.
   leaders can write to one table at once without losing a row, that every
   member reads every row, and that a replica refuses a cold-tier write. The
   recovery test does not run with ColdFront. (EE-40)
+
+### Fixed
+
+- The compatibility list in the README and the documentation names Debian 13
+  (Trixie), Ubuntu 24.04 (Noble Numbat) and Ubuntu 26.04 (Resolute Raccoon)
+  beside Debian 12 and Rocky Linux 9. Each passed the simple-cluster and
+  Ultra-HA end-to-end tests. Ubuntu 25.04 leaves the list: it is past its end
+  of life, and the pgEdge repository no longer serves it. `tests/run-test.sh`
+  and `tests/run-recovery-test.sh` take the new systems as `debian13`,
+  `ubuntu2404` and `ubuntu2604`; the workflows still test Debian 12 and Rocky
+  Linux 9 only. (EE-47)
+- The end-to-end tests install psql on the client host from PGDG, at the
+  release `client_pg_version` names in the verification playbooks (18 by
+  default), so the client no longer changes with the distribution under test:
+  Ubuntu 26.04's own client is psql 18, which prints `\conninfo` as a table,
+  and broke a check written against the one-line form earlier releases print.
+  The check now accepts both. The Rocky Linux 9 test hosts build from Rocky's
+  own `rockylinux/rockylinux:9` image, which follows the current 9.x release,
+  rather than the Docker Hub `rockylinux:9` image, which stopped at 9.3 and
+  whose PGDG repositories no longer exist. (EE-47)

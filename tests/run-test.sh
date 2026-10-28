@@ -7,7 +7,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 usage() {
   echo "Usage: $0 <scenario> <os> [dcs] [backup] [coldfront] [mesh] [--keep]"
   echo "  scenario: simple-cluster | ultra-ha"
-  echo "  os:       debian12 | rocky9"
+  echo "  os:       debian12 | debian13 | ubuntu2404 | ubuntu2604 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
   echo "  backup:   ssh (default) | s3 -- the repository; s3 is ultra-ha only"
   echo "  coldfront: add ColdFront and Lakekeeper, in mesh mode on ultra-ha"
