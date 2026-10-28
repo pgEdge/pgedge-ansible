@@ -46,7 +46,7 @@
     set -euo pipefail
     export GNUPGHOME=$(mktemp -d)
     trap 'rm -rf "$GNUPGHOME"' EXIT
-    curl -fsSL '{{ repo_key_url }}' |
+    curl -fsSL '{{ repo_key_url | quote }}' |
       gpg --batch --quiet --import-options import-export --import \
       > "$GNUPGHOME/keyring"
     test -s "$GNUPGHOME/keyring"

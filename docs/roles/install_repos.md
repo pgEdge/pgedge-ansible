@@ -97,6 +97,12 @@ The `init_server` role refuses an unknown `repo_layout`, a `repo_url` that is
 not an `http://`, `https://`, or `file:///` URL, a `repo_gpg_key` without a
 `repo_url`, and a `mirror` layout with a `repo_name` other than `release`.
 
+!!! warning "HTTP Repository Trust"
+    An `http://` repository does not authenticate the repository or signing-key
+    source. An attacker able to intercept the connection can replace both
+    before package signature verification. Use `https://`, or set
+    `repo_gpg_key` to a separately trusted HTTPS key source when using HTTP.
+
 !!! note "EPEL on RHEL Systems"
     The `repo_url` parameter replaces only the pgEdge repositories. On RHEL
     and Oracle Linux, the role still downloads the EPEL release package from
