@@ -2,7 +2,9 @@
 
 The `install_repos` role configures official pgEdge package repositories on
 target systems. The role enables installation of pgEdge Enterprise Postgres
-packages and adds EPEL on RHEL-based systems to satisfy dependencies.
+packages and adds EPEL on RHEL-based systems to satisfy dependencies. The role
+can also point hosts at a mirror or caching proxy of your own instead of the
+pgEdge servers.
 
 The role performs the following tasks on inventory hosts:
 
@@ -38,9 +40,69 @@ hosts:
 
 ## Configuration
 
-This role uses no custom parameters beyond the shared `repo_name` parameter.
-The role handles all repository configuration automatically based on the
-detected operating system.
+This role reads the following shared parameters; the
+[Cluster Configuration](../configuration/cluster.md) page describes each one:
+
+- `repo_name` selects the repository tier.
+- `repo_url` names a mirror or proxy of your own to use in place of the
+  pgEdge servers.
+- `repo_layout` describes how the repository at `repo_url` arranges its
+  contents.
+- `repo_gpg_key` overrides where the role fetches the package signing key
+  for `repo_url`.
+
+The role handles all other repository configuration automatically based on
+the detected operating system.
+
+### Using Your Own Repository
+
+When `repo_url` is set, the role builds the repository definition that the
+`pgedge-release` package would install, with every location pointing at
+`repo_url`. The role removes the `pgedge-release` package, because an upgrade
+of that package would point the host back at the pgEdge servers. The
+repository IDs and file names stay the same, so a host can move between the
+pgEdge servers and your own repository in either direction by setting or
+removing `repo_url` and running the role again.
+
+The following table shows the locations the role uses under `repo_url` for
+each layout:
+
+| Layout | RHEL packages | Debian packages | Signing key |
+|--------|---------------|-----------------|-------------|
+| `upstream` | `<repo_url>/<repo_name>/<major>/RPMS/<arch>/` and `.../RPMS/noarch/` | `<repo_url>/<repo_name>/<codename>` | `<repo_url>/keys/pgedge-rsa.pub` |
+| `mirror` | `<repo_url>/el<major>/<arch>/pgedge/` and `.../pgedge-noarch/` | `<repo_url>/apt/<distribution><version>` | `<repo_url>/keys/pgedge-rsa.pub` on RHEL, `<repo_url>/apt/<distribution><version>/pgedge.gpg` on Debian |
+
+In the `upstream` layout, `repo_url` stands for `https://dnf.pgedge.com` on
+RHEL hosts and `https://apt.pgedge.com` on Debian hosts; most caching proxies,
+such as Artifactory or Nexus remote repositories, keep this layout. An
+inventory with hosts of both families sets `repo_url` separately for each
+family. In the `mirror` layout, one `repo_url` serves every platform, and
+`<distribution><version>` is a name such as `debian12` or `ubuntu24.04`.
+
+In the following example, the playbook installs from a pgEdge mirror on the
+internal network:
+
+```yaml
+- hosts: pgedge
+  collections:
+    - pgedge.platform
+  vars:
+    repo_url: http://mirror.example.com/pgedge
+    repo_layout: mirror
+  roles:
+    - install_repos
+```
+
+The `init_server` role refuses an unknown `repo_layout`, a `repo_url` that is
+not an `http://`, `https://`, or `file:///` URL, a `repo_gpg_key` without a
+`repo_url`, and a `mirror` layout with a `repo_name` other than `release`.
+
+!!! note "EPEL on RHEL Systems"
+    The `repo_url` parameter replaces only the pgEdge repositories. On RHEL
+    and Oracle Linux, the role still downloads the EPEL release package from
+    `dl.fedoraproject.org`; on Rocky and Alma Linux, the role installs EPEL
+    from the distribution's own repositories. A host on an isolated network
+    needs those sources available as well.
 
 ## How It Works
 
@@ -53,7 +115,9 @@ On Debian-based systems, the role performs the following steps:
 
 1. Install prerequisite packages including `curl`, `gnupg2`, and
    `lsb-release`.
-2. Download and install the pgEdge repository definition package.
+2. Download and install the pgEdge repository definition package; with
+   `repo_url` set, remove that package, install the signing key from
+   `repo_url`, and write the repository definition instead.
 3. Update the APT package cache to include pgEdge packages.
 
 ### RHEL Family Setup
@@ -63,7 +127,9 @@ On RHEL-based systems, the role performs the following steps:
 1. Install the EPEL repository using the appropriate method for the
    distribution variant.
 2. Import the pgEdge GPG key for package verification.
-3. Download and install the pgEdge repository definition package.
+3. Download and install the pgEdge repository definition package; with
+   `repo_url` set, remove that package and write the repository definition
+   instead.
 
 !!! important "Execution Order"
     Execute this role before any `install_*` roles that install pgEdge
@@ -76,8 +142,9 @@ On RHEL-based systems, the role performs the following steps:
     access on RHEL systems.
 
 !!! note "Network Requirements"
-    This role requires outbound HTTPS access to pgEdge repository servers.
-    Ensure firewall rules and proxy settings allow this connectivity.
+    This role requires outbound HTTPS access to pgEdge repository servers,
+    unless `repo_url` names a repository of your own. Ensure firewall rules
+    and proxy settings allow this connectivity.
 
 ## Usage Examples
 
@@ -108,7 +175,7 @@ hosts:
 | File | New / Modified | Explanation |
 |------|----------------|-------------|
 | `/etc/apt/sources.list.d/pgedge.sources` | New | pgEdge repository configuration on Debian systems. |
-| `/etc/apt/keyrings/pgedge.gpg` | New | pgEdge GPG key on Debian systems. |
+| `/etc/apt/keyrings/pgedge-rsa.gpg` | New | pgEdge GPG key on Debian systems. |
 | `/etc/yum.repos.d/pgedge.repo` | New | pgEdge repository configuration on RHEL systems. |
 | `/etc/yum.repos.d/epel.repo` | New | EPEL repository configuration on RHEL systems. |
 

@@ -48,6 +48,19 @@ on:
         type: boolean
         required: false
         default: false
+      repo:
+        description: >-
+          Where packages come from. pgedge uses pgEdge's servers directly.
+          upstream and mirror set repo_url to a local proxy of those servers,
+          laid out like a caching proxy or like the proposed pgEdge mirror
+          procedure, and check every package came through it.
+        type: choice
+        required: false
+        default: pgedge
+        options:
+          - pgedge
+          - upstream
+          - mirror
       recover:
         description: >-
           Also rebuild the cluster from its backup repository and verify the
@@ -72,7 +85,10 @@ on:
 
 jobs:
   test:
-    name: Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}${{ inputs.coldfront && ' - coldfront' || '' }}
+    name: >-
+      Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}${{
+      inputs.coldfront && ' - coldfront' || '' }}${{
+      inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -86,6 +102,7 @@ jobs:
         ${{ matrix.dcs != 'etcd3' && format('-f tests/compose/dcs-{0}.yml', matrix.dcs) || '' }}
         ${{ matrix.backup == 's3' && '-f tests/compose/backup-s3.yml' || '' }}
         ${{ inputs.coldfront && format('-f tests/compose/coldfront-{0}.yml', matrix.os) || '' }}
+        ${{ inputs.repo != 'pgedge' && '-f tests/compose/repo-proxy.yml' || '' }}
       DCS_VARS: ${{ matrix.dcs != 'etcd3' && format('-e @tests/vars/dcs-{0}.yml', matrix.dcs) || '' }}
       # The repository is layered onto the base inventory: the backup servers
       # for SSH, or the MinIO store's variables for S3, which may not have any.
@@ -93,6 +110,10 @@ jobs:
       # ColdFront is layered onto the base inventory as well, always in mesh
       # mode, which an HA cluster needs.
       COLDFRONT_ARGS: ${{ inputs.coldfront && '-i tests/inventories/coldfront.yml -e @tests/vars/coldfront-mesh.yml' || '' }}
+      # A repo_url of the site's own takes the tier as repo_name, which is how
+      # an inventory would set it; switch-repo.yml leaves its definition alone.
+      REPO_ARGS: >-
+        ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -110,6 +131,14 @@ jobs:
       - name: Install Ansible
         run: pip install ansible
 
+      # The mirror procedure carries the release tier alone, which init_server
+      # would refuse too, but only after the containers were built.
+      - name: Check the repository options agree
+        if: inputs.repo == 'mirror' && inputs.environment != 'release'
+        run: |
+          echo "ERROR: the mirror layout carries only the release tier" >&2
+          exit 1
+
       # Offline, and the only tests that can observe a topology this matrix
       # does not deploy -- in particular a cluster with pgbouncer_enabled
       # unset, whose haproxy.cfg must stay what it was before pooling
@@ -121,6 +150,7 @@ jobs:
           python3 tests/render/check-pgbackrest.py
           python3 tests/render/check-etcd.py
           python3 tests/render/check-validate.py
+          python3 tests/render/check-repos.py
 
       - name: Generate SSH keypair
         run: |
@@ -190,7 +220,7 @@ jobs:
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
-            $DCS_VARS
+            $DCS_VARS $REPO_ARGS
 
       - name: Check the pooler roles are idempotent
         run: |
@@ -200,7 +230,15 @@ jobs:
             $BACKUP_ARGS $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
-            $DCS_VARS
+            $DCS_VARS $REPO_ARGS
+
+      - name: Check packages came from the site's repository
+        if: inputs.repo != 'pgedge'
+        run: |
+          tests/check-repo.sh e2e $COMPOSE_ARGS -- \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS $REPO_ARGS
 
       - name: Verify cluster
         run: |
@@ -256,6 +294,7 @@ jobs:
       # which is the case recover_postgres's timeline handling is for.
       #
       # Not with ColdFront: run-recovery-test.sh deploys without its layer.
+      # With the deployment's repo_url, which it re-applies install_repos with.
       - name: Recover the cluster from its backup repository
         if: ${{ inputs.recover && !inputs.coldfront }}
         env:
@@ -269,7 +308,7 @@ jobs:
           for pass in $passes; do
             tests/run-recovery-test.sh \
               ultra-ha ${{ matrix.os }} ${{ matrix.dcs }} ${{ matrix.backup }} \
-              "$pass"
+              "$pass" -- $REPO_ARGS
           done
 
       - name: Show container logs on failure

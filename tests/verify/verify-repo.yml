@@ -1,0 +1,71 @@
+---
+# Checks a cluster deployed with repo_url left nothing pointing at pgEdge's own
+# servers. Run with the same -e @tests/vars/repo-*.yml the deployment had.
+#
+# That the packages came through the site's repository is shown by the
+# repository itself: run-test.sh reads the proxy's log for them. What this adds
+# is that they could not have come from anywhere else, and that nothing will
+# point the host back at pgEdge's servers later, as an upgrade of
+# pgedge-release would.
+
+- hosts: pgedge:backup
+  become: true
+
+  vars:
+    repo_base: "{{ repo_url | regex_replace('/+$', '') }}"
+    # Every place a source can be defined, named so that none has to exist:
+    # Debian 12 and later images have no sources.list at all.
+    repo_dir: >-
+      {{ '/etc/yum.repos.d' if ansible_facts['os_family'] == 'RedHat'
+         else '/etc/apt' }}
+    repo_file: >-
+      {{ '/etc/yum.repos.d/pgedge.repo'
+         if ansible_facts['os_family'] == 'RedHat'
+         else '/etc/apt/sources.list.d/pgedge.sources' }}
+
+  tasks:
+  - name: Gather the installed packages
+    package_facts:
+
+  - name: Ensure pgedge-release is gone
+    assert:
+      that:
+      - "'pgedge-release' not in ansible_facts.packages"
+      fail_msg: >-
+        pgedge-release is still installed. An upgrade of it would point this
+        host back at pgEdge's own servers.
+
+  - name: Find package sources naming pgEdge's own servers
+    command: >-
+      grep -rlE 'pgedge\.com' {{ repo_dir }}
+      --include=*.repo --include=*.list --include=*.sources
+    register: pgedge_sources
+    changed_when: false
+    failed_when: pgedge_sources.rc > 1
+
+  - name: Ensure no package source names pgEdge's own servers
+    assert:
+      that:
+      - pgedge_sources.stdout_lines | length == 0
+      fail_msg: >-
+        {{ pgedge_sources.stdout_lines | join(', ') }} still name pgEdge's own
+        servers.
+
+  - name: Read the pgEdge repository definition
+    slurp:
+      src: "{{ repo_file }}"
+    register: definition
+
+  - name: Ensure every location in the definition is the site's repository
+    assert:
+      that:
+      - locations | length > 0
+      - locations | reject('match', repo_base ~ '/') | list | length == 0
+      - "'//' not in locations | map('regex_replace', '^[a-z]+://', '') | join"
+      fail_msg: >-
+        {{ repo_file }} names {{ locations }}, expected everything beneath
+        {{ repo_base }}/.
+    vars:
+      locations: >-
+        {{ definition.content | b64decode |
+           regex_findall('(?m)^(?:baseurl|gpgkey|URIs)\s*[=:]\s*(\S+)') }}

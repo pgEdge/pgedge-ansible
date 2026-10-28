@@ -1,0 +1,19 @@
+# The client file a mirror built by pgEdge's proposed mirror procedure offers
+# for an EL platform, with MIRROR_URL and PLATFORM in place of the mirror's
+# address and a platform name such as el9. Only the repositories' locations
+# are compared: the names differ, and the collection adds the priority
+# pgedge-release sets.
+
+[pgedge]
+name=pgEdge pgedge (local mirror)
+baseurl=MIRROR_URL/PLATFORM/$basearch/pgedge/
+enabled=1
+gpgcheck=1
+gpgkey=MIRROR_URL/keys/pgedge-rsa.pub
+
+[pgedge-noarch]
+name=pgEdge pgedge-noarch (local mirror)
+baseurl=MIRROR_URL/PLATFORM/$basearch/pgedge-noarch/
+enabled=1
+gpgcheck=1
+gpgkey=MIRROR_URL/keys/pgedge-rsa.pub

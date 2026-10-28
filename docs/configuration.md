@@ -57,6 +57,9 @@ repository the collection uses:
 |-----------|---------|-------------|
 | repo_name | release | Repository tier to use. Accepted values are release, staging, and daily. |
 | repo_prefix | (none) | Custom or automated build prefix. Contact pgEdge staff for valid values. |
+| repo_url | (none) | A mirror or proxy of your own to install from instead of the pgEdge servers. |
+| repo_layout | upstream | How `repo_url` arranges its contents: `upstream` for a proxy or copy of the pgEdge servers, or `mirror` for a pgEdge mirror. |
+| repo_gpg_key | (none) | URL of the package signing key; by default, the role fetches the key from `repo_url`. |
 
 ## Installation Parameters
 

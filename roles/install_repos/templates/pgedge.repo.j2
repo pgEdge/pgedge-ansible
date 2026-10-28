@@ -1,0 +1,11 @@
+# Managed by Ansible.
+{% for r in dnf_repos %}
+
+[{{ r.id }}]
+name={{ r.name }}
+baseurl={{ repo_base }}/{{ r.path }}/
+enabled={{ 1 if r.enabled else 0 }}
+gpgcheck=1
+priority=1
+gpgkey={{ repo_key_url }}
+{% endfor %}

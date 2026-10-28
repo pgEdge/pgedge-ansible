@@ -1,0 +1,6 @@
+# Managed by Ansible.
+Types: deb
+URIs: {{ apt_repo_uri }}
+Suites: {{ ansible_distribution_release }}
+Components: main
+Signed-By: /etc/apt/keyrings/pgedge-rsa.gpg

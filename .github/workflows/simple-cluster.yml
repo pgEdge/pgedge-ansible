@@ -32,13 +32,27 @@ on:
         type: boolean
         required: false
         default: false
+      repo:
+        description: >-
+          Where packages come from. pgedge uses pgEdge's servers directly.
+          upstream and mirror set repo_url to a local proxy of those servers,
+          laid out like a caching proxy or like the proposed pgEdge mirror
+          procedure, and check every package came through it.
+        type: choice
+        required: false
+        default: pgedge
+        options:
+          - pgedge
+          - upstream
+          - mirror
 
 jobs:
   test:
     name: >-
       Simple Cluster - ${{ matrix.os }}${{
       inputs.coldfront && ' - coldfront' || '' }}${{
-      inputs.coldfront && inputs.mesh && ' - mesh' || '' }}
+      inputs.coldfront && inputs.mesh && ' - mesh' || '' }}${{
+      inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -48,12 +62,17 @@ jobs:
       COMPOSE_ARGS: >-
         -f tests/compose/simple-cluster-${{ matrix.os }}.yml
         ${{ inputs.coldfront && format('-f tests/compose/coldfront-{0}.yml', matrix.os) || '' }}
+        ${{ inputs.repo != 'pgedge' && '-f tests/compose/repo-proxy.yml' || '' }}
       # ColdFront is layered onto the base inventory: the Lakekeeper host,
       # coldfront_enabled, and the catalog and object store settings. Mesh mode
       # adds the ColdFront database to db_names on top.
       COLDFRONT_ARGS: >-
         ${{ inputs.coldfront && '-i tests/inventories/coldfront.yml' || '' }}
         ${{ inputs.coldfront && inputs.mesh && '-e @tests/vars/coldfront-mesh.yml' || '' }}
+      # A repo_url of the site's own takes the tier as repo_name, which is how
+      # an inventory would set it; switch-repo.yml leaves its definition alone.
+      REPO_ARGS: >-
+        ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -71,6 +90,14 @@ jobs:
       - name: Install Ansible
         run: pip install ansible
 
+      # The mirror procedure carries the release tier alone, which init_server
+      # would refuse too, but only after the containers were built.
+      - name: Check the repository options agree
+        if: inputs.repo == 'mirror' && inputs.environment != 'release'
+        run: |
+          echo "ERROR: the mirror layout carries only the release tier" >&2
+          exit 1
+
       # Offline, and the only tests that can observe a topology this matrix
       # does not deploy -- in particular a cluster with pgbouncer_enabled
       # unset, whose haproxy.cfg must stay what it was before pooling
@@ -82,6 +109,7 @@ jobs:
           python3 tests/render/check-pgbackrest.py
           python3 tests/render/check-etcd.py
           python3 tests/render/check-validate.py
+          python3 tests/render/check-repos.py
 
       - name: Generate SSH keypair
         run: |
@@ -125,7 +153,7 @@ jobs:
             tests/playbooks/simple-cluster.yml \
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
-            -e repo_environment=${{ inputs.environment }}
+            -e repo_environment=${{ inputs.environment }} $REPO_ARGS
 
       - name: Check the pooler roles are idempotent
         run: |
@@ -134,7 +162,15 @@ jobs:
             tests/playbooks/simple-cluster.yml \
             $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
-            -e repo_environment=${{ inputs.environment }}
+            -e repo_environment=${{ inputs.environment }} $REPO_ARGS
+
+      - name: Check packages came from the site's repository
+        if: inputs.repo != 'pgedge'
+        run: |
+          tests/check-repo.sh e2e $COMPOSE_ARGS -- \
+            -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $REPO_ARGS
 
       - name: Verify cluster
         run: |
