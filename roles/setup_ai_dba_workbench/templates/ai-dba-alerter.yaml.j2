@@ -1,0 +1,36 @@
+# Managed by Ansible. setup_ai_dba_workbench writes this over the file the
+# pgedge-ai-dba-alerter package installs, and the Workbench's defaults apply to
+# every setting it leaves out. Secrets are read from the files named here.
+
+datastore:
+  host: 127.0.0.1
+  port: {{ pg_port }}
+  database: {{ ai_dba_workbench_db | to_json }}
+  username: {{ ai_dba_workbench_db_user | to_json }}
+  password_file: {{ ai_dba_workbench_db_password_file }}
+
+# The alerter decrypts the notification channels' credentials with the secret
+# the server encrypted them with, and reads it only where notifications are on.
+notifications:
+  enabled: {{ ai_dba_workbench_notifications_enabled | bool | to_json }}
+  secret_file: {{ ai_dba_workbench_secret_file }}
+
+# The statistical first tier always runs. The second compares an anomaly with
+# earlier ones through the embedding model, and the third asks the language
+# model about it, so each runs only where its model is configured.
+anomaly:
+  tier2:
+    enabled: {{ (ai_dba_workbench_embedding_provider | length > 0) | to_json }}
+  tier3:
+    enabled: {{ (ai_dba_workbench_llm_provider | length > 0) | to_json }}
+
+llm:
+  embedding_provider: {{ (ai_dba_workbench_embedding_provider or 'none')
+                         | to_json }}
+  reasoning_provider: {{ (ai_dba_workbench_llm_provider or 'none') | to_json }}
+{% for provider, settings in ai_dba_workbench_alerter_providers | dictsort %}
+  {{ provider }}:
+{%   for key, value in settings | dictsort %}
+    {{ key }}: {{ value | to_json }}
+{%   endfor %}
+{% endfor %}

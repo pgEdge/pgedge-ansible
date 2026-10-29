@@ -1,0 +1,26 @@
+# Overlay adding a pgEdge AI DBA Workbench host to a scenario's test network.
+# Layer it onto the scenario's compose file, with
+# tests/inventories/ai-dba-workbench.yml layered onto its inventory; it does
+# not stand alone:
+#
+#   docker compose -f tests/compose/simple-cluster-debian13.yml \
+#                  -f tests/compose/ai-dba-workbench-debian13.yml up -d
+#
+# The address stays clear of the scenarios' hosts from .10 to .19, of the
+# Consul and MinIO overlays' .20 and .21, of the client's .30, and of the
+# ColdFront overlay's .31 and .32, so the two add-on overlays can be layered
+# onto one scenario together.
+
+services:
+  ai-dba-workbench:
+    build:
+      context: ../docker
+      dockerfile: Dockerfile.debian13
+    privileged: true
+    cgroup: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    hostname: ai-dba-workbench
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.33

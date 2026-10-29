@@ -252,3 +252,95 @@ database and extensions, and `setup_coldfront` comes after `setup_pgedge`:
 The `sample-playbooks/simple-cluster-coldfront` playbook includes both. See
 [ColdFront Configuration](configuration/coldfront.md) for the catalog, object
 store and ColdFront parameters.
+
+## Adding the AI DBA Workbench
+
+The pgEdge AI DBA Workbench monitors every node, raises alerts, and with a
+language model configured adds AI-assisted analysis. It is optional, so it has
+a sample playbook and inventory of its own, in
+`sample-playbooks/simple-cluster-ai-dba-workbench`, beside the plain
+`simple-cluster` ones. Put one host in an `ai_dba_workbench` group of its own.
+That host runs the Workbench's server, collector, alerter and web client, and
+keeps the Workbench's datastore in a Postgres instance of its own, so it
+cannot be a pgEdge node as well. The Workbench's server package depends on a
+documentation knowledge base of about 2.6 GB, so the host needs the disk for
+it, except on Ubuntu 26.04, where the package does not depend on it.
+
+The following inventory adds the Workbench to the cluster:
+
+```yaml
+all:
+  vars:
+    ansible_user: pgedge
+    ai_dba_workbench_monitor_password: monitorsecret
+
+pgedge:
+  vars:
+    db_password: secret
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 2
+    192.168.6.12:
+      zone: 3
+
+ai_dba_workbench:
+  vars:
+    ai_dba_workbench_db_password: workbenchsecret
+    ai_dba_workbench_admin_password: workbench-admin-secret
+  hosts:
+    192.168.6.21:
+```
+
+Both groups read `ai_dba_workbench_monitor_password`, so it goes under `all`:
+`setup_ai_dba_workbench_monitor` creates the role the Workbench logs in to
+every node as, and `setup_ai_dba_workbench` gives the Workbench its password.
+`ai_dba_workbench_admin_password` must be at least 12 characters long.
+
+`setup_postgres` admits the Workbench host wherever the inventory has an
+`ai_dba_workbench` host. Add `setup_ai_dba_workbench_monitor` to the end of the
+`pgedge` play, where it installs the `system_stats` extension and creates the
+role the Workbench monitors the nodes as and the extensions its probes read,
+once every database the Workbench reads exists. Then add a play for the
+Workbench host after it, since `setup_ai_dba_workbench` registers every node
+with the Workbench:
+
+```yaml
+- hosts: pgedge
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - init_server
+    - install_repos
+    - install_pgedge
+    - setup_postgres
+    - setup_pgedge
+    - setup_ai_dba_workbench_monitor
+
+- hosts: ai_dba_workbench
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - init_server
+    - install_repos
+    - install_ai_dba_workbench
+    - setup_ai_dba_workbench
+```
+
+The `sample-playbooks/simple-cluster-ai-dba-workbench` playbook includes both.
+When it has finished, open `https://192.168.6.21:8444` in a browser and
+sign in as `admin` with `ai_dba_workbench_admin_password`. Unless
+`ai_dba_workbench_tls_cert_source` and `ai_dba_workbench_tls_key_source` name a
+certificate, the one nginx serves is self-signed, and the browser warns about
+it before it shows the page.
+
+Without a language model, the Workbench monitors the nodes and raises alerts,
+and its AI features are off. Set `ai_dba_workbench_llm_provider`,
+`ai_dba_workbench_llm_model` and `ai_dba_workbench_llm_api_key` to turn them
+on. See [AI DBA Workbench Configuration](configuration/ai_dba_workbench.md) for
+every parameter.

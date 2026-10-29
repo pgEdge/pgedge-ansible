@@ -1,0 +1,63 @@
+# Managed by Ansible. setup_ai_dba_workbench writes this over the file the
+# pgedge-ai-dba-server package installs, and the Workbench's defaults apply to
+# every setting it leaves out. Secrets are read from the files named here.
+
+http:
+  # nginx answers on {{ ai_dba_workbench_port }} and proxies to the server
+  # here, which no other host can reach.
+  address: "127.0.0.1:{{ ai_dba_workbench_server_port }}"
+  # nginx's own address, so the server takes a browser's address from the
+  # X-Forwarded-For header nginx adds, for its login limits and audit log.
+  trusted_proxies:
+  - 127.0.0.1/32
+  auth:
+    enabled: true
+
+# The server refuses to register a private or loopback address it is not told
+# to allow. These are the cluster's nodes and ai_dba_workbench_allowed_hosts.
+connection_security:
+  allow_internal_networks: false
+  allowed_hosts: {{ ai_dba_workbench_server_allowed_hosts | to_json }}
+
+database:
+  host: 127.0.0.1
+  port: {{ pg_port }}
+  database: {{ ai_dba_workbench_db | to_json }}
+  user: {{ ai_dba_workbench_db_user | to_json }}
+  password_file: {{ ai_dba_workbench_db_password_file }}
+
+secret_file: {{ ai_dba_workbench_secret_file }}
+data_dir: {{ ai_dba_workbench_server_data_dir }}
+{% if ai_dba_workbench_llm_provider | length > 0 %}
+
+llm:
+  provider: {{ ai_dba_workbench_llm_provider | to_json }}
+  model: {{ ai_dba_workbench_llm_model | to_json }}
+{%   if ai_dba_workbench_llm_key_needed | bool %}
+{%     set key_file = ai_dba_workbench_llm_key_file %}
+  {{ ai_dba_workbench_llm_provider }}_api_key_file: {{ key_file }}
+{%   endif %}
+{%   if ai_dba_workbench_llm_base_url | length > 0 %}
+{%     set url_key = 'ollama_url'
+                     if ai_dba_workbench_llm_provider == 'ollama'
+                     else ai_dba_workbench_llm_provider ~ '_base_url' %}
+  {{ url_key }}: {{ ai_dba_workbench_llm_base_url | to_json }}
+{%   endif %}
+{% endif %}
+{% if ai_dba_workbench_embedding_provider | length > 0 %}
+
+embedding:
+  enabled: true
+  provider: {{ ai_dba_workbench_embedding_provider | to_json }}
+  model: {{ ai_dba_workbench_embedding_model | to_json }}
+{%   if ai_dba_workbench_embedding_key_needed | bool %}
+{%     set key_file = ai_dba_workbench_embedding_key_file %}
+  {{ ai_dba_workbench_embedding_provider }}_api_key_file: {{ key_file }}
+{%   endif %}
+{%   if ai_dba_workbench_embedding_base_url | length > 0 %}
+{%     set url_key = 'ollama_url'
+                     if ai_dba_workbench_embedding_provider == 'ollama'
+                     else ai_dba_workbench_embedding_provider ~ '_base_url' %}
+  {{ url_key }}: {{ ai_dba_workbench_embedding_base_url | to_json }}
+{%   endif %}
+{% endif %}

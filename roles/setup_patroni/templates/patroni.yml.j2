@@ -146,6 +146,15 @@ postgresql:
 {%   set host_ip = hostvars[host].ansible_default_ipv4.address %}
   - host postgres,replication {{ backup_user }} {{ host_ip }}/32 scram-sha-256
 {% endfor %}
+{% if pg_required_hba_rules | length > 0 %}
+  # Connections from the hosts of other components
+{% endif %}
+{% for rule in pg_required_hba_rules %}
+{%   for host in rule.hosts %}
+{%     set host_ip = hostvars[host].ansible_default_ipv4.address %}
+  - host {{ rule.databases }} {{ rule.users }} {{ host_ip }}/32 scram-sha-256
+{%   endfor %}
+{% endfor %}
 
   authentication:
     replication:

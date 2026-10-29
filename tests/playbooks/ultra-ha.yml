@@ -128,6 +128,16 @@
       name: setup_coldfront
     when: coldfront_enabled | default(false) | bool
 
+  # Last, once every database the AI DBA Workbench reads exists, where
+  # tests/inventories/ai-dba-workbench.yml adds its host. The condition asks
+  # the group itself: ai_dba_workbench_enabled is role_config's, and an
+  # include's condition is evaluated before the role and its dependencies are
+  # loaded.
+
+  - include_role:
+      name: setup_ai_dba_workbench_monitor
+    when: groups.ai_dba_workbench | default([]) | length > 0
+
 - hosts: backup
 
   collections:
@@ -153,3 +163,25 @@
   tasks:
   - include_role:
       name: finalize_backrest
+
+# The AI DBA Workbench, on the host tests/inventories/ai-dba-workbench.yml
+# adds; without that layer this play matches no hosts. It comes last, because
+# it registers every member of every zone with the Workbench.
+
+- hosts: ai_dba_workbench
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: install_repos
+
+  - include_tasks: switch-repo.yml
+
+  - include_role:
+      name: install_ai_dba_workbench
+
+  - include_role:
+      name: setup_ai_dba_workbench

@@ -21,3 +21,5 @@ below to find solutions for a specific component.
 - [Spock Replication](troubleshooting/spock.md) - Multi-zone replication
   issues.
 - [PgBackRest](troubleshooting/backup.md) - Backup and recovery issues.
+- [AI DBA Workbench](troubleshooting/ai_dba_workbench.md) - Issues deploying the
+  Workbench host and its access to the pgEdge nodes.

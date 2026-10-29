@@ -1,0 +1,147 @@
+# This playbook will create an HA cluster assuming three node groups:
+#
+# * pgedge - will receive etcd, Patroni, and pgEdge
+# * haproxy - will receive haproxy
+# * backup - will act as a dedicated backup server per zone
+#
+# * ai_dba_workbench - will run the pgEdge AI DBA Workbench
+#
+# This is the ultra-ha playbook with the pgEdge AI DBA Workbench added, which
+# monitors every member of every zone. The inventory shows how.
+#
+# Setting pgbouncer_enabled on the pgedge group also gives every node in it a
+# connection pooler in front of its own Postgres.
+#
+# CHECK the README for how these roles work
+---
+
+# All hosts being managed by this collection should be initialized. This will
+# set up SSH host keys in some cases and other prerequisites which may be
+# used by followup roles
+
+- hosts: all
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - init_server
+
+# Begin deployment by "bootstrapping" all pgedge nodes with running software:
+#
+# - Postgres
+# - etcd
+# - Patroni
+#
+# This will also install and configure any pgEdge Distributed Postgres
+# extensions necessary for the cluster to operate.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_repos
+  - install_pgedge
+  - role: install_etcd
+    when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
+  - install_patroni
+  - install_backrest
+  - role: install_pgbouncer
+    when: pgbouncer_enabled | bool
+
+  # Before Postgres, and before Patroni. Two things need it there.
+  #
+  # Patroni's configuration carries the pgBackRest archive command, so Postgres
+  # starts archiving the moment Patroni starts it, and a pgbackrest.conf written
+  # later leaves a window where every archive attempt fails.
+  #
+  # And setup_postgres asks the repository whether it already holds a cluster
+  # before it initializes a data directory -- an empty data directory beside a
+  # repository full of backups means a restore was meant, not a build -- which
+  # it can only ask once pgbackrest.conf names the repository.
+  #
+  # This role only writes files; nothing in it touches Postgres.
+
+  - setup_backrest
+  - setup_postgres
+  - role: setup_etcd
+    when: patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
+  - setup_patroni
+  - role: setup_pgbouncer
+    when: pgbouncer_enabled | bool
+
+# Install HAProxy on dedicated proxy nodes.
+#
+# Do this here to ensure Patroni is up and running and providing a REST
+# interface for HAProxy to use for validating endpoints.
+
+- hosts: haproxy
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - setup_haproxy
+
+# Then "wire" the pgEdge cluster members together using Ultra-HA design, and
+# prepare them for the Workbench once every database it reads exists: the role
+# it monitors them as, the extensions its probes read and its grants, created
+# on each zone's leader. Patroni's configuration admits the Workbench host.
+
+- hosts: pgedge
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - setup_pgedge
+  - setup_ai_dba_workbench_monitor
+
+# Set up the backup server so it can reach the cluster's nodes.
+
+- hosts: backup
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_repos
+  - install_backrest
+  - setup_backrest
+
+# Finally, initialize the backup repository, so it captures the final state of
+# any working primary nodes post-deployment. This runs last because it is the
+# only part of backup setup that needs a cluster that is up and wired together.
+#
+# It takes a full backup only when the repository has none. Re-running this
+# playbook against a cluster whose repository already holds backups adds nothing
+# to it -- which matters, because repo1-retention-full defaults to 1, and a full
+# backup taken here would otherwise expire the recovery point the repository
+# already had.
+
+- hosts: pgedge:backup
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - finalize_backrest
+
+# The pgEdge AI DBA Workbench, on the ai_dba_workbench group's host. It comes
+# last because it registers every member of every zone with the Workbench, and
+# by now the members admit this host and hold the role the Workbench monitors
+# them as.
+
+- hosts: ai_dba_workbench
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_repos
+  - install_ai_dba_workbench
+  - setup_ai_dba_workbench

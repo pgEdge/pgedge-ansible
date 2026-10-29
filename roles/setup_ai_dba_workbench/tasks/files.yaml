@@ -1,0 +1,95 @@
+---
+
+# The secret the server encrypts the monitored servers' passwords and the
+# notification channels' credentials with, and the collector and alerter
+# decrypt them with, so all three read this one file. Generated once and kept:
+# a new secret leaves every stored password unreadable, and every server would
+# have to be registered again.
+
+- name: Generate the Workbench's secret
+  shell: >-
+    set -o pipefail &&
+    umask 077 &&
+    openssl rand -base64 32 > {{ ai_dba_workbench_secret_file }}
+  args:
+    executable: /bin/bash
+    creates: "{{ ai_dba_workbench_secret_file }}"
+  register: ai_dba_workbench_secret_generated
+  become: true
+
+- name: Give the Workbench's secret to its service user
+  file:
+    path: "{{ ai_dba_workbench_secret_file }}"
+    owner: pgedge
+    group: pgedge
+    mode: "0600"
+  become: true
+
+# The passwords and keys the services read from files. Each is a secret, so
+# --diff leaves it out.
+
+- name: Write the datastore password for the Workbench's services
+  copy:
+    content: "{{ ai_dba_workbench_db_password }}"
+    dest: "{{ ai_dba_workbench_db_password_file }}"
+    owner: pgedge
+    group: pgedge
+    mode: "0600"
+  diff: false
+  become: true
+
+- name: Write the language model's API key
+  copy:
+    content: "{{ ai_dba_workbench_llm_api_key }}"
+    dest: "{{ ai_dba_workbench_llm_key_file }}"
+    owner: pgedge
+    group: pgedge
+    mode: "0600"
+  diff: false
+  become: true
+  when: ai_dba_workbench_llm_key_needed | bool
+
+- name: Write the embedding model's API key
+  copy:
+    content: "{{ ai_dba_workbench_embedding_api_key }}"
+    dest: "{{ ai_dba_workbench_embedding_key_file }}"
+    owner: pgedge
+    group: pgedge
+    mode: "0600"
+  diff: false
+  become: true
+  when: ai_dba_workbench_embedding_key_needed | bool
+
+# A key that no configured provider uses any more is removed, rather than left
+# on the host after the inventory has stopped naming it.
+
+- name: Remove API keys no configured provider uses
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ [ai_dba_workbench_llm_key_file, ai_dba_workbench_embedding_key_file]
+       | reject('in', ai_dba_workbench_key_files) | list }}
+  become: true
+
+# Each service's configuration names the files above rather than holding their
+# contents, so it holds no secret, and is installed as the packages install
+# their own: readable by the service user, writable by root alone.
+
+- name: Write the Workbench's configuration files
+  template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: pgedge
+    mode: "0640"
+  loop:
+  - src: ai-dba-server.yaml.j2
+    dest: "{{ ai_dba_workbench_server_config }}"
+  - src: ai-dba-collector.yaml.j2
+    dest: "{{ ai_dba_workbench_collector_config }}"
+  - src: ai-dba-alerter.yaml.j2
+    dest: "{{ ai_dba_workbench_alerter_config }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  become: true

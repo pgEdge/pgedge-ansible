@@ -1,0 +1,192 @@
+---
+
+# The pgEdge AI DBA Workbench's access to this node: the role it logs in as,
+# the extensions its probes read, and read access to what pg_monitor does not
+# cover. This runs once the nodes are built, after every role that creates a
+# database the collector reads, setup_coldfront_db among them, and before
+# setup_ai_dba_workbench registers the nodes with the Workbench. The rule that
+# admits the Workbench host is role_config's pg_ai_dba_workbench_hba_rules,
+# which setup_postgres writes, or Patroni under HA, since setup_postgres writes
+# a simple cluster's pg_hba.conf anew on every run.
+#
+# Under HA this runs on each zone's leader only, and the replicas receive the
+# results through physical replication. After a failover the leader need not
+# be first_node_in_zone, so each node asks its own Postgres whether it is a
+# standby, as setup_coldfront_db does. A replica Patroni is still bringing up
+# does not answer at once, so the question is asked until it does.
+#
+# Every session here opens with Spock's DDL replication off. By now
+# setup_pgedge has put each database in db_names into Spock, and every node
+# creates these objects itself, so a replicated copy of each statement would
+# arrive at nodes that already hold the object.
+#
+# pg_monitor gives the role the statistics views, every setting, and the query
+# text in pg_stat_statements, without superuser. The Workbench asks for nothing
+# more on most probes, and reads Spock's own tables through the grants below.
+# It also reads pg_subscription.subconninfo, which only a superuser can, and
+# does without it.
+
+# Everything here is for the Workbench host in the ai_dba_workbench group.
+# Without one, no rule admits a Workbench and init_server leaves the monitoring
+# password unchecked, so the role would be created with whatever password the
+# inventory has, the default included. The run stops here instead.
+
+- name: Ensure the inventory has an AI DBA Workbench host
+  assert:
+    that:
+    - ai_dba_workbench_enabled | bool
+    fail_msg: >-
+      setup_ai_dba_workbench_monitor prepares {{ inventory_hostname }} for the
+      AI DBA Workbench, and the inventory has no host in the ai_dba_workbench
+      group. Add the Workbench host to that group, or deploy with a playbook
+      that leaves the Workbench out, such as the plain simple-cluster or
+      ultra-ha one.
+    quiet: true
+
+# The Workbench reads the operating system's CPU, memory, disk and network
+# figures through the system_stats extension, which the enterprise-all bundle
+# does not include. Every member needs its library, replicas too: the
+# Workbench monitors each member directly, and a replica can become a leader.
+
+- name: Install the system_stats extension
+  package:
+    name: >-
+      {{ 'pgedge-system_stats_' ~ pg_version
+         if ansible_facts['os_family'] == 'RedHat'
+         else 'pgedge-postgresql-' ~ pg_version ~ '-system-stats' }}
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Ask Postgres whether this node is a standby
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: SELECT pg_is_in_recovery() AS standby
+  register: ai_dba_workbench_monitor_node
+  until: ai_dba_workbench_monitor_node is success
+  retries: 30
+  delay: 2
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- block:
+  - name: Create the AI DBA Workbench's monitoring role
+    community.postgresql.postgresql_user:
+      name: "{{ ai_dba_workbench_monitor_user }}"
+      password: "{{ ai_dba_workbench_monitor_password }}"
+      role_attr_flags: LOGIN
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+      connect_params: "{{ ai_dba_workbench_ddl_params }}"
+
+  - name: Grant the monitoring role pg_monitor
+    community.postgresql.postgresql_membership:
+      groups:
+      - pg_monitor
+      target_roles:
+      - "{{ ai_dba_workbench_monitor_user }}"
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+      connect_params: "{{ ai_dba_workbench_ddl_params }}"
+
+  # The collector reads pg_stat_statements from every database it visits, and
+  # system_stats from the database each node is registered with, so both are
+  # created in each database the role prepares. pg_stat_statements also needs
+  # its library preloaded, which the collection does unless the inventory has
+  # turned that off; without it the extension exists and its view refuses
+  # every query.
+
+  - name: Create the extensions the Workbench's probes read
+    community.postgresql.postgresql_ext:
+      name: "{{ item.0 }}"
+      login_db: "{{ item.1 }}"
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+      connect_params: "{{ ai_dba_workbench_ddl_params }}"
+    loop: >-
+      {{ ['pg_stat_statements', 'system_stats']
+         | product(ai_dba_workbench_monitored_dbs) | list }}
+
+  # system_stats revokes its functions from PUBLIC and grants them to a role of
+  # its own, which its first CREATE EXTENSION creates.
+
+  - name: Grant the monitoring role the system_stats functions
+    community.postgresql.postgresql_membership:
+      groups:
+      - monitor_system_stats
+      target_roles:
+      - "{{ ai_dba_workbench_monitor_user }}"
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+      connect_params: "{{ ai_dba_workbench_ddl_params }}"
+
+  # The Workbench reports the node's client authentication rules and user name
+  # mappings, through two views Postgres restricts to superusers, and the probe
+  # fails on every collection without them. A grant on a system view belongs to
+  # the database it is made in, so it is made in each one the collector reads.
+
+  - name: Let the monitoring role read the node's authentication rules
+    community.postgresql.postgresql_privs:
+      login_db: "{{ item }}"
+      type: table
+      schema: pg_catalog
+      objs: pg_hba_file_rules,pg_ident_file_mappings
+      privs: SELECT
+      roles: "{{ ai_dba_workbench_monitor_user }}"
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+      connect_params: "{{ ai_dba_workbench_ddl_params }}"
+    loop: "{{ ai_dba_workbench_monitored_dbs }}"
+
+  - name: Let the monitoring role run the functions behind those views
+    community.postgresql.postgresql_privs:
+      login_db: "{{ item }}"
+      type: function
+      schema: pg_catalog
+      objs: pg_hba_file_rules(),pg_ident_file_mappings()
+      privs: EXECUTE
+      roles: "{{ ai_dba_workbench_monitor_user }}"
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+      connect_params: "{{ ai_dba_workbench_ddl_params }}"
+    loop: "{{ ai_dba_workbench_monitored_dbs }}"
+
+  # Spock's node, subscription, exception and conflict resolution tables, which
+  # the Workbench reads to place each node in the cluster's topology and to
+  # report replication errors. Each database in db_names is a Spock database of
+  # its own.
+
+  - name: Let the monitoring role into Spock's schema
+    community.postgresql.postgresql_privs:
+      login_db: "{{ item }}"
+      type: schema
+      objs: spock
+      privs: USAGE
+      roles: "{{ ai_dba_workbench_monitor_user }}"
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+      connect_params: "{{ ai_dba_workbench_ddl_params }}"
+    loop: "{{ db_names }}"
+
+  - name: Let the monitoring role read Spock's status tables
+    community.postgresql.postgresql_privs:
+      login_db: "{{ item }}"
+      type: table
+      schema: spock
+      objs: node,local_node,subscription,exception_log,resolutions
+      privs: SELECT
+      roles: "{{ ai_dba_workbench_monitor_user }}"
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+      connect_params: "{{ ai_dba_workbench_ddl_params }}"
+    loop: "{{ db_names }}"
+
+  become: true
+  become_user: postgres
+  when: not ai_dba_workbench_monitor_node.query_result[0].standby

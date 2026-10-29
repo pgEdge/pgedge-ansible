@@ -1,0 +1,90 @@
+---
+
+# The packages neither enable nor start any of the three services. The
+# collector goes first: it creates and migrates the datastore's schema when it
+# starts, and the server exits at once, without retrying, if it finds no schema
+# or one older than it needs.
+
+- name: Enable and start the Workbench collector
+  systemd:
+    name: pgedge-ai-dba-collector
+    enabled: true
+    state: started
+  become: true
+
+- name: Apply the collector's new settings
+  include_tasks: restart_stale.yaml
+  vars:
+    ai_dba_workbench_unit: pgedge-ai-dba-collector
+    ai_dba_workbench_unit_files:
+    - "{{ ai_dba_workbench_collector_config }}"
+    - "{{ ai_dba_workbench_secret_file }}"
+    - "{{ ai_dba_workbench_db_password_file }}"
+
+# The server requires version 4 of the collector's schema at least. Until the
+# collector has created the version table, the query fails, and is retried
+# like any other answer that is not yet enough.
+
+- name: Wait for the collector to build the datastore's schema
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ ai_dba_workbench_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: SELECT coalesce(max(version), 0) AS version FROM schema_version
+  register: ai_dba_workbench_schema
+  until:
+  - ai_dba_workbench_schema is success
+  - ai_dba_workbench_schema.query_result[0].version | int >= 4
+  retries: 30
+  delay: 2
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- name: Enable and start the Workbench server
+  systemd:
+    name: pgedge-ai-dba-server
+    enabled: true
+    state: started
+  become: true
+
+- name: Apply the server's new settings
+  include_tasks: restart_stale.yaml
+  vars:
+    ai_dba_workbench_unit: pgedge-ai-dba-server
+    ai_dba_workbench_unit_files: >-
+      {{ [ai_dba_workbench_server_config, ai_dba_workbench_secret_file,
+          ai_dba_workbench_db_password_file]
+         + ai_dba_workbench_key_files }}
+
+# The server only starts listening once it has reached the datastore and found
+# its schema, so an answer from /health means both. The body is checked as
+# well, because a port that answers proves nothing about what is behind it.
+
+- name: Wait for the Workbench server to report itself healthy
+  uri:
+    url: "http://127.0.0.1:{{ ai_dba_workbench_server_port }}/health"
+    method: GET
+    status_code: 200
+  register: ai_dba_workbench_health
+  retries: 30
+  delay: 2
+  until:
+  - ai_dba_workbench_health is success
+  - (ai_dba_workbench_health.json.status | default('')) == 'ok'
+
+- name: Enable and start the Workbench alerter
+  systemd:
+    name: pgedge-ai-dba-alerter
+    enabled: true
+    state: started
+  become: true
+
+- name: Apply the alerter's new settings
+  include_tasks: restart_stale.yaml
+  vars:
+    ai_dba_workbench_unit: pgedge-ai-dba-alerter
+    ai_dba_workbench_unit_files: >-
+      {{ [ai_dba_workbench_alerter_config, ai_dba_workbench_secret_file,
+          ai_dba_workbench_db_password_file]
+         + ai_dba_workbench_key_files }}

@@ -399,3 +399,79 @@ The `sample-playbooks/ultra-ha-coldfront` playbook includes both. See
 store and ColdFront parameters, and the
 [setup_coldfront](roles/setup_coldfront.md#under-ha) role page for how
 ColdFront runs on each zone's leader and replicas.
+
+## Adding the AI DBA Workbench
+
+The pgEdge AI DBA Workbench monitors every member of every zone, raises alerts,
+and with a language model configured adds AI-assisted analysis. It is
+optional, so it has a sample playbook and inventory of its own, in
+`sample-playbooks/ultra-ha-ai-dba-workbench`, beside the plain `ultra-ha`
+ones. Put one host in an `ai_dba_workbench` group of its own. That host runs
+the Workbench's server, collector, alerter and web client, and keeps the
+Workbench's datastore in a Postgres instance of its own, so it cannot be a
+pgEdge node as well. The Workbench's server package depends on a
+documentation knowledge base of about 2.6 GB, so the host needs the disk for
+it, except on Ubuntu 26.04, where the package does not depend on it.
+
+Add the Workbench host and its passwords to the inventory:
+
+```yaml
+all:
+  vars:
+    ai_dba_workbench_monitor_password: "{{ vault_ai_dba_workbench_monitor_password }}"
+
+ai_dba_workbench:
+  vars:
+    ai_dba_workbench_db_password: "{{ vault_ai_dba_workbench_db_password }}"
+    ai_dba_workbench_admin_password: "{{ vault_ai_dba_workbench_admin_password }}"
+  hosts:
+    192.168.6.21:
+```
+
+Both groups read `ai_dba_workbench_monitor_password`, so it goes under `all`:
+`setup_ai_dba_workbench_monitor` creates the role the Workbench logs in to
+every member as, and `setup_ai_dba_workbench` gives the Workbench its
+password.
+`ai_dba_workbench_admin_password` must be at least 12 characters long.
+
+Patroni's configuration admits the Workbench host. Add
+`setup_ai_dba_workbench_monitor` after `setup_pgedge`, in the same play, where
+it installs the `system_stats` package on every member, and creates the
+monitoring role and the extensions on each zone's leader, which reach the
+replicas through physical replication. Then add a play for the Workbench host
+at the end of the playbook, since `setup_ai_dba_workbench` registers every
+member with the Workbench. `init_server` has already run on it, in the first
+play:
+
+```yaml
+- hosts: pgedge
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - setup_pgedge
+    - setup_ai_dba_workbench_monitor
+
+- hosts: ai_dba_workbench
+
+  collections:
+    - pgedge.platform
+
+  roles:
+    - install_repos
+    - install_ai_dba_workbench
+    - setup_ai_dba_workbench
+```
+
+Each member is registered directly on its own Postgres port, rather than
+through HAProxy, so the Workbench sees every member and works out each zone's
+replication topology itself. The `sample-playbooks/ultra-ha-ai-dba-workbench`
+playbook includes both. When it has finished, open
+`https://192.168.6.21:8444` in a browser and sign in as `admin` with
+`ai_dba_workbench_admin_password`.
+
+Without a language model, the Workbench monitors the members and raises
+alerts, and its AI features are off. See
+[AI DBA Workbench Configuration](configuration/ai_dba_workbench.md) for the
+model settings and every other parameter.

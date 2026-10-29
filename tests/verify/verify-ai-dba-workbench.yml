@@ -1,0 +1,260 @@
+---
+
+# Run after a scenario's own verification on a cluster with the AI DBA
+# Workbench layered on, as run-test.sh and the workflows do with
+# tests/inventories/ai-dba-workbench.yml. That verification already covers the
+# pgEdge stack underneath, so this checks only what the Workbench adds: the
+# role and extensions it monitors the nodes with, its services and web client
+# on its own host, every node registered with it, the collector reaching each
+# one, and the monitoring role refused to any other host.
+#
+# It serves either scenario. The nodes come from the pgedge group, and an HA
+# zone's replicas are registered and monitored like its leader.
+
+- hosts: pgedge
+  become: true
+
+  vars:
+    pg_version: 17
+    db_names:
+    - demo
+    monitor_user: ai_dba_workbench_monitor
+
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  # Read on every member: a replica holds the role and the extensions only
+  # through physical replication from its leader.
+
+  - name: Read the monitoring role's memberships
+    become_user: postgres
+    command: >
+      psql -d postgres -t -A -c
+      "SELECT string_agg(r.rolname, ',' ORDER BY r.rolname)
+         FROM pg_auth_members m
+         JOIN pg_roles r ON r.oid = m.roleid
+         JOIN pg_roles u ON u.oid = m.member
+        WHERE u.rolname = '{{ monitor_user }}'"
+    register: memberships
+    changed_when: false
+
+  - name: Assert the monitoring role holds pg_monitor and system_stats's role
+    assert:
+      that:
+      - "'pg_monitor' in memberships.stdout.split(',')"
+      - "'monitor_system_stats' in memberships.stdout.split(',')"
+      fail_msg: >-
+        {{ monitor_user }} is a member of "{{ memberships.stdout }}", not of
+        both pg_monitor and monitor_system_stats.
+
+  - name: Read the probes' extensions in each database the collector reads
+    become_user: postgres
+    command: >
+      psql -d {{ item }} -t -A -c
+      "SELECT string_agg(extname, ',' ORDER BY extname) FROM pg_extension
+        WHERE extname IN ('pg_stat_statements', 'system_stats')"
+    loop: "{{ db_names + ['postgres'] }}"
+    register: extensions
+    changed_when: false
+
+  - name: Assert both extensions exist in every database
+    assert:
+      that: item.stdout == 'pg_stat_statements,system_stats'
+      fail_msg: >-
+        {{ item.item }} has "{{ item.stdout }}" of pg_stat_statements and
+        system_stats.
+    loop: "{{ extensions.results }}"
+    loop_control:
+      label: "{{ item.item }}"
+
+- hosts: ai_dba_workbench
+  become: true
+
+  vars:
+    pg_version: 17
+    db_names:
+    - demo
+    monitor_user: ai_dba_workbench_monitor
+    admin_user: admin
+    workbench_db: ai_workbench
+    client_port: "{{ ai_dba_workbench_port | default(8444) }}"
+    server_port: "{{ ai_dba_workbench_server_port | default(8443) }}"
+    api: "http://127.0.0.1:{{ server_port }}/api/v1"
+
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  # systemctl is-active exits non-zero if any unit it is given is not active.
+
+  - name: Check the Workbench's datastore, services and nginx are running
+    command: >
+      systemctl is-active ai-dba-workbench-postgres pgedge-ai-dba-collector
+      pgedge-ai-dba-server pgedge-ai-dba-alerter nginx
+    changed_when: false
+
+  - name: Fetch the web client over HTTPS
+    uri:
+      url: "https://127.0.0.1:{{ client_port }}/"
+      validate_certs: false
+      return_content: true
+    register: client_page
+
+  - name: Assert nginx served the web client
+    assert:
+      that: "'<html' in client_page.content | lower"
+      fail_msg: >-
+        https://127.0.0.1:{{ client_port }}/ answered without an HTML page.
+
+  - name: Request the web client over plain HTTP
+    uri:
+      url: "http://127.0.0.1:{{ client_port }}/"
+      follow_redirects: none
+      status_code: 301
+    register: plain_http
+
+  - name: Assert a plain HTTP request is redirected to HTTPS
+    assert:
+      that: plain_http.location is match('https://')
+      fail_msg: >-
+        A plain HTTP request was redirected to "{{ plain_http.location }}".
+
+  # Through nginx: an answer from the server, refusing a request that has not
+  # signed in, shows that nginx proxies the API and that the API asks.
+
+  - name: Request the REST API through nginx without signing in
+    uri:
+      url: "https://127.0.0.1:{{ client_port }}/api/v1/connections"
+      validate_certs: false
+      status_code: 401
+
+  - name: Sign in as the Workbench administrator
+    uri:
+      url: "{{ api }}/auth/login"
+      method: POST
+      body_format: json
+      body:
+        username: "{{ admin_user }}"
+        password: "{{ ai_dba_workbench_admin_password }}"
+    register: login
+
+  - name: List the servers the Workbench has registered
+    uri:
+      url: "{{ api }}/connections"
+      headers:
+        Authorization: "Bearer {{ login.cookies.session_token }}"
+    register: servers
+
+  - name: Sign out of the Workbench
+    uri:
+      url: "{{ api }}/auth/logout"
+      method: POST
+      headers:
+        Cookie: "session_token={{ login.cookies.session_token }}"
+
+  - name: Assert every pgEdge node is registered and monitored
+    assert:
+      that:
+      - missing | length == 0
+      - unmonitored | length == 0
+      fail_msg: >-
+        Not registered: {{ missing | join(', ') or 'none' }}. Registered but
+        not monitored: {{ unmonitored | join(', ') or 'none' }}.
+    vars:
+      registered: "{{ servers.json | map(attribute='name') | list }}"
+      missing: "{{ groups['pgedge'] | difference(registered) }}"
+      unmonitored: >-
+        {{ servers.json | rejectattr('is_monitored') | map(attribute='name')
+           | select('in', groups['pgedge']) | list }}
+
+  # The connectivity probe runs every 30 seconds for each server, after a
+  # startup delay of up to a minute, and records nothing for a server it
+  # cannot reach, so a row for every node means the collector has signed in to
+  # each of them as the monitoring role.
+
+  - name: Wait for the collector to reach every node
+    become_user: postgres
+    command: >
+      psql -d {{ workbench_db }} -t -A -c
+      "SELECT coalesce(string_agg(c.name, ',' ORDER BY c.name), '')
+         FROM connections c
+        WHERE EXISTS (SELECT 1 FROM metrics.pg_connectivity m
+                       WHERE m.connection_id = c.id)"
+    register: reached
+    changed_when: false
+    retries: 36
+    delay: 10
+    until: >-
+      groups['pgedge'] | difference(reached.stdout.split(',')) | length == 0
+
+  # What the collector reads beyond pg_monitor, through the grants
+  # setup_ai_dba_workbench_monitor makes, signed in as the Workbench signs in.
+
+  - name: Query each node as the monitoring role
+    command: >
+      psql "host={{ hostvars[item].ansible_default_ipv4.address }}
+      port={{ hostvars[item].pg_port | default(5432) }}
+      dbname={{ db_names | first }} user={{ monitor_user }} sslmode=require"
+      -t -A -c
+      "SELECT (SELECT count(*) FROM pg_sys_os_info()) > 0,
+              (SELECT count(*) FROM pg_hba_file_rules) > 0,
+              (SELECT count(*) FROM spock.node) > 0,
+              (SELECT count(*) FROM pg_stat_statements) >= 0"
+    environment:
+      PGPASSWORD: "{{ ai_dba_workbench_monitor_password }}"
+      PGCONNECT_TIMEOUT: "5"
+    loop: "{{ groups['pgedge'] }}"
+    register: as_monitor
+    changed_when: false
+
+  - name: Assert the monitoring role reads what the probes read
+    assert:
+      that: item.stdout == 't|t|t|t'
+      fail_msg: >-
+        On {{ item.item }}, system_stats, pg_hba_file_rules, spock.node and
+        pg_stat_statements answered "{{ item.stdout }}" for t|t|t|t.
+    loop: "{{ as_monitor.results }}"
+    loop_control:
+      label: "{{ item.item }}"
+
+# From a host that is not the Workbench's, the same login has to be refused:
+# the rule that admits it names the Workbench host alone. The client
+# also must not reach the Workbench server, which listens on its host's
+# loopback interface, behind nginx.
+
+- hosts: clients
+  become: true
+
+  vars:
+    db_names:
+    - demo
+    monitor_user: ai_dba_workbench_monitor
+    # The psql these tests run, from PGDG whatever the client's distribution.
+    client_pg_version: 18
+
+  environment:
+    PGPASSWORD: "{{ ai_dba_workbench_monitor_password }}"
+    PGCONNECT_TIMEOUT: "5"
+
+  tasks:
+  - name: Install a Postgres client
+    include_tasks: install-pg-client.yml
+
+  - name: Try a node as the monitoring role from the client
+    command: >
+      psql "host={{ groups['pgedge'] | first }}
+      port={{ hostvars[groups['pgedge'] | first].pg_port | default(5432) }}
+      dbname={{ db_names | first }} user={{ monitor_user }} sslmode=require"
+      -t -A -c "SELECT 1"
+    register: from_client
+    changed_when: false
+    failed_when: >-
+      from_client.rc == 0 or 'no pg_hba.conf entry' not in from_client.stderr
+
+  - name: Check the Workbench server is not reachable from the client
+    wait_for:
+      host: "{{ groups['ai_dba_workbench'] | first }}"
+      port: "{{ ai_dba_workbench_server_port | default(8443) }}"
+      state: stopped
+      timeout: 5
