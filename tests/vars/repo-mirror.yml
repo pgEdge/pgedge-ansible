@@ -1,0 +1,12 @@
+---
+
+# Points install_repos at the proxy from tests/compose/repo-proxy.yml, in the
+# layout of pgEdge's proposed mirror procedure. Pass with:
+#
+#   ansible-playbook -e @tests/vars/repo-mirror.yml ...
+#
+# The trailing slash is deliberate: an operator copying the URL from a browser
+# will often include one, and the definitions must not end up with "//".
+
+repo_url: http://192.168.6.40/mirror/
+repo_layout: mirror

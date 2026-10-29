@@ -35,7 +35,9 @@ The collection has been verified as compatible with the following Linux
 platforms:
 
 - Debian 12 / Bookworm
-- Ubuntu 25.04 / Plucky Puffin
+- Debian 13 / Trixie
+- Ubuntu 24.04 / Noble Numbat
+- Ubuntu 26.04 / Resolute Raccoon
 - Rocky Linux 9
 
 The collection may also work with other Debian or RHEL variants, but the

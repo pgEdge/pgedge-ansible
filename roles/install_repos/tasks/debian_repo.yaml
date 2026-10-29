@@ -24,6 +24,57 @@
   register: result
   until: result is success
   become: true
+  when: repo_url | length == 0
+
+# The package's install script is what points the host at pgEdge's servers, and
+# it runs again whenever the package is upgraded, so it cannot stay installed
+# beside a repository of the site's own. The files it wrote stay behind, at the
+# same paths the tasks below overwrite.
+
+- name: Remove the pgEdge repo package in favor of the site's repository
+  apt:
+    name: pgedge-release
+    state: absent
+  become: true
+  when: repo_url | length > 0
+
+# APT reads a key as an armored or a binary keyring depending on the file's
+# name, and the layouts publish one of each, so whichever arrives is rewritten
+# as a binary keyring. GnuPG converts it without importing it anywhere, and the
+# keyring is replaced only when the key in it has changed.
+
+- name: Install the pgEdge signing key from the site's repository
+  shell: |
+    set -euo pipefail
+    export GNUPGHOME=$(mktemp -d)
+    trap 'rm -rf "$GNUPGHOME"' EXIT
+    curl -fsSL '{{ repo_key_url | quote }}' |
+      gpg --batch --quiet --import-options import-export --import \
+      > "$GNUPGHOME/keyring"
+    test -s "$GNUPGHOME/keyring"
+    if ! cmp -s "$GNUPGHOME/keyring" /etc/apt/keyrings/pgedge-rsa.gpg; then
+      install -D -m 0644 "$GNUPGHOME/keyring" /etc/apt/keyrings/pgedge-rsa.gpg
+      echo changed
+    fi
+  args:
+    executable: /bin/bash
+  register: result
+  changed_when: "'changed' in result.stdout"
+  retries: 5
+  delay: 20
+  until: result is success
+  become: true
+  when: repo_url | length > 0
+
+- name: Define the site's pgEdge repository for APT
+  template:
+    src: pgedge.sources.j2
+    dest: /etc/apt/sources.list.d/pgedge.sources
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: repo_url | length > 0
 
 # Harmless while the pgEdge source is still disabled, and other roles expect a
 # fresh cache even when no client certificate was supplied.

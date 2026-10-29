@@ -129,3 +129,59 @@ changes.
   leaders can write to one table at once without losing a row, that every
   member reads every row, and that a replica refuses a cold-tier write. The
   recovery test does not run with ColdFront. (EE-40)
+- New `repo_url` parameter points `install_repos` at a package repository of
+  the site's own, such as a mirror or a caching proxy, in place of the pgEdge
+  servers. Earlier releases of the collection read a parameter of the same
+  name for the pgEdge CLI's download location, and it stopped having any
+  effect when the collection moved to distribution packages. With `repo_url`
+  set, `install_repos` removes the `pgedge-release` package, so an upgrade of
+  that package cannot point the host back at the pgEdge servers, and writes
+  the definition that package would have written, under the same repository
+  IDs and file names, pointing at `repo_url` instead. Removing `repo_url` and
+  running the role again restores the package. The new `repo_layout` parameter
+  says how the repository arranges its contents: `upstream`, the default, for
+  a proxy or copy of `dnf.pgedge.com` or `apt.pgedge.com`, where `repo_name`
+  selects the tier as usual; or `mirror`, for a mirror built by a proposed
+  pgEdge mirror procedure, which keeps every platform under one URL. The
+  signing key comes from `repo_url` too, unless the new `repo_gpg_key`
+  parameter names another URL; signatures are always checked. `init_server`
+  refuses an unknown layout, a `repo_url` that is not an `http://`, `https://`
+  or `file:///` URL, a `repo_gpg_key` without a `repo_url`, and a `mirror`
+  layout asked for a tier other than `release`. See [Cluster
+  Configuration](../configuration/cluster.md#repo_url). (EE-43)
+- The new `tests/render/check-repos.py` renders the repository definitions for
+  each layout and platform and compares them with the ones the
+  `pgedge-release` package and a mirror built by the proposed pgEdge mirror
+  procedure would offer, and runs with the other offline checks in the
+  workflows. `tests/run-test.sh` and `tests/run-recovery-test.sh` take
+  `repo-upstream` or `repo-mirror`, and both end-to-end workflows a `repo`
+  input, to deploy through a proxy that serves the pgEdge repositories in that
+  layout. The new `tests/check-repo.sh` then checks that the packages came
+  through it, that nothing still names the pgEdge servers, and that a second
+  run of `install_repos` changes nothing. With a `repo` other than `pgedge`,
+  the workflows pass their `environment` input as `repo_name`, and
+  `tests/playbooks/switch-repo.yml` leaves the definition alone. (EE-43)
+
+### Fixed
+
+- The compatibility list in the README and the documentation names Debian 13
+  (Trixie), Ubuntu 24.04 (Noble Numbat) and Ubuntu 26.04 (Resolute Raccoon)
+  beside Debian 12 and Rocky Linux 9. Each passed the simple-cluster and
+  Ultra-HA end-to-end tests. Ubuntu 25.04 leaves the list: it is past its end
+  of life, and the pgEdge repository no longer serves it. `tests/run-test.sh`
+  and `tests/run-recovery-test.sh` take the new systems as `debian13`,
+  `ubuntu2404` and `ubuntu2604`; the workflows still test Debian 12 and Rocky
+  Linux 9 only. (EE-47)
+- The `install_repos` documentation names the Debian keyring the role
+  installs, `/etc/apt/keyrings/pgedge-rsa.gpg`, rather than `pgedge.gpg`, and
+  the repository troubleshooting page fetches the signing key from the
+  current pgEdge servers rather than a retired download location. (EE-43)
+- The end-to-end tests install psql on the client host from PGDG, at the
+  release `client_pg_version` names in the verification playbooks (18 by
+  default), so the client no longer changes with the distribution under test:
+  Ubuntu 26.04's own client is psql 18, which prints `\conninfo` as a table,
+  and broke a check written against the one-line form earlier releases print.
+  The check now accepts both. The Rocky Linux 9 test hosts build from Rocky's
+  own `rockylinux/rockylinux:9` image, which follows the current 9.x release,
+  rather than the Docker Hub `rockylinux:9` image, which stopped at 9.3 and
+  whose PGDG repositories no longer exist. (EE-47)

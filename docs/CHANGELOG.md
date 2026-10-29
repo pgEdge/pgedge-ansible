@@ -41,6 +41,11 @@ in full.
 - New `ultra-ha-coldfront` sample playbook and inventory deploy an Ultra-HA
   cluster with ColdFront in mesh mode, and the end-to-end test can add
   ColdFront. (EE-40)
+- New `repo_url`, `repo_layout` and `repo_gpg_key` parameters point
+  `install_repos` at a mirror or caching proxy of the site's own, in the
+  pgEdge servers' layout or that of a proposed pgEdge mirror procedure, in
+  place of the `pgedge-release` package. `init_server` refuses settings the role would
+  otherwise ignore. (EE-43)
 
 ### Fixed
 
@@ -48,6 +53,16 @@ in full.
   `pg_config_dir`, `pg_service_name` and `patroni_service_name` as named after
   `cluster_name`, as the collection sets them, rather than after `main`, and
   names the RHEL Postgres service `pgedge-postgres-VERSION`.
+- The compatibility list names Debian 13, Ubuntu 24.04 and Ubuntu 26.04,
+  each validated by an end-to-end run, and drops Ubuntu 25.04. The test
+  harness takes them as `debian13`, `ubuntu2404` and `ubuntu2604`. (EE-47)
+- The end-to-end tests install the client host's psql from PGDG, at the
+  release `client_pg_version` names, rather than whatever its distribution
+  ships, and build the Rocky Linux 9 hosts from Rocky's current image rather
+  than a stale 9.3. (EE-47)
+- The `install_repos` documentation names the Debian keyring the role
+  installs, `pgedge-rsa.gpg`, and the repository troubleshooting page fetches
+  the signing key from the current pgEdge servers. (EE-43)
 
 ## v2.0.0
 

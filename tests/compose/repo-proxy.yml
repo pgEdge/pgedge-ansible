@@ -1,0 +1,81 @@
+# Overlay adding a package repository of the site's own to the test network,
+# for install_repos' repo_url. Layer it onto a base compose file; it does not
+# stand alone:
+#
+#   docker compose -f tests/compose/simple-cluster-rocky9.yml \
+#                  -f tests/compose/repo-proxy.yml up -d
+#
+# A real mirror holds every package pgEdge publishes, takes hours to build, and
+# would have to be rebuilt for every run. This stands in for one without
+# holding anything: nginx answers in both of install_repos' layouts by fetching
+# the same file from pgEdge's servers, so every package and every signature is
+# pgEdge's own, and a run that installs proves the definition install_repos
+# wrote reaches it.
+#
+#   /dnf/..., /apt/...   the 'upstream' layout: a proxy of dnf.pgedge.com or
+#                        apt.pgedge.com, as Artifactory or Nexus would keep it.
+#   /mirror/...          the 'mirror' layout of pgEdge's proposed mirror
+#                        procedure.
+#
+# One difference from such a mirror: it keeps a binary copy of the APT key as
+# pgedge.gpg, and this serves pgEdge's armored one under that name.
+# install_repos accepts either form, and tests/render/check-repos.py checks
+# the path.
+#
+# The path is matched against the request as the client sent it, still
+# encoded. Package files with "+" in their names exist, and pgEdge's servers
+# read a bare "+" as a space; apt sends it as %2B, which has to reach them as
+# such.
+#
+# Like MinIO in backup-s3.yml, the configuration is written inside the
+# container rather than mounted, so the overlay works under act. Every "$" an
+# nginx variable needs is written "$$" here, which compose turns back into one.
+
+services:
+  repo:
+    image: nginx:1.27-alpine
+    hostname: repo
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        resolvers=$$(awk '/^nameserver/ { print $$2 }' /etc/resolv.conf | xargs)
+        cat > /etc/nginx/conf.d/default.conf <<EOF
+        resolver $$resolvers ipv6=off valid=300s;
+
+        map \$$request_uri \$$upstream {
+          default "";
+          ~^/mirror/el(?<v>[0-9]+)/(?<a>[^/]+)/pgedge/(?<p>.*)\$$
+            https://dnf.pgedge.com/release/\$$v/RPMS/\$$a/\$$p;
+          ~^/mirror/el(?<v>[0-9]+)/[^/]+/pgedge-noarch/(?<p>.*)\$$
+            https://dnf.pgedge.com/release/\$$v/RPMS/noarch/\$$p;
+          ~^/mirror/keys/(?<p>.*)\$$
+            https://dnf.pgedge.com/keys/\$$p;
+          ~^/mirror/apt/[^/]+/pgedge\.gpg\$$
+            https://apt.pgedge.com/keys/pgedge-rsa.pub;
+          ~^/mirror/apt/debian12/(?<p>.*)\$$
+            https://apt.pgedge.com/release/bookworm/\$$p;
+          ~^/mirror/apt/debian13/(?<p>.*)\$$
+            https://apt.pgedge.com/release/trixie/\$$p;
+          ~^/mirror/apt/ubuntu22\.04/(?<p>.*)\$$
+            https://apt.pgedge.com/release/jammy/\$$p;
+          ~^/mirror/apt/ubuntu24\.04/(?<p>.*)\$$
+            https://apt.pgedge.com/release/noble/\$$p;
+          ~^/mirror/apt/ubuntu26\.04/(?<p>.*)\$$
+            https://apt.pgedge.com/release/resolute/\$$p;
+          ~^/dnf/(?<p>.*)\$$  https://dnf.pgedge.com/\$$p;
+          ~^/apt/(?<p>.*)\$$  https://apt.pgedge.com/\$$p;
+        }
+
+        server {
+          listen 80;
+          location / {
+            if (\$$upstream = "") { return 404; }
+            proxy_pass \$$upstream;
+            proxy_ssl_server_name on;
+          }
+        }
+        EOF
+        exec nginx -g 'daemon off;'
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.40

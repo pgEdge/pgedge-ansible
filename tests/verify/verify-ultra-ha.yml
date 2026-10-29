@@ -1067,6 +1067,8 @@
       map('bool') | select | list | length > 0 }}
     proxies: "{{ groups['haproxy'] | default([]) }}"
     client_protocol_version: "3.0"
+    # The psql these tests run, from PGDG whatever the client's distribution.
+    client_pg_version: 18
 
   environment:
   # Pin the wire protocol these tests use. pgEdge's bookworm repo currently
@@ -1092,16 +1094,7 @@
 
   tasks:
   - name: Install a Postgres client
-    package:
-      name: >-
-        {{ 'postgresql' if ansible_facts['os_family'] == 'RedHat'
-           else 'postgresql-client' }}
-      state: present
-      update_cache: true
-    retries: 5
-    delay: 20
-    register: result
-    until: result is success
+    include_tasks: install-pg-client.yml
 
   # Positive: the pooler answers a client no Postgres rule names, because the
   # pooled hop terminates at pgBouncer and reaches Postgres over loopback.
@@ -1208,9 +1201,14 @@
     changed_when: false
     when: pooled_nodes | length > 0
 
+  # psql 18 prints \conninfo as a table, with "SSL Connection | true" where
+  # older clients print a line starting "SSL connection (protocol: ...)".
+  # Accept both, so client_pg_version can name either.
   - name: Assert the pooled connection reports itself encrypted
     assert:
-      that: "'SSL connection' in pooler_conninfo.stdout"
+      that: >-
+        pooler_conninfo.stdout is
+        search('SSL connection [(]|SSL Connection +[|] +true')
       fail_msg: >-
         The pooled connection to {{ pooled_nodes | first }} does not report an
         SSL connection: {{ pooler_conninfo.stdout | default('') }}

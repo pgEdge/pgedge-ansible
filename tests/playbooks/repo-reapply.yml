@@ -1,0 +1,17 @@
+---
+# Re-apply install_repos with a repository of the site's own and expect nothing
+# to change. The run that deployed the cluster already removed pgedge-release,
+# installed the key and wrote the definition, so a second run that reports a
+# change is rewriting one of them, or fetching a key it already has.
+#
+# The caller checks the recap, the way tests/check-idempotence.sh does for the
+# pooler roles.
+
+- hosts: pgedge:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - install_repos

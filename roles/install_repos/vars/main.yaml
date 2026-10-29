@@ -5,3 +5,60 @@ repo: "{{ repo_name if repo_name in ('release', 'staging', 'daily') else 'releas
 # Where pgedge-subscription-manager keeps the client certificate. It differs by
 # family and the manager derives the same paths itself.
 pgedge_cert_dir: "{{ '/etc/pki/pgedge' if ansible_os_family == 'RedHat' else '/etc/pgedge' }}"
+
+# Everything below describes a repo_url of the site's own, in the repo_layout
+# it was given. pgEdge's own repository is defined by its pgedge-release
+# package instead, and none of this applies to it.
+
+repo_base: "{{ repo_url | regex_replace('/+$', '') }}"
+
+# A mirror names each Debian-family platform for its distribution and release
+# number, as debian12 or ubuntu24.04.
+
+apt_platform: >-
+  {{ ansible_distribution | lower }}{{
+     ansible_distribution_version if ansible_distribution == 'Ubuntu'
+     else ansible_distribution_major_version }}
+
+apt_repo_uri: >-
+  {{ repo_base ~ '/apt/' ~ apt_platform if repo_layout == 'mirror'
+     else repo_base ~ '/' ~ repo ~ '/' ~ ansible_distribution_release }}
+
+# Both layouts keep the key pgEdge signs its RPMs with under keys/. The mirror
+# keeps a copy of the APT key with each Debian-family platform instead.
+
+repo_key_url: >-
+  {{ repo_gpg_key or (
+       repo_base ~ '/apt/' ~ apt_platform ~ '/pgedge.gpg'
+       if repo_layout == 'mirror' and ansible_os_family == 'Debian'
+       else repo_base ~ '/keys/pgedge-rsa.pub') }}
+
+# The repositories pgedge-release defines, under the same IDs, so that a host
+# moved from pgEdge's servers to the site's own keeps no stale definitions. The
+# mirror has no source RPMs, so it defines no repository for them.
+
+dnf_repos: "{{ dnf_layouts[repo_layout] }}"
+
+dnf_layouts:
+  upstream:
+  - id: pgedge
+    name: pgEdge RPM Repository
+    path: "{{ repo }}/{{ ansible_distribution_major_version }}/RPMS/$basearch"
+    enabled: true
+  - id: pgedge-noarch
+    name: pgEdge RPM Repository (noarch)
+    path: "{{ repo }}/{{ ansible_distribution_major_version }}/RPMS/noarch"
+    enabled: true
+  - id: pgedge-srpm
+    name: pgEdge RPM Repository (Source RPMs)
+    path: "{{ repo }}/{{ ansible_distribution_major_version }}/SRPMS"
+    enabled: false
+  mirror:
+  - id: pgedge
+    name: pgEdge RPM Repository
+    path: "el{{ ansible_distribution_major_version }}/$basearch/pgedge"
+    enabled: true
+  - id: pgedge-noarch
+    name: pgEdge RPM Repository (noarch)
+    path: "el{{ ansible_distribution_major_version }}/$basearch/pgedge-noarch"
+    enabled: true

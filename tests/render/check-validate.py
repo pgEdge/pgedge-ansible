@@ -6,7 +6,10 @@ would break the cluster, and an HA zone whose nodes disagree on them. It also
 refuses ColdFront where its settings could not work: without a catalog or a
 complete object store, on a Postgres release it has no packages for, or on an
 HA cluster, and a Lakekeeper host with the default catalog password, colliding
-ports, or a place in the pgedge group as well. The settings ColdFront depends
+ports, or a place in the pgedge group as well. It refuses a package repository
+of the site's own that install_repos would misread: a layout it does not know,
+a repo_url that is not a URL, a repo_gpg_key with no repo_url to go with it,
+or a mirror asked for a tier it does not carry. The settings ColdFront depends
 on are the collection's own once it is enabled, so pg_parameters may set them
 only where it is not; its tuning settings it may set either way. The e2e
 inventories are ones the validation accepts, so the refusals are checked here
@@ -217,6 +220,33 @@ CASES = [
      {"n1": {**SIMPLE, **COLDFRONT, **LAKEKEEPER, "zone": 1,
              "groups": ["pgedge", "lakekeeper"]}},
      False, ["both the 'pgedge' and 'lakekeeper' groups"]),
+    ("a repository of the site's own in each layout",
+     {"n1": {**SIMPLE, "zone": 1,
+             "repo_url": "https://mirror.example.internal/pgedge/",
+             "repo_layout": "mirror"},
+      "n2": {**SIMPLE, "zone": 2, "repo_url": "file:///srv/pgedge",
+             "repo_name": "staging",
+             "repo_gpg_key": "https://keys.example.internal/pgedge.pub"},
+      "n3": {**SIMPLE, "zone": 3, "repo_url": "http://10.0.0.40:8080/dnf"}},
+     True, []),
+    ("a repository layout install_repos does not know",
+     {"n1": {**SIMPLE, "zone": 1, "repo_url": "https://mirror.example.internal",
+             "repo_layout": "Mirror"}},
+     False, ['repo_layout is "Mirror"']),
+    ("a repository with no scheme",
+     {"n1": {**SIMPLE, "zone": 1, "repo_url": "mirror.example.internal/pgedge"}},
+     False, ["not an http://, https:// or file:/// URL"]),
+    ("a repository on a remote file host",
+     {"n1": {**SIMPLE, "zone": 1, "repo_url": "file://nas/pgedge"}},
+     False, ["not an http://, https:// or file:/// URL"]),
+    ("a signing key without a repository",
+     {"n1": {**SIMPLE, "zone": 1,
+             "repo_gpg_key": "https://keys.example.internal/pgedge.pub"}},
+     False, ["repo_gpg_key is set but repo_url is not"]),
+    ("a mirror-layout repository asked for another tier",
+     {"n1": {**SIMPLE, "zone": 1, "repo_url": "https://mirror.example.internal",
+             "repo_layout": "mirror", "repo_name": "daily"}},
+     False, ["mirrors only", "the release tier"]),
 ]
 
 

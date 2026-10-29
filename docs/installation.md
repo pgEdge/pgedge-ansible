@@ -14,8 +14,15 @@ using this collection:
 - Git for cloning the repository.
 - SSH access from the Ansible controller to all target nodes.
 
-Each target node must run Debian 12 (Bookworm) or Rocky Linux 9. The
-collection may work with other Debian or RHEL variants, but the pgEdge team
+Each target node must run one of the following:
+
+- Debian 12 (Bookworm)
+- Debian 13 (Trixie)
+- Ubuntu 24.04 (Noble Numbat)
+- Ubuntu 26.04 (Resolute Raccoon)
+- Rocky Linux 9
+
+The collection may work with other Debian or RHEL variants, but the pgEdge team
 has not validated compatibility. The Ansible user on each target node must
 have `sudo` privileges.
 

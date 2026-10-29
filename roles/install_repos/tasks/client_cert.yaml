@@ -18,8 +18,31 @@
       pgedge_client_key (or the _src variants).
   when: not pgedge_have_client_cert
 
-- name: Install the client certificate
+# pgedge-subscription-manager ships in pgedge-release, which repo_url mode
+# removes. A host mirroring the gated repositories still needs the certificate
+# installed, so this turns on whether the tool is there rather than on
+# repo_url.
+- name: Look for pgedge-subscription-manager
+  stat:
+    path: /usr/bin/pgedge-subscription-manager
+  register: pgedge_sm_bin
   when: pgedge_have_client_cert
+
+- name: Warn when the subscription manager is not installed
+  debug:
+    msg: >-
+      A pgEdge client certificate was supplied but pgedge-subscription-manager
+      is not installed, so the certificate was not installed and the gated
+      repositories were not enabled. It ships in pgedge-release, which setting
+      repo_url removes.
+  when:
+  - pgedge_have_client_cert
+  - not pgedge_sm_bin.stat.exists
+
+- name: Install the client certificate
+  when:
+  - pgedge_have_client_cert
+  - pgedge_sm_bin.stat.exists
   become: true
   block:
   - name: Create the pgEdge configuration directory

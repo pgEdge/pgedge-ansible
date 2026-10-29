@@ -1,0 +1,12 @@
+# The client file a mirror built by pgEdge's proposed mirror procedure offers
+# for a Debian-family platform, with MIRROR_URL, PLATFORM and CODENAME in
+# place of the mirror's address, a platform name such as debian12, and its
+# codename. The mirror serves the key beside it, as
+# MIRROR_URL/apt/PLATFORM/pgedge.gpg.
+# Signed-By is not compared: the keyring's name on the host is the
+# collection's own choice.
+Types: deb
+URIs: MIRROR_URL/apt/PLATFORM
+Suites: CODENAME
+Components: main
+Signed-By: /etc/apt/keyrings/pgedge.gpg

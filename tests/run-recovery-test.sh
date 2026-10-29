@@ -26,17 +26,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
-  echo "Usage: $0 <scenario> <os> [dcs] [backup] [pass] [-- extra ansible args...]"
+  echo "Usage: $0 <scenario> <os> [dcs] [backup] [pass] [repo] [-- extra ansible args...]"
   echo "  scenario: ultra-ha (the only recoverable scenario)"
-  echo "  os:       debian12 | rocky9"
+  echo "  os:       debian12 | debian13 | ubuntu2404 | ubuntu2604 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
   echo "  backup:   ssh (default) | s3 -- as the deployment was given"
   echo "  pass:     latest (default) restores to the end of the archive;"
   echo "            lsn seeds a second batch after a recorded LSN, recovers to"
   echo "            that LSN and checks the second batch did not come back"
+  echo "  repo:     repo-upstream | repo-mirror -- as the deployment was given"
   echo ""
   echo "Deploy first with:"
-  echo "  tests/run-test.sh <scenario> <os> [dcs] [backup] --keep"
+  echo "  tests/run-test.sh <scenario> <os> [dcs] [backup] [repo] --keep"
   echo ""
   echo "Point-in-time recovery to a target of your own instead (not with lsn):"
   echo "  $0 ultra-ha rocky9 -- -e recovery_target_type=time \\"
@@ -49,6 +50,7 @@ OS="${2:-}"
 DCS="etcd3"
 BACKUP="ssh"
 RECOVERY_PASS="latest"
+REPO_LAYOUT=""
 
 [ -z "$SCENARIO" ] || [ -z "$OS" ] && usage
 
@@ -64,6 +66,7 @@ while [ -n "${1:-}" ] && [ "$1" != "--" ]; do
   case "$1" in
     ssh|s3) BACKUP="$1" ;;
     latest|lsn) RECOVERY_PASS="$1" ;;
+    repo-upstream|repo-mirror) REPO_LAYOUT="${1#repo-}" ;;
     *) DCS="$1" ;;
   esac
   shift
@@ -114,6 +117,13 @@ IN_CI=false
 EXTRA_VARS=()
 if [ "$DCS" != "etcd3" ]; then
   EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/dcs-${DCS}.yml")
+fi
+
+# The package repository the deployment used. The recovery re-applies
+# install_repos, which without these would point the nodes back at pgEdge's
+# own servers.
+if [ -n "$REPO_LAYOUT" ]; then
+  EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/repo-${REPO_LAYOUT}.yml")
 fi
 
 # The repository the deployment used, layered on the same way run-test.sh

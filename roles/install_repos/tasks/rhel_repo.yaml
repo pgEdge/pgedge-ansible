@@ -1,14 +1,36 @@
 ---
 
-# downloads.pgedge.com, not dnf.pgedge.com: the gated repository cannot serve
-# the package that configures access to it. The signing keys differ by family,
-# so the RPM key comes from keys/dnf (the DEB one, keys/apt, is a different
-# key and the pgedge-release deb fetches it itself).
+# pgEdge's own key comes from downloads.pgedge.com, which is ungated: the
+# gated repository cannot serve what configures access to it. The signing keys
+# differ by family, so this is keys/dnf specifically -- keys/apt is a different
+# key, and the pgedge-release deb fetches that one itself.
 - name: Install the pgEdge repo GPG Keys
   rpm_key:
-    key: https://downloads.pgedge.com/keys/dnf/pgedge-rsa.pub
+    key: "{{ repo_key_url if repo_url | length > 0 else 'https://downloads.pgedge.com/keys/dnf/pgedge-rsa.pub' }}"
     state: present
   become: true
+
+# The package marks /etc/yum.repos.d/pgedge.repo as a configuration file it
+# must not replace, so installing it over a definition this role wrote for a
+# repo_url leaves that definition in charge and sets the package's own aside
+# as pgedge.repo.rpmnew. Without the package installed, any definition there
+# is this role's or a leftover, and goes first.
+
+- name: Check whether the pgEdge repo package is installed
+  command: rpm -q pgedge-release
+  register: pgedge_release
+  changed_when: false
+  failed_when: pgedge_release.rc not in (0, 1)
+  when: repo_url | length == 0
+
+- name: Remove a pgEdge repository definition the package did not write
+  file:
+    path: /etc/yum.repos.d/pgedge.repo
+    state: absent
+  become: true
+  when:
+  - repo_url | length == 0
+  - pgedge_release.rc != 0
 
 - name: Install the pgEdge repo package
   dnf:
@@ -19,3 +41,25 @@
   register: result
   until: result is success
   become: true
+  when: repo_url | length == 0
+
+# The package owns /etc/yum.repos.d/pgedge.repo, so it has to go before that
+# file can be the site's. Removing it sets its definition aside as
+# pgedge.repo.rpmsave, which DNF does not read.
+
+- name: Remove the pgEdge repo package in favor of the site's repository
+  dnf:
+    name: pgedge-release
+    state: absent
+  become: true
+  when: repo_url | length > 0
+
+- name: Define the site's pgEdge repositories for DNF
+  template:
+    src: pgedge.repo.j2
+    dest: /etc/yum.repos.d/pgedge.repo
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: repo_url | length > 0

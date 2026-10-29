@@ -1,0 +1,9 @@
+# /etc/apt/sources.list.d/pgedge.sources as the install script of pgEdge's
+# pgedge-release package writes it (pgedge-release 1.0-2), with CODENAME in
+# place of the host's release codename. The same script fetches the key from
+# https://apt.pgedge.com/keys/pgedge-rsa.pub into the keyring named here.
+Types: deb
+URIs: https://apt.pgedge.com/release/CODENAME
+Suites: CODENAME
+Components: main
+Signed-By: /etc/apt/keyrings/pgedge-rsa.gpg

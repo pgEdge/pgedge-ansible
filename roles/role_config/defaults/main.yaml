@@ -3,6 +3,27 @@
 cluster_name: demo
 repo_name: release
 repo_prefix: ""
+
+# A package repository of the site's own, such as a mirror or a caching proxy,
+# used in place of pgEdge's. Left empty, install_repos installs pgEdge's
+# pgedge-release package, which points the host at pgEdge's servers. Set, it
+# writes the equivalent repository definition pointing here instead, and
+# removes that package so an upgrade of it cannot point the host back.
+#
+# repo_layout says how the repository arranges its contents. 'upstream' is
+# pgEdge's own arrangement, which a proxy or a plain copy of dnf.pgedge.com or
+# apt.pgedge.com keeps: repo_url then stands for whichever of the two the host's
+# OS family uses. 'mirror' is the arrangement of pgEdge's proposed mirror
+# procedure, one tree holding every platform, with the release tier alone.
+#
+# repo_gpg_key is the URL of the key packages are signed with. Left empty, it
+# is fetched from where the layout keeps it beneath repo_url, so an isolated
+# network needs nothing from pgEdge's servers. Signatures are always checked.
+
+repo_url: ""
+repo_layout: upstream
+repo_gpg_key: ""
+
 zone: 1
 pg_version: 17
 spock_version: "5.0.4"

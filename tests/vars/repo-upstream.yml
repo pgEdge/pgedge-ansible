@@ -1,0 +1,12 @@
+---
+
+# Points install_repos at the proxy from tests/compose/repo-proxy.yml, in the
+# 'upstream' layout. Pass with:
+#
+#   ansible-playbook -e @tests/vars/repo-upstream.yml ...
+#
+# A proxy in this layout stands for one of pgEdge's two servers, so each host
+# names the one its OS family uses, as an inventory with both families would.
+
+repo_url: "http://192.168.6.40/{{ 'dnf' if ansible_os_family == 'RedHat' else 'apt' }}"
+repo_layout: upstream
