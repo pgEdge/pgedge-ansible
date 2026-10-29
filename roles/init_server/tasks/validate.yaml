@@ -193,6 +193,54 @@
       These roles make many assumptions based on OS distribution. Currently
       only distributions in the RedHat and Debian families are supported.
 
+# A package repository of the site's own. Every host install_repos runs on
+# reads these, whatever its group, so none of the checks is gated on one. Each
+# refuses a setting that would otherwise be quietly ignored or quietly
+# misread: the old repo_url went away without a word, and a host left pointing
+# at pgEdge's servers on an isolated network fails far from the cause.
+
+- name: Ensure the package repository layout is one install_repos knows
+  assert:
+    that:
+    - repo_layout in ('upstream', 'mirror')
+    fail_msg: >-
+      repo_layout is "{{ repo_layout }}". Use 'upstream' for a proxy or copy
+      that keeps pgEdge's own arrangement, or 'mirror' for one built by
+      pgEdge's proposed mirror procedure.
+
+- name: Ensure repo_url is a URL the package manager can fetch from
+  assert:
+    that:
+    - repo_url is match('(https?://[^/]|file:///.)')
+    fail_msg: >-
+      repo_url is "{{ repo_url }}", which is not an http://, https:// or
+      file:/// URL. Name the root of the site's repository, or leave repo_url
+      empty to use pgEdge's own.
+  when: repo_url | length > 0
+
+- name: Ensure repo_gpg_key accompanies a repo_url
+  assert:
+    that:
+    - repo_url | length > 0
+    fail_msg: >-
+      repo_gpg_key is set but repo_url is not. pgEdge's own repository
+      supplies its own key, so repo_gpg_key would have no effect. Set repo_url
+      as well, or remove repo_gpg_key.
+  when: repo_gpg_key | length > 0
+
+- name: Ensure a mirror-layout repository is asked only for the release tier
+  assert:
+    that:
+    - repo_name == 'release'
+    fail_msg: >-
+      repo_name is "{{ repo_name }}", but pgEdge's proposed mirror procedure
+      mirrors only the release tier, so a repo_layout of 'mirror' has no {{ repo_name }}
+      packages to offer. Use repo_name 'release', or a repository in the
+      'upstream' layout that carries the {{ repo_name }} tier.
+  when:
+  - repo_url | length > 0
+  - repo_layout == 'mirror'
+
 # Don't let backup servers and pgEdge servers overlap. The intention here is
 # that there's a dedicated backup server.
 

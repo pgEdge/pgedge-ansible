@@ -1,0 +1,27 @@
+# /etc/yum.repos.d/pgedge.repo as pgEdge's pgedge-release RPM installs it
+# (pgedge-release-1.0-2), before its install script replaces OS_VERSION and
+# OS_ARCH with the host's major release and architecture.
+
+[pgedge]
+name=pgEdge RPM Repository
+baseurl=https://dnf.pgedge.com/release/OS_VERSION/RPMS/OS_ARCH/
+enabled=1
+gpgcheck=1
+priority=1
+gpgkey=https://dnf.pgedge.com/keys/pgedge-rsa.pub
+
+[pgedge-noarch]
+name=pgEdge RPM Repository (noarch)
+baseurl=https://dnf.pgedge.com/release/OS_VERSION/RPMS/noarch/
+enabled=1
+gpgcheck=1
+priority=1
+gpgkey=https://dnf.pgedge.com/keys/pgedge-rsa.pub
+
+[pgedge-srpm]
+name=pgEdge RPM Repository (Source RPMs)
+baseurl=https://dnf.pgedge.com/release/OS_VERSION/SRPMS/
+enabled=0
+gpgcheck=1
+priority=1
+gpgkey=https://dnf.pgedge.com/keys/pgedge-rsa.pub

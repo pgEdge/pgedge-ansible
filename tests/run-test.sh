@@ -5,13 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
-  echo "Usage: $0 <scenario> <os> [dcs] [backup] [coldfront] [mesh] [--keep]"
+  echo "Usage: $0 <scenario> <os> [dcs] [backup] [coldfront] [mesh] [repo] [--keep]"
   echo "  scenario: simple-cluster | ultra-ha"
   echo "  os:       debian12 | debian13 | ubuntu2404 | ubuntu2604 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
   echo "  backup:   ssh (default) | s3 -- the repository; s3 is ultra-ha only"
   echo "  coldfront: add ColdFront and Lakekeeper, in mesh mode on ultra-ha"
   echo "  mesh:     with coldfront, run ColdFront in mesh mode"
+  echo "  repo:     repo-upstream | repo-mirror -- install from a repo_url of"
+  echo "            the site's own, in that layout, instead of pgEdge's servers"
   echo "  --keep:   don't tear down containers after test"
   exit 1
 }
@@ -23,6 +25,7 @@ BACKUP="ssh"
 COLDFRONT=false
 KEEP=false
 MESH=false
+REPO_LAYOUT=""
 
 # Everything after the OS is recognised by its value, so the DCS and the backup
 # type can each be given without the other.
@@ -32,6 +35,7 @@ for arg in "${@:3}"; do
     ssh|s3) BACKUP="$arg" ;;
     coldfront) COLDFRONT=true ;;
     mesh) MESH=true ;;
+    repo-upstream|repo-mirror) REPO_LAYOUT="${arg#repo-}" ;;
     *) DCS="$arg" ;;
   esac
 done
@@ -145,6 +149,15 @@ if [ "$MESH" = true ]; then
   PROJECT_NAME="${PROJECT_NAME}-mesh"
 fi
 
+# A package repository of the site's own. The compose overlay adds a proxy
+# that answers in either of install_repos' layouts from pgEdge's own servers,
+# and the variables point repo_url at it in the layout asked for.
+if [ -n "$REPO_LAYOUT" ]; then
+  COMPOSE_ARGS+=(-f "$SCRIPT_DIR/compose/repo-proxy.yml")
+  EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/repo-${REPO_LAYOUT}.yml")
+  PROJECT_NAME="${PROJECT_NAME}-repo-${REPO_LAYOUT}"
+fi
+
 # Set by Step 8b when it stages the etcd authority for the reconfigure run.
 CA_VARS=""
 
@@ -171,6 +184,7 @@ python3 "$SCRIPT_DIR/render/check-patroni.py"
 python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
 python3 "$SCRIPT_DIR/render/check-etcd.py"
 python3 "$SCRIPT_DIR/render/check-validate.py"
+python3 "$SCRIPT_DIR/render/check-repos.py"
 
 # Step 1: Generate SSH keypair and copy to Docker build context
 echo "==> Step 1: Ensuring SSH keypair exists..."
@@ -290,6 +304,16 @@ echo "==> Step 7b: Checking the pooler roles are idempotent..."
   --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
   "${EXTRA_VARS[@]}"
 
+# Step 7c: Everything was installed from the site's repository, nothing still
+# points at pgEdge's own servers, and re-applying install_repos changes nothing.
+if [ -n "$REPO_LAYOUT" ]; then
+  echo "==> Step 7c: Checking the ${REPO_LAYOUT}-layout repository was used..."
+  "$SCRIPT_DIR/check-repo.sh" "$PROJECT_NAME" "${COMPOSE_ARGS[@]}" -- \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}"
+fi
+
 # Step 8: Run verification
 if [ -f "$VERIFY_PLAYBOOK" ]; then
   echo "==> Step 8: Running verification playbook..."
@@ -375,5 +399,5 @@ fi
 
 echo ""
 echo "========================================="
-echo "  TEST PASSED: ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP})"
+echo "  TEST PASSED: ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP}${REPO_LAYOUT:+, repo=$REPO_LAYOUT})"
 echo "========================================="

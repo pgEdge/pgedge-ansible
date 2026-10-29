@@ -60,6 +60,70 @@ repo_name: release
 - Description: This parameter enables installation of specific custom or
   automated builds. Contact pgEdge staff for valid values.
 
+## repo_url
+
+- Type: String
+- Default: (none)
+- Description: This parameter names a package repository of your own, such
+  as a mirror or a caching proxy, for the `install_repos` role to use in place
+  of the pgEdge repository servers. When this parameter is empty, the role
+  installs the `pgedge-release` package, which points the host at the pgEdge
+  servers. When the parameter is set, the role removes that package and writes
+  the equivalent repository definition, pointing at this URL instead. The URL
+  must begin with `http://`, `https://`, or `file:///`.
+
+In the following example, the inventory points RHEL hosts at a caching proxy
+of `dnf.pgedge.com` and Debian hosts at a proxy of `apt.pgedge.com`:
+
+```yaml
+rhel_hosts:
+  vars:
+    repo_url: https://artifacts.example.com/pgedge-dnf
+debian_hosts:
+  vars:
+    repo_url: https://artifacts.example.com/pgedge-apt
+```
+
+## repo_layout
+
+- Type: String
+- Default: `upstream`
+- Options: `upstream`, `mirror`
+- Description: This parameter describes how the repository at `repo_url`
+  arranges its contents. The `upstream` layout matches the pgEdge servers
+  themselves, which is the arrangement a caching proxy or a copy of a
+  repository server keeps. In this layout, `repo_url` replaces
+  `https://dnf.pgedge.com` on RHEL hosts or `https://apt.pgedge.com` on Debian
+  hosts, and `repo_name` selects the tier as usual. The `mirror` layout matches
+  a mirror built by a proposed pgEdge mirror procedure, which keeps every
+  platform under one URL and mirrors only the `release` tier.
+
+In the following example, the inventory points every host at a pgEdge mirror,
+whatever the operating system:
+
+```yaml
+repo_url: http://mirror.example.com/pgedge
+repo_layout: mirror
+```
+
+## repo_gpg_key
+
+- Type: String
+- Default: (none)
+- Description: This parameter specifies the URL of the key that signs pgEdge
+  packages. When this parameter is empty, the `install_repos` role fetches the
+  key from where the layout keeps the key under `repo_url`, so a host on an
+  isolated network needs no access to the pgEdge servers. The role always
+  checks package signatures. Use this parameter only together with `repo_url`.
+
+In the following example, the inventory fetches the key from an internal
+server:
+
+```yaml
+repo_url: https://artifacts.example.com/pgedge-dnf
+repo_gpg_key: https://keys.example.com/pgedge-rsa.pub
+```
+
 ## db_names
 
 - Type: List

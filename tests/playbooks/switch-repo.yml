@@ -1,7 +1,13 @@
 ---
 
+# Only for pgEdge's own servers. A repo_url of the site's own takes its tier
+# from repo_name, as an inventory would set it, and rewriting the definition
+# install_repos wrote would be undone by its next run.
+
 - name: Switch pgEdge repo from release to {{ repo_environment }}
-  when: repo_environment is defined and repo_environment != 'release'
+  when:
+  - repo_environment is defined and repo_environment != 'release'
+  - repo_url | default('') | length == 0
   block:
   - name: Switch pgEdge yum repo
     command: sed -i 's/release/{{ repo_environment }}/' /etc/yum.repos.d/pgedge.repo
