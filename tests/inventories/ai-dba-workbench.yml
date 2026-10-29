@@ -1,0 +1,25 @@
+# Layered onto a scenario's inventory to add the pgEdge AI DBA Workbench: the
+# host tests/compose/ai-dba-workbench-*.yml adds, and the passwords it needs.
+# Pass it after the scenario's own:
+#
+#   ansible-playbook -i tests/inventories/simple-cluster.yml \
+#                    -i tests/inventories/ai-dba-workbench.yml ...
+#
+# The monitoring role's password goes under all, because
+# setup_ai_dba_workbench_monitor creates the role on the pgEdge nodes and
+# setup_ai_dba_workbench hands the password to the Workbench.
+#
+# No language model is configured. The test network reaches no provider, and
+# without one the Workbench runs as a monitoring and alerting tool, which is
+# what the verify playbook checks.
+
+all:
+  vars:
+    ai_dba_workbench_monitor_password: TestMonitor987
+
+ai_dba_workbench:
+  vars:
+    ai_dba_workbench_db_password: TestWorkbench123
+    ai_dba_workbench_admin_password: Test-Admin-Pass1
+  hosts:
+    192.168.6.33:

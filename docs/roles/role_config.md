@@ -166,8 +166,47 @@ them with Lakekeeper, its Iceberg catalog:
   to use AWS's own endpoint resolution; set it to point at another store
   instead.
 
-The AI DBA Workbench, a separate monitoring product, is out of scope for
-now; its settings will land here alongside its own roles.
+### AI DBA Workbench Settings
+
+The pgEdge AI DBA Workbench's settings are defined here where more than one
+role reads them, or where `init_server` checks them; the rest are
+`setup_ai_dba_workbench`'s own defaults:
+
+- `ai_dba_workbench_monitor_user` and `ai_dba_workbench_monitor_password` name
+  the role the Workbench logs in to every pgEdge node as.
+  `setup_ai_dba_workbench_monitor` creates the role on the nodes, the nodes
+  admit the Workbench host as it, and `setup_ai_dba_workbench` registers each
+  node with it.
+- `ai_dba_workbench_db_password` and `ai_dba_workbench_admin_password` are the
+  passwords of the Workbench's datastore role and of its administrator. They
+  live here so that `init_server` can refuse the defaults, and check the
+  administrator's password against the Workbench's own length limits.
+- `ai_dba_workbench_port` and `ai_dba_workbench_server_port` set the ports
+  nginx and the Workbench server listen on, which `init_server` checks for
+  collisions with each other and with `pg_port`.
+- `ai_dba_workbench_tls_cert_source` and `ai_dba_workbench_tls_key_source` name
+  the web client's certificate and key on the controller, which `init_server`
+  requires as a pair.
+- `ai_dba_workbench_llm_provider`, `ai_dba_workbench_llm_model`,
+  `ai_dba_workbench_llm_api_key`, and `ai_dba_workbench_llm_base_url` choose
+  the language model, and the matching `ai_dba_workbench_embedding_*` settings
+  the embedding model, which `init_server` checks are complete.
+  `ai_dba_workbench_embedding_api_key` and
+  `ai_dba_workbench_embedding_base_url` default to the language model's own
+  where both name the same provider.
+
+The computed `ai_dba_workbench_enabled` says whether the inventory has a host
+in the `ai_dba_workbench` group. It is read from the group itself, so every
+host answers it the same way. Where it is true,
+`pg_ai_dba_workbench_hba_rules` holds the rule that admits the Workbench host,
+as `ai_dba_workbench_monitor_user` and to every database, which joins
+`pg_required_hba_rules`: the client authentication rules the collection
+depends on beyond the cluster's own hosts, which `setup_postgres` writes into
+`pg_hba.conf` on a simple cluster and `setup_patroni` writes into Patroni's
+configuration in an HA zone. Each rule names the hosts it admits, which its
+writer resolves to their addresses. `init_server` checks the monitoring
+password on the pgEdge nodes only where `ai_dba_workbench_enabled` is true,
+and `setup_ai_dba_workbench_monitor` stops where it is false.
 
 ### Platform-Specific Values
 

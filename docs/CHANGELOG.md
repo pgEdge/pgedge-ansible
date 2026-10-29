@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+The [release notes](release_notes/unreleased.md#changes) describe each change
+in full.
+
+### Added
+
+- New `install_ai_dba_workbench` and `setup_ai_dba_workbench` roles deploy the
+  pgEdge AI DBA Workbench, with a Postgres datastore of its own, on the host in
+  a new `ai_dba_workbench` inventory group, and register every pgEdge node
+  with it. (EE-50)
+- New `setup_ai_dba_workbench_monitor` role creates the Workbench's monitoring
+  role, extensions and grants on the pgEdge nodes. (EE-50)
+- New `pg_required_hba_rules` in `role_config` adds the rule that admits the
+  Workbench host to the ones `setup_postgres`, and `setup_patroni` on HA
+  clusters, write. (EE-50)
+- New `ai_dba_workbench_*` parameters set the Workbench's passwords, ports and
+  certificate, and its optional language and embedding models. (EE-50)
+- `init_server` refuses more than one Workbench host, one that is also a pgEdge
+  node, default or empty Workbench passwords, an administrator password outside
+  the Workbench's length limits, colliding ports, a certificate without its
+  key, and incomplete model settings. (EE-50)
+- New `simple-cluster-ai-dba-workbench` and `ultra-ha-ai-dba-workbench` sample
+  playbooks and inventories deploy the two clusters with the Workbench, and
+  the end-to-end tests can add it, with a new render check. (EE-50)
+
 ## v2.1.0
 
 This release adds ColdFront tiered storage, which keeps recent data in native

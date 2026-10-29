@@ -412,6 +412,29 @@ pg_standalone_parameters: >-
                                + ['shared_preload_libraries'])
      | items2dict }}
 
+# Client authentication rules the collection itself depends on, beside the ones
+# setup_postgres and Patroni's configuration write for the cluster's own hosts
+# and custom_hba_rules: the AI DBA Workbench host's, where the inventory has
+# one. Each rule names the hosts it admits, the role they log in as and the
+# databases they reach, and its writer resolves the hosts to their addresses as
+# it does the nodes'. setup_postgres writes them on a simple cluster and
+# Patroni in an HA zone. Both rewrite pg_hba.conf whole, so a rule added by a
+# later role instead would be gone after the next run of either alone.
+
+pg_required_hba_rules: "{{ pg_ai_dba_workbench_hba_rules }}"
+
+# The AI DBA Workbench host's rule, where the inventory has one: as the
+# monitoring role, to every database, since the Workbench's collector reads
+# every database on a node, whatever created it, and its server runs the
+# queries its tools make. An inventory without a Workbench host gets none.
+
+pg_ai_dba_workbench_hba_rules: >-
+  {{ [] if not ai_dba_workbench_enabled | bool else [{
+       'hosts': groups['ai_dba_workbench'],
+       'users': ai_dba_workbench_monitor_user,
+       'databases': 'all',
+     }] }}
+
 # pgBouncer's packaging differs by platform and neither layout needs new
 # directories or a logrotate file, provided the native paths are used. The RHEL
 # package creates a dedicated pgbouncer user and owns /var/log/pgbouncer and
@@ -531,3 +554,11 @@ coldfront_s3_hostport: "{{ coldfront_s3_endpoint | urlsplit('netloc') }}"
 # coldfront.set_storage_secret() and the archiver's config.yaml both
 # take. The archiver refuses any other value.
 coldfront_s3_url_style: "{{ 'path' if coldfront_s3_path_style else 'vhost' }}"
+
+# Whether the inventory has a pgEdge AI DBA Workbench host; init_server refuses
+# more than one. Answered from the group itself, so every host agrees on it.
+# The pgEdge nodes admit the host, through pg_ai_dba_workbench_hba_rules, and
+# init_server checks their monitoring password, only where it exists;
+# setup_ai_dba_workbench_monitor stops without one.
+ai_dba_workbench_enabled: >-
+  {{ groups['ai_dba_workbench'] | default([]) | length > 0 }}

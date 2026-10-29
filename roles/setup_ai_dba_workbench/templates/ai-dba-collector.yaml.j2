@@ -1,0 +1,14 @@
+# Managed by Ansible. setup_ai_dba_workbench writes this over the file the
+# pgedge-ai-dba-collector package installs, and the Workbench's defaults apply
+# to every setting it leaves out. Secrets are read from the files named here.
+
+datastore:
+  host: 127.0.0.1
+  port: {{ pg_port }}
+  database: {{ ai_dba_workbench_db | to_json }}
+  username: {{ ai_dba_workbench_db_user | to_json }}
+  password_file: {{ ai_dba_workbench_db_password_file }}
+
+# The collector decrypts the monitored servers' passwords with the secret the
+# server encrypted them with, so both name the same file.
+secret_file: {{ ai_dba_workbench_secret_file }}

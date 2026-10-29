@@ -76,7 +76,7 @@ the restored zone. See [Recovering a Cluster from Backup](recovery.md).
 
 ## Role Categories
 
-The roles in this collection fall into six categories.
+The roles in this collection fall into seven categories.
 
 ### Configuration Foundation
 
@@ -146,4 +146,33 @@ with Lakekeeper in a play for the `lakekeeper` group; the plain
 | [`setup_coldfront`](roles/setup_coldfront.md) | Configures the ColdFront tiered-storage extension. |
 
 See the [ColdFront Configuration](configuration/coldfront.md) reference
+for how these roles fit together.
+
+### AI DBA Workbench
+
+These roles are optional and not part of the numbered execution order above.
+`install_ai_dba_workbench` and `setup_ai_dba_workbench` build the pgEdge AI DBA
+Workbench on the one host in the `ai_dba_workbench` group, after `init_server`
+and `install_repos` have run there as on every host, and after the pgEdge nodes
+are built, since `setup_ai_dba_workbench` registers them with the Workbench.
+Before that, `setup_ai_dba_workbench_monitor` prepares the nodes, on the
+`pgedge` group after `setup_pgedge`, so that every database the Workbench
+reads exists by then. It installs the `system_stats` extension, and creates
+the role the Workbench monitors the nodes as and the extensions its probes
+read. The nodes admit the Workbench host through the rules `setup_postgres`
+writes on a simple cluster and `setup_patroni` writes on an HA one, which
+`role_config` gives them. The
+`sample-playbooks/simple-cluster-ai-dba-workbench` and
+`sample-playbooks/ultra-ha-ai-dba-workbench` playbooks run
+`setup_ai_dba_workbench_monitor` after `setup_pgedge`, and the other two roles
+in a last play, for the `ai_dba_workbench` group; the plain `simple-cluster`
+and `ultra-ha` playbooks leave the Workbench out.
+
+| Role | Description |
+|------|-------------|
+| [`setup_ai_dba_workbench_monitor`](roles/setup_ai_dba_workbench_monitor.md) | Creates the Workbench's monitoring role, extensions and grants on the pgEdge nodes. |
+| [`install_ai_dba_workbench`](roles/install_ai_dba_workbench.md) | Installs the AI DBA Workbench and the Postgres packages for its datastore. |
+| [`setup_ai_dba_workbench`](roles/setup_ai_dba_workbench.md) | Configures and starts the Workbench, and registers every pgEdge node with it. |
+
+See the [AI DBA Workbench Configuration](configuration/ai_dba_workbench.md) reference
 for how these roles fit together.

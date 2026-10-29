@@ -61,6 +61,15 @@ on:
           - pgedge
           - upstream
           - mirror
+      ai_dba_workbench:
+        description: >-
+          Also deploy the pgEdge AI DBA Workbench on a host of its own, and
+          check it monitors every member. Its server package requires a
+          knowledge base package of about 2.2 GB to download. The recovery
+          test does not run with it.
+        type: boolean
+        required: false
+        default: false
       recover:
         description: >-
           Also rebuild the cluster from its backup repository and verify the
@@ -88,7 +97,8 @@ jobs:
     name: >-
       Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}${{
       inputs.coldfront && ' - coldfront' || '' }}${{
-      inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}
+      inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}${{
+      inputs.ai_dba_workbench && ' - ai-dba-workbench' || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -103,6 +113,7 @@ jobs:
         ${{ matrix.backup == 's3' && '-f tests/compose/backup-s3.yml' || '' }}
         ${{ inputs.coldfront && format('-f tests/compose/coldfront-{0}.yml', matrix.os) || '' }}
         ${{ inputs.repo != 'pgedge' && '-f tests/compose/repo-proxy.yml' || '' }}
+        ${{ inputs.ai_dba_workbench && format('-f tests/compose/ai-dba-workbench-{0}.yml', matrix.os) || '' }}
       DCS_VARS: ${{ matrix.dcs != 'etcd3' && format('-e @tests/vars/dcs-{0}.yml', matrix.dcs) || '' }}
       # The repository is layered onto the base inventory: the backup servers
       # for SSH, or the MinIO store's variables for S3, which may not have any.
@@ -114,6 +125,9 @@ jobs:
       # an inventory would set it; switch-repo.yml leaves its definition alone.
       REPO_ARGS: >-
         ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
+      # The AI DBA Workbench is layered onto the base inventory too: its host,
+      # and the passwords it and the nodes share.
+      AI_DBA_WORKBENCH_ARGS: ${{ inputs.ai_dba_workbench && '-i tests/inventories/ai-dba-workbench.yml' || '' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -151,6 +165,7 @@ jobs:
           python3 tests/render/check-etcd.py
           python3 tests/render/check-validate.py
           python3 tests/render/check-repos.py
+          python3 tests/render/check-ai-dba-workbench.py
 
       - name: Generate SSH keypair
         run: |
@@ -171,7 +186,7 @@ jobs:
 
       - name: Wait for SSH
         run: |
-          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }}; do
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }} ${{ inputs.ai_dba_workbench && '192.168.6.33' || '' }}; do
             ready=0
             for i in $(seq 1 30); do
               ssh -i tests/.ssh/id_ed25519 \
@@ -218,6 +233,7 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/ultra-ha.yml \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS $REPO_ARGS
@@ -227,7 +243,7 @@ jobs:
           tests/check-idempotence.sh \
             tests/inventories/ultra-ha.yml \
             tests/playbooks/ultra-ha.yml \
-            $BACKUP_ARGS $COLDFRONT_ARGS \
+            $BACKUP_ARGS $COLDFRONT_ARGS $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS $REPO_ARGS
@@ -237,6 +253,7 @@ jobs:
         run: |
           tests/check-repo.sh e2e $COMPOSE_ARGS -- \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS $REPO_ARGS
 
@@ -245,6 +262,7 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-ultra-ha.yml \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
 
@@ -254,6 +272,27 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-ultra-ha-coldfront.yml \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
+
+      - name: Verify the AI DBA Workbench
+        if: inputs.ai_dba_workbench
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/verify/verify-ai-dba-workbench.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
+
+      - name: Check the AI DBA Workbench roles are idempotent
+        if: inputs.ai_dba_workbench
+        run: |
+          tests/check-ai-dba-workbench-idempotence.sh \
+            tests/inventories/ultra-ha.yml \
+            tests/playbooks/ultra-ha.yml \
+            $BACKUP_ARGS $COLDFRONT_ARGS $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
 
@@ -264,6 +303,7 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/pg-reconfigure.yml \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
 
@@ -294,9 +334,11 @@ jobs:
       # which is the case recover_postgres's timeline handling is for.
       #
       # Not with ColdFront: run-recovery-test.sh deploys without its layer.
+      # Nor with the Workbench: the recovery's inventory has no Workbench host,
+      # so its setup_patroni would leave out the rule that admits that host.
       # With the deployment's repo_url, which it re-applies install_repos with.
       - name: Recover the cluster from its backup repository
-        if: ${{ inputs.recover && !inputs.coldfront }}
+        if: inputs.recover && !inputs.coldfront && !inputs.ai_dba_workbench
         env:
           DEPLOY_PLAYBOOK_DIR: tests/playbooks
           RECOVER_TO: ${{ inputs.recover_to || 'both' }}
@@ -336,6 +378,22 @@ jobs:
               || true
             echo "::endgroup::"
           done
+
+      # The AI DBA Workbench's services log to their own files, and nginx to
+      # its journal, rather than to docker.
+      - name: Show AI DBA Workbench status on failure
+        if: failure() && inputs.ai_dba_workbench
+        run: |
+          ssh -i tests/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=2 \
+            -o BatchMode=yes \
+            ansible@192.168.6.33 \
+            'sudo systemctl status "pgedge-ai-dba-*" nginx --no-pager -l; \
+             sudo tail -n 200 /var/log/pgedge/ai-dba-*/*.log; \
+             sudo journalctl -u nginx --no-pager -n 100' \
+            || true
 
       - name: Teardown
         if: always()

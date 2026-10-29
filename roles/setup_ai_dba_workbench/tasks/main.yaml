@@ -1,0 +1,13 @@
+---
+
+- include_tasks: datastore.yaml
+
+- include_tasks: files.yaml
+
+- include_tasks: services.yaml
+
+- include_tasks: web.yaml
+
+- include_tasks: admin.yaml
+
+- include_tasks: connections.yaml

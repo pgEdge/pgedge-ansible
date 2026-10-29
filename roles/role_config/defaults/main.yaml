@@ -320,3 +320,88 @@ coldfront_s3_bucket: iceberg
 coldfront_s3_access_key: ""
 coldfront_s3_secret_key: ""
 coldfront_s3_path_style: true
+
+# pgEdge AI DBA Workbench, a monitoring and AI-assisted management tool for the
+# cluster. Put one host in the 'ai_dba_workbench' group and
+# install_ai_dba_workbench and setup_ai_dba_workbench make it the Workbench:
+# its server, collector, alerter and web client, with a Postgres instance of
+# its own for the Workbench's datastore. setup_ai_dba_workbench registers every
+# pgEdge node with it. On the nodes, setup_ai_dba_workbench_monitor creates the
+# role the Workbench monitors them as and the extensions its probes read, and
+# setup_postgres, or setup_patroni under HA, admits the Workbench host with the
+# rule in pg_ai_dba_workbench_hba_rules, among this role's vars. Only the
+# settings more than one role reads, or that init_server checks, live here; the
+# rest are setup_ai_dba_workbench's own defaults.
+
+# The role the Workbench logs in to every pgEdge node as. It holds pg_monitor
+# and read access to Spock's status tables, and nothing more.
+# setup_ai_dba_workbench_monitor creates it on the nodes and
+# setup_ai_dba_workbench hands its password to the Workbench, so both groups
+# read these: set the password under all, from Ansible Vault.
+
+ai_dba_workbench_monitor_user: ai_dba_workbench_monitor
+ai_dba_workbench_monitor_password: secret
+
+# The password of the role the Workbench's server, collector and alerter log in
+# to their datastore as, and that of the Workbench administrator
+# setup_ai_dba_workbench creates and registers the nodes as. Here rather than
+# in setup_ai_dba_workbench so that init_server can refuse the defaults. The
+# Workbench refuses an administrator password shorter than 12 characters or
+# longer than 72 bytes, which init_server checks before anything is installed,
+# and one on its list of common passwords, which only the Workbench can check.
+
+ai_dba_workbench_db_password: secret
+ai_dba_workbench_admin_password: secret
+
+# The ports the Workbench host listens on. nginx serves the web client, and
+# proxies the REST API and the MCP endpoint, over HTTPS on
+# ai_dba_workbench_port; the Workbench server listens on
+# ai_dba_workbench_server_port on the loopback interface alone, behind nginx.
+# Both defaults are the packages' own. init_server refuses ports that collide
+# with each other or with pg_port, which the datastore's Postgres listens on on
+# the same host.
+
+ai_dba_workbench_port: 8444
+ai_dba_workbench_server_port: 8443
+
+# The certificate and key nginx serves the web client with, as paths on the
+# controller, the way pgbouncer_tls_cert_source names the pooler's. Left empty,
+# setup_ai_dba_workbench generates a self-signed pair on the controller, in
+# tls/ai-dba-workbench beside the playbook, which browsers warn about until it
+# is trusted. Set both or neither.
+
+ai_dba_workbench_tls_cert_source: ""
+ai_dba_workbench_tls_key_source: ""
+
+# The language model behind the Workbench's chat and the alerter's reasoning
+# tier: anthropic, openai, gemini or ollama. Left empty, the Workbench runs
+# without AI features, as a monitoring and alerting tool whose alerter uses its
+# statistical tier alone. Once a provider is set, init_server requires
+# ai_dba_workbench_llm_model, and the key for any provider but ollama, which
+# needs the address of its API in ai_dba_workbench_llm_base_url instead. For
+# the other providers, ai_dba_workbench_llm_base_url is optional and points at
+# another endpoint, such as an OpenAI-compatible proxy. The key comes from
+# Ansible Vault.
+
+ai_dba_workbench_llm_provider: ""
+ai_dba_workbench_llm_model: ""
+ai_dba_workbench_llm_api_key: ""
+ai_dba_workbench_llm_base_url: ""
+
+# The embedding model behind the Workbench's conversation memory and the
+# alerter's second tier, which compares an anomaly with ones it has seen
+# before: openai, gemini, voyage or ollama, since Anthropic offers no
+# embeddings. The same rules apply as for the language model, and where both
+# name the same provider the key and the address default to the language
+# model's.
+
+ai_dba_workbench_embedding_provider: ""
+ai_dba_workbench_embedding_model: ""
+ai_dba_workbench_embedding_api_key: >-
+  {{ ai_dba_workbench_llm_api_key
+     if ai_dba_workbench_embedding_provider == ai_dba_workbench_llm_provider
+     else '' }}
+ai_dba_workbench_embedding_base_url: >-
+  {{ ai_dba_workbench_llm_base_url
+     if ai_dba_workbench_embedding_provider == ai_dba_workbench_llm_provider
+     else '' }}

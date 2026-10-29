@@ -73,6 +73,7 @@ nav:
       - DCS Configuration: configuration/dcs.md
       - etcd Configuration: configuration/etcd.md
       - ColdFront Configuration: configuration/coldfront.md
+      - AI DBA Workbench Configuration: configuration/ai_dba_workbench.md
   - Role Reference:
       - Role Overview: roles.md
       - role_config: roles/role_config.md
@@ -98,6 +99,9 @@ nav:
       - install_coldfront: roles/install_coldfront.md
       - setup_coldfront_db: roles/setup_coldfront_db.md
       - setup_coldfront: roles/setup_coldfront.md
+      - setup_ai_dba_workbench_monitor: roles/setup_ai_dba_workbench_monitor.md
+      - install_ai_dba_workbench: roles/install_ai_dba_workbench.md
+      - setup_ai_dba_workbench: roles/setup_ai_dba_workbench.md
   - Troubleshooting:
       - Troubleshooting: troubleshooting.md
       - Installation Issues: troubleshooting/installation.md
@@ -110,8 +114,10 @@ nav:
       - pgBouncer Issues: troubleshooting/pgbouncer.md
       - Spock Replication Issues: troubleshooting/spock.md
       - PgBackRest Issues: troubleshooting/backup.md
+      - AI DBA Workbench Issues: troubleshooting/ai_dba_workbench.md
   - Release Notes:
       - Release Notes: release_notes.md
+      - Unreleased: release_notes/unreleased.md
       - v2.1.0: release_notes/v2.1.0.md
       - v2.0.0: release_notes/v2.0.0.md
   - Changelog: CHANGELOG.md
