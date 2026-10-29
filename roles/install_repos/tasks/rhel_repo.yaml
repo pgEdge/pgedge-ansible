@@ -1,8 +1,12 @@
 ---
 
+# pgEdge's own key comes from downloads.pgedge.com, which is ungated: the
+# gated repository cannot serve what configures access to it. The signing keys
+# differ by family, so this is keys/dnf specifically -- keys/apt is a different
+# key, and the pgedge-release deb fetches that one itself.
 - name: Install the pgEdge repo GPG Keys
   rpm_key:
-    key: "{{ repo_key_url if repo_url | length > 0 else 'https://dnf.pgedge.com/keys/pgedge-rsa.pub' }}"
+    key: "{{ repo_key_url if repo_url | length > 0 else 'https://downloads.pgedge.com/keys/dnf/pgedge-rsa.pub' }}"
     state: present
   become: true
 
@@ -30,7 +34,7 @@
 
 - name: Install the pgEdge repo package
   dnf:
-    name: https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
+    name: https://downloads.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm
     state: present
   retries: 5
   delay: 20

@@ -6,6 +6,9 @@ host-keys
 tests/.ssh/
 tests/docker/authorized_keys
 
+# Written from the repository client certificate secrets during E2E runs.
+tests/.certs/
+
 # Left behind by the render checks under tests/render.
 __pycache__/
 

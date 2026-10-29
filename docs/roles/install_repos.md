@@ -54,6 +54,44 @@ This role reads the following shared parameters; the
 The role handles all other repository configuration automatically based on
 the detected operating system.
 
+### Client Certificate for the pgEdge Repositories
+
+pgEdge's own repositories authenticate clients with mutual TLS, and
+`pgedge-release` ships its repository definitions disabled, so without a
+certificate the role installs `pgedge-release` and stops: the repositories
+stay disabled and no pgEdge package will install. A repository of your own is
+reached on whatever terms it sets, so hosts installing from `repo_url` need no
+certificate -- but the host that *builds* that mirror pulls from the gated
+repositories and does. The role installs the certificate whenever one is
+supplied and `pgedge-subscription-manager` is present; setting `repo_url`
+removes `pgedge-release`, and the manager with it, which the role reports
+rather than failing on.
+
+Supply the certificate and its matching key as a pair. Either give the PEM
+contents inline:
+
+| Parameter | Description |
+| --- | --- |
+| `pgedge_client_cert` | PEM contents of the client certificate: the leaf followed by its issuing intermediate. |
+| `pgedge_client_key` | PEM contents of the matching private key. |
+
+or point the role at files on the Ansible controller, which it reads and
+copies to the target:
+
+| Parameter | Description |
+| --- | --- |
+| `pgedge_client_cert_src` | Path on the controller to the certificate file. |
+| `pgedge_client_key_src` | Path on the controller to the key file. |
+
+The inline parameters take precedence. Both halves of a pair are required --
+a certificate without its key, or a key without its certificate, leaves the
+repositories disabled just as supplying neither does. `pgedge-subscription-manager`
+checks that the key matches the certificate before installing either.
+
+The certificate and key are written to `/etc/pki/pgedge` on RHEL-based systems
+and `/etc/pgedge` on Debian-based systems, then validated by
+`pgedge-subscription-manager`, which enables the repositories on success.
+
 ### Using Your Own Repository
 
 When `repo_url` is set, the role builds the repository definition that the
@@ -119,12 +157,14 @@ detected on each target host.
 
 On Debian-based systems, the role performs the following steps:
 
-1. Install prerequisite packages including `curl`, `gnupg2`, and
-   `lsb-release`.
+1. Install prerequisite packages including `curl`, `gnupg2`, `lsb-release`,
+   and `openssl`.
 2. Download and install the pgEdge repository definition package; with
    `repo_url` set, remove that package, install the signing key from
    `repo_url`, and write the repository definition instead.
 3. Update the APT package cache to include pgEdge packages.
+4. Install the client certificate and enable the pgEdge repositories, unless
+   `repo_url` is set.
 
 ### RHEL Family Setup
 
@@ -136,6 +176,8 @@ On RHEL-based systems, the role performs the following steps:
 3. Download and install the pgEdge repository definition package; with
    `repo_url` set, remove that package and write the repository definition
    instead.
+4. Install the client certificate and enable the pgEdge repositories, unless
+   `repo_url` is set.
 
 !!! important "Execution Order"
     Execute this role before any `install_*` roles that install pgEdge
