@@ -112,7 +112,7 @@ nav:
       - PgBackRest Issues: troubleshooting/backup.md
   - Release Notes:
       - Release Notes: release_notes.md
-      - Unreleased: release_notes/unreleased.md
+      - v2.1.0: release_notes/v2.1.0.md
       - v2.0.0: release_notes/v2.0.0.md
   - Changelog: CHANGELOG.md
   - License: LICENSE.md

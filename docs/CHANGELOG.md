@@ -5,9 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v2.1.0
 
-The [release notes](release_notes/unreleased.md#changes) describe each change
+This release adds ColdFront tiered storage, which keeps recent data in native
+Postgres partitions and archives older data to Apache Iceberg tables on
+S3-compatible storage, to simple and Ultra-HA clusters. It also lets
+`install_repos` use a mirror or caching proxy of the pgEdge package
+repository, and adds Debian 13, Ubuntu 24.04 and Ubuntu 26.04 to the
+compatibility list. Playbooks and inventories written for v2.0.0 need no
+changes; see [Upgrading from v2.0.0](release_notes/v2.1.0.md#upgrading-from-v200).
+
+The [release notes](release_notes/v2.1.0.md#changes) describe each change
 in full.
 
 ### Added
@@ -46,6 +54,12 @@ in full.
   pgEdge servers' layout or that of a proposed pgEdge mirror procedure, in
   place of the `pgedge-release` package. `init_server` refuses settings the role would
   otherwise ignore. (EE-43)
+
+### Changed
+
+- The collection tarball no longer includes `galaxy.template.yml`, the
+  `Makefile` or `mkdocs.yml`, which an installed collection does not use.
+  (EE-48)
 
 ### Fixed
 

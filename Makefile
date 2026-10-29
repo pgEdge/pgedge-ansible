@@ -63,7 +63,7 @@ SOURCES := $(shell find $(DIR)/roles $(DIR)/meta $(DIR)/docs $(DIR)/sample-playb
 $(TARGET): $(SOURCES)
 	@test -n "$(VERSION)" || { \
 		echo "Cannot tell which version this is: no git tags and no .git_archival.txt." >&2; \
-		echo "Pass it explicitly, for example: make build VERSION=2.0.0" >&2; \
+		echo "Pass it explicitly, for example: make build VERSION=2.1.0" >&2; \
 		exit 1; }
 	sed -E 's/version:.*/version: "$(VERSION)"/g' $(DIR)/galaxy.template.yml > $(DIR)/galaxy.yml
 	ansible-galaxy collection build --force $(DIR)
