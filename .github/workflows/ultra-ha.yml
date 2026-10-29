@@ -221,11 +221,15 @@ jobs:
 
       - name: Install the pgEdge repository client certificate
         run: |
+          # An empty secret would write a lone newline, which `test -s` accepts,
+          # so the deployment would get invalid credentials instead of failing
+          # here. Check the values before they reach a file.
+          : "${PGEDGE_REPO_CLIENT_CRT:?is empty or unset}"
+          : "${PGEDGE_REPO_CLIENT_KEY:?is empty or unset}"
           install -d -m 0700 tests/.certs
           install -m 0600 /dev/null tests/.certs/client.key
           printf '%s\n' "$PGEDGE_REPO_CLIENT_CRT" > tests/.certs/client.crt
           printf '%s\n' "$PGEDGE_REPO_CLIENT_KEY" > tests/.certs/client.key
-          test -s tests/.certs/client.crt && test -s tests/.certs/client.key
         env:
           PGEDGE_REPO_CLIENT_CRT: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
           PGEDGE_REPO_CLIENT_KEY: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
