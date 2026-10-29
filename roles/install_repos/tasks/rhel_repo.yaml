@@ -1,10 +1,12 @@
 ---
 
 # downloads.pgedge.com, not dnf.pgedge.com: the gated repository cannot serve
-# the package that configures access to it.
+# the package that configures access to it. The signing keys differ by family,
+# so the RPM key comes from keys/dnf (the DEB one, keys/apt, is a different
+# key and the pgedge-release deb fetches it itself).
 - name: Install the pgEdge repo GPG Keys
   rpm_key:
-    key: https://dnf.pgedge.com/keys/pgedge-rsa.pub
+    key: https://downloads.pgedge.com/keys/dnf/pgedge-rsa.pub
     state: present
   become: true
 

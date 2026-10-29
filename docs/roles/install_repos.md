@@ -62,7 +62,8 @@ copies to the target:
 
 The inline parameters take precedence. Both halves of a pair are required --
 a certificate without its key, or a key without its certificate, leaves the
-repositories disabled just as supplying neither does.
+repositories disabled just as supplying neither does. `pgedge-subscription-manager`
+checks that the key matches the certificate before installing either.
 
 The certificate and key are written to `/etc/pki/pgedge` on RHEL-based systems
 and `/etc/pgedge` on Debian-based systems, then validated by
