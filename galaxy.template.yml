@@ -47,6 +47,11 @@ issues: https://github.com/pgEdge/pgedge-ansible/issues
 # The git metadata files are left out too: .git_archival.txt only tells the
 # Makefile which version to build, and nothing installed reads any of them.
 #
+# So is this template. The build turns the galaxy.yml generated from it into
+# MANIFEST.json, which is all an installed collection needs, and never ships
+# galaxy.yml itself. The Makefile that generates it and mkdocs.yml, which only
+# builds the documentation site, are no use to an installed collection either.
+#
 # tests/ is left out entirely. It holds the Docker harness, inventories and
 # checks run from a checkout, and nothing in an installed collection reads it.
 build_ignore:
@@ -55,6 +60,9 @@ build_ignore:
 - .gitignore
 - .gitattributes
 - .git_archival.txt
+- galaxy.template.yml
+- Makefile
+- mkdocs.yml
 - .claude
 - .ansible
 - site
