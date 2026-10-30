@@ -1,0 +1,59 @@
+# This inventory will produce a pgEdge cluster with the pgEdge AI DBA
+# Workbench:
+#
+# * 3 zones
+# * 1 pgEdge node in each zone
+# * 1 AI DBA Workbench host monitoring every node
+#
+# Note: zones are currently a logical node assignment. This is also
+#       used for snowflake IDs.
+#
+# To give every node a pooled endpoint as well, set pgbouncer_enabled on the
+# pgedge group below, along with pgbouncer_auth_password, which the playbook
+# refuses to leave at its default. Pooled clients then use pgbouncer_port
+# (6432) where direct ones use pg_port (5432). Pooling is a property of the
+# cluster, like is_ha_cluster: it is on for every node or for none.
+#
+#   pgbouncer_enabled: true
+#   pgbouncer_auth_password: <a real password>
+
+# The monitoring role's password goes under all, because the pgedge group
+# creates the role and the ai_dba_workbench group logs in with it. The
+# passwords belong in Ansible Vault.
+
+all:
+  vars:
+    ai_dba_workbench_monitor_password: >-
+      {{ vault_ai_dba_workbench_monitor_password }}
+
+pgedge:
+  vars:
+    db_password: secret
+  hosts:
+    192.168.6.10:
+      zone: 1
+    192.168.6.11:
+      zone: 2
+    192.168.6.12:
+      zone: 3
+
+# The Workbench needs a host of its own: it keeps its datastore in a Postgres
+# instance there, and its server package brings a documentation knowledge base
+# of about 2.6 GB with it, except on Ubuntu 26.04. The web client is then at
+# https://192.168.6.21:8444, where admin signs in with
+# ai_dba_workbench_admin_password, which has to be at least 12 characters long.
+#
+# Without a language model the Workbench monitors and alerts, with its AI
+# features off. To turn them on, name a provider, a model and its key:
+#
+#   ai_dba_workbench_llm_provider: anthropic
+#   ai_dba_workbench_llm_model: claude-sonnet-4-5
+#   ai_dba_workbench_llm_api_key: "{{ vault_ai_dba_workbench_llm_api_key }}"
+
+ai_dba_workbench:
+  vars:
+    ai_dba_workbench_db_password: "{{ vault_ai_dba_workbench_db_password }}"
+    ai_dba_workbench_admin_password: >-
+      {{ vault_ai_dba_workbench_admin_password }}
+  hosts:
+    192.168.6.21:

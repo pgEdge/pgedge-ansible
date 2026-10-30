@@ -1,0 +1,66 @@
+---
+
+# The Workbench's four packages, from the pgEdge package repository rather than
+# the tarballs on the Workbench's GitHub releases page. The collector, the
+# alerter and the web client each require the server package at the same
+# version, so all four come from one release. The web client requires nginx,
+# which serves it. The server package published as 1.0.0-1 also requires
+# pgedge-ai-kb, a prebuilt documentation knowledge base of about 2.6 GB, so
+# this host needs the disk for it. Ubuntu 26.04's build of that release does
+# not require it, and the pgEdge repository publishes no pgedge-ai-kb for
+# Ubuntu 26.04.
+
+- name: Install the AI DBA Workbench packages
+  package:
+    name:
+    - pgedge-ai-dba-server
+    - pgedge-ai-dba-collector
+    - pgedge-ai-dba-alerter
+    - pgedge-ai-dba-client
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+# The Workbench keeps its datastore in a Postgres instance of its own on this
+# host, which needs the server package, named as install_lakekeeper names it:
+# Debian's pgedge-postgresql-<ver> is the server itself, while on RHEL that
+# name is the client tools alone and the server is
+# pgedge-postgresql<ver>-server.
+#
+# The collector creates pgvector's extension in the datastore when it is
+# available there, for the alerter's second tier and for the conversation
+# memory, so its package comes too. pgvector is pgedge-pgvector_<ver> on RHEL.
+
+- name: Install the Postgres packages for the Workbench's datastore
+  package:
+    name:
+    - >-
+      {{ 'pgedge-postgresql' ~ pg_version
+         if ansible_facts['os_family'] == 'RedHat'
+         else 'pgedge-postgresql-' ~ pg_version }}
+    - >-
+      {{ 'pgedge-pgvector_' ~ pg_version
+         if ansible_facts['os_family'] == 'RedHat'
+         else 'pgedge-postgresql-' ~ pg_version ~ '-pgvector' }}
+    # Needed by the community.postgresql modules setup_ai_dba_workbench uses.
+    - pgedge-python3-psycopg2
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+
+- name: Install the Postgres server package on RHEL systems
+  package:
+    name: "pgedge-postgresql{{ pg_version }}-server"
+    state: present
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+  when: ansible_facts['os_family'] == 'RedHat'

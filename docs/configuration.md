@@ -30,6 +30,8 @@ apply across roles unless noted otherwise.
   logical replication exception handling.
 - [ColdFront Configuration Parameters](#coldfront-configuration-parameters) -
   Enable the tiered-storage add-on and its Lakekeeper catalog.
+- [AI DBA Workbench Configuration Parameters](#ai-dba-workbench-configuration-parameters) -
+  Add a host that monitors every node with the pgEdge AI DBA Workbench.
 - [Path Override Parameters](#path-override-parameters) - Override default
   PostgreSQL installation paths.
 - [Internal Variables](#internal-variables) - Computed variables available for
@@ -235,6 +237,28 @@ See the [ColdFront Configuration](configuration/coldfront.md) document for
 the complete parameter list, including the remaining Lakekeeper and object
 store settings.
 
+## AI DBA Workbench Configuration Parameters
+
+The following table describes parameters that control the pgEdge AI DBA
+Workbench, which runs on the one host in the `ai_dba_workbench` group, and the
+access the pgEdge nodes give it:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| ai_dba_workbench_monitor_user | ai_dba_workbench_monitor | Role the Workbench logs in to every pgEdge node as. `setup_ai_dba_workbench_monitor` creates it where the inventory has an `ai_dba_workbench` host. |
+| ai_dba_workbench_monitor_password | secret | Password for `ai_dba_workbench_monitor_user`. Set it under `all`, since both groups read it; `init_server` refuses the default. |
+| ai_dba_workbench_db_password | secret | Password of the role the Workbench's services log in to their datastore as. |
+| ai_dba_workbench_admin_password | secret | Password of the Workbench administrator, at least 12 characters and at most 72 bytes long. |
+| ai_dba_workbench_port | 8444 | Port nginx serves the web client, the REST API and the MCP endpoint on, over HTTPS. |
+| ai_dba_workbench_server_port | 8443 | Port the Workbench server listens on, on the loopback interface. |
+| ai_dba_workbench_tls_cert_source | "" | Path on the controller of the web client's certificate. Left empty, with `ai_dba_workbench_tls_key_source`, a self-signed pair is generated. |
+| ai_dba_workbench_llm_provider | "" | Language model provider for the Workbench's chat and the alerter's reasoning tier. Left empty, the Workbench runs without AI features. |
+| ai_dba_workbench_embedding_provider | "" | Embedding model provider for the conversation memory and the alerter's second tier. |
+
+See the [AI DBA Workbench Configuration](configuration/ai_dba_workbench.md) document
+for the complete parameter list, including the models' keys and addresses
+and the Workbench host's own settings.
+
 ## Path Override Parameters
 
 The following parameters control PostgreSQL installation paths. The
@@ -265,6 +289,7 @@ collection roles. The values differ by operating system family.
 | pgbouncer_log_file | /var/log/postgresql/pgbouncer.log | /var/log/pgbouncer/pgbouncer.log | Path to the pooler's log file. Each platform's own path, so the packaged logrotate rule already covers it. |
 | pgbouncer_pid_file | /var/run/postgresql/pgbouncer.pid | /run/pgbouncer/pgbouncer.pid | Path to the pooler's pid file. |
 | pgbouncer_socket_dir | /var/run/postgresql | /run/pgbouncer | Directory holding the pooler's unix socket. Its permissions decide who can administer the pooler locally. |
+| ai_dba_workbench_enabled | (computed) | (computed) | Whether the inventory has a host in the ai_dba_workbench group, read from the group itself so that every host agrees. The pgEdge nodes admit the AI DBA Workbench host, through pg_ai_dba_workbench_hba_rules, only where it is true. |
 
 ## etcd Internal Parameters
 

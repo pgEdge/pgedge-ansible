@@ -45,6 +45,14 @@ on:
           - pgedge
           - upstream
           - mirror
+      ai_dba_workbench:
+        description: >-
+          Also deploy the pgEdge AI DBA Workbench on a host of its own, and
+          check it monitors every node. Its server package requires a knowledge
+          base package of about 2.2 GB to download.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   test:
@@ -52,7 +60,8 @@ jobs:
       Simple Cluster - ${{ matrix.os }}${{
       inputs.coldfront && ' - coldfront' || '' }}${{
       inputs.coldfront && inputs.mesh && ' - mesh' || '' }}${{
-      inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}
+      inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}${{
+      inputs.ai_dba_workbench && ' - ai-dba-workbench' || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -63,6 +72,7 @@ jobs:
         -f tests/compose/simple-cluster-${{ matrix.os }}.yml
         ${{ inputs.coldfront && format('-f tests/compose/coldfront-{0}.yml', matrix.os) || '' }}
         ${{ inputs.repo != 'pgedge' && '-f tests/compose/repo-proxy.yml' || '' }}
+        ${{ inputs.ai_dba_workbench && format('-f tests/compose/ai-dba-workbench-{0}.yml', matrix.os) || '' }}
       # ColdFront is layered onto the base inventory: the Lakekeeper host,
       # coldfront_enabled, and the catalog and object store settings. Mesh mode
       # adds the ColdFront database to db_names on top.
@@ -73,6 +83,9 @@ jobs:
       # an inventory would set it; switch-repo.yml leaves its definition alone.
       REPO_ARGS: >-
         ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
+      # The AI DBA Workbench is layered onto the base inventory too: its host,
+      # and the passwords it and the nodes share.
+      AI_DBA_WORKBENCH_ARGS: ${{ inputs.ai_dba_workbench && '-i tests/inventories/ai-dba-workbench.yml' || '' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -110,6 +123,7 @@ jobs:
           python3 tests/render/check-etcd.py
           python3 tests/render/check-validate.py
           python3 tests/render/check-repos.py
+          python3 tests/render/check-ai-dba-workbench.py
 
       - name: Generate SSH keypair
         run: |
@@ -130,7 +144,7 @@ jobs:
 
       - name: Wait for SSH
         run: |
-          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }}; do
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }} ${{ inputs.ai_dba_workbench && '192.168.6.33' || '' }}; do
             ready=0
             for i in $(seq 1 30); do
               ssh -i tests/.ssh/id_ed25519 \
@@ -152,6 +166,7 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/simple-cluster.yml \
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} $REPO_ARGS
 
@@ -160,7 +175,7 @@ jobs:
           tests/check-idempotence.sh \
             tests/inventories/simple-cluster.yml \
             tests/playbooks/simple-cluster.yml \
-            $COLDFRONT_ARGS \
+            $COLDFRONT_ARGS $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} $REPO_ARGS
 
@@ -169,6 +184,7 @@ jobs:
         run: |
           tests/check-repo.sh e2e $COMPOSE_ARGS -- \
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             $REPO_ARGS
 
@@ -177,6 +193,7 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-simple-cluster.yml \
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519
 
       - name: Verify the cold tier round trip
@@ -185,6 +202,25 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-simple-cluster-coldfront.yml \
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
+            --private-key tests/.ssh/id_ed25519
+
+      - name: Verify the AI DBA Workbench
+        if: inputs.ai_dba_workbench
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/verify/verify-ai-dba-workbench.yml \
+            -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
+            --private-key tests/.ssh/id_ed25519
+
+      - name: Check the AI DBA Workbench roles are idempotent
+        if: inputs.ai_dba_workbench
+        run: |
+          tests/check-ai-dba-workbench-idempotence.sh \
+            tests/inventories/simple-cluster.yml \
+            tests/playbooks/simple-cluster.yml \
+            $COLDFRONT_ARGS $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519
 
       # After the verification, which reads the inventory's parameters back:
@@ -194,6 +230,7 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/pg-reconfigure.yml \
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519
 
       # After the verification, which writes through the cold tier with
@@ -204,6 +241,7 @@ jobs:
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/coldfront-reconfigure.yml \
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            $AI_DBA_WORKBENCH_ARGS \
             --private-key tests/.ssh/id_ed25519
 
       - name: Show container logs on failure
@@ -228,6 +266,22 @@ jobs:
               || true
             echo "::endgroup::"
           done
+
+      # The AI DBA Workbench's services log to their own files, and nginx to
+      # its journal, rather than to docker.
+      - name: Show AI DBA Workbench status on failure
+        if: failure() && inputs.ai_dba_workbench
+        run: |
+          ssh -i tests/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=2 \
+            -o BatchMode=yes \
+            ansible@192.168.6.33 \
+            'sudo systemctl status "pgedge-ai-dba-*" nginx --no-pager -l; \
+             sudo tail -n 200 /var/log/pgedge/ai-dba-*/*.log; \
+             sudo journalctl -u nginx --no-pager -n 100' \
+            || true
 
       - name: Teardown
         if: always()

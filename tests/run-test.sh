@@ -5,7 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
-  echo "Usage: $0 <scenario> <os> [dcs] [backup] [coldfront] [mesh] [repo] [--keep]"
+  echo "Usage: $0 <scenario> <os> [dcs] [backup] [coldfront] [mesh] [repo]"
+  echo "       [ai-dba-workbench] [--keep]"
   echo "  scenario: simple-cluster | ultra-ha"
   echo "  os:       debian12 | debian13 | ubuntu2404 | ubuntu2604 | rocky9"
   echo "  dcs:      etcd3 (default) | consul"
@@ -14,6 +15,7 @@ usage() {
   echo "  mesh:     with coldfront, run ColdFront in mesh mode"
   echo "  repo:     repo-upstream | repo-mirror -- install from a repo_url of"
   echo "            the site's own, in that layout, instead of pgEdge's servers"
+  echo "  ai-dba-workbench: add a pgEdge AI DBA Workbench host"
   echo "  --keep:   don't tear down containers after test"
   exit 1
 }
@@ -26,6 +28,7 @@ COLDFRONT=false
 KEEP=false
 MESH=false
 REPO_LAYOUT=""
+AI_DBA_WORKBENCH=false
 
 # Everything after the OS is recognised by its value, so the DCS and the backup
 # type can each be given without the other.
@@ -36,6 +39,7 @@ for arg in "${@:3}"; do
     coldfront) COLDFRONT=true ;;
     mesh) MESH=true ;;
     repo-upstream|repo-mirror) REPO_LAYOUT="${arg#repo-}" ;;
+    ai-dba-workbench) AI_DBA_WORKBENCH=true ;;
     *) DCS="$arg" ;;
   esac
 done
@@ -49,12 +53,21 @@ if [ "$MESH" = true ] && [ "$COLDFRONT" = false ]; then
   exit 1
 fi
 
+# No sample playbook deploys both ColdFront and the AI DBA Workbench. The
+# workflows layer both onto tests/playbooks instead.
+if [ "$COLDFRONT" = true ] && [ "$AI_DBA_WORKBENCH" = true ]; then
+  echo "ERROR: no sample playbook deploys coldfront with ai-dba-workbench"
+  exit 1
+fi
+
 COMPOSE_FILE="$SCRIPT_DIR/compose/${SCENARIO}-${OS}.yml"
 INVENTORY="$SCRIPT_DIR/inventories/${SCENARIO}.yml"
-# ColdFront is optional, so its sample playbooks live beside the plain ones
-# rather than inside them.
+# ColdFront and the AI DBA Workbench are optional, so their sample playbooks
+# live beside the plain ones rather than inside them.
 if [ "$COLDFRONT" = true ]; then
   PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}-coldfront/playbook.yaml"
+elif [ "$AI_DBA_WORKBENCH" = true ]; then
+  PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}-ai-dba-workbench/playbook.yaml"
 else
   PLAYBOOK="$PROJECT_DIR/sample-playbooks/${SCENARIO}/playbook.yaml"
 fi
@@ -158,6 +171,18 @@ if [ -n "$REPO_LAYOUT" ]; then
   PROJECT_NAME="${PROJECT_NAME}-repo-${REPO_LAYOUT}"
 fi
 
+# The pgEdge AI DBA Workbench. The compose overlay adds its host, and the
+# inventory layer puts that host in the ai_dba_workbench group with the
+# passwords it needs, which also has setup_ai_dba_workbench_monitor create the
+# monitoring role on the nodes.
+AI_DBA_WORKBENCH_INVENTORY="$SCRIPT_DIR/inventories/ai-dba-workbench.yml"
+
+if [ "$AI_DBA_WORKBENCH" = true ]; then
+  COMPOSE_ARGS+=(-f "$SCRIPT_DIR/compose/ai-dba-workbench-${OS}.yml")
+  INVENTORY_ARGS+=(-i "$AI_DBA_WORKBENCH_INVENTORY")
+  PROJECT_NAME="${PROJECT_NAME}-ai-dba-workbench"
+fi
+
 # Set by Step 8b when it stages the etcd authority for the reconfigure run.
 CA_VARS=""
 
@@ -185,6 +210,7 @@ python3 "$SCRIPT_DIR/render/check-pgbackrest.py"
 python3 "$SCRIPT_DIR/render/check-etcd.py"
 python3 "$SCRIPT_DIR/render/check-validate.py"
 python3 "$SCRIPT_DIR/render/check-repos.py"
+python3 "$SCRIPT_DIR/render/check-ai-dba-workbench.py"
 
 # Step 1: Generate SSH keypair and copy to Docker build context
 echo "==> Step 1: Ensuring SSH keypair exists..."
@@ -383,6 +409,26 @@ if [ "$COLDFRONT" = true ] && [ "$SCENARIO" = "simple-cluster" ]; then
     --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
     "${EXTRA_VARS[@]}" \
     -v
+fi
+
+# Step 8d: The AI DBA Workbench's own checks, on top of the scenario's, and a
+# second run of its roles, which must change nothing.
+if [ "$AI_DBA_WORKBENCH" = true ]; then
+  echo "==> Step 8d: Running the AI DBA Workbench verification playbook..."
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/verify/verify-ai-dba-workbench.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+
+  echo "==> Step 8e: Checking the AI DBA Workbench roles are idempotent..."
+  "$SCRIPT_DIR/check-ai-dba-workbench-idempotence.sh" \
+    "$INVENTORY" \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]:2}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}"
 fi
 
 # Step 9: A changed etcd configuration reaches a running cluster by rolling

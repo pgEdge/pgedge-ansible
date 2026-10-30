@@ -1,0 +1,26 @@
+# Managed by Ansible.
+[Unit]
+Description=PostgreSQL {{ pg_version }} for the AI DBA Workbench's datastore
+After=network-online.target
+Before=pgedge-ai-dba-collector.service
+Before=pgedge-ai-dba-server.service
+Before=pgedge-ai-dba-alerter.service
+
+[Service]
+Type=simple
+
+User=postgres
+Group=postgres
+
+ExecStart={{ pg_path }}/bin/postgres -D {{ ai_dba_workbench_pg_data }} -p {{ pg_port }} -c listen_addresses=127.0.0.1 -k /var/run/postgresql
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+KillSignal=SIGINT
+
+# Do not set any timeout value, so that systemd will not kill postgres
+# main process during crash recovery.
+TimeoutSec=0
+TimeoutStopSec=1h
+
+[Install]
+WantedBy=multi-user.target

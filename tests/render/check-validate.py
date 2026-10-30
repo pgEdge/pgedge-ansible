@@ -9,13 +9,16 @@ HA cluster, and a Lakekeeper host with the default catalog password, colliding
 ports, or a place in the pgedge group as well. It refuses a package repository
 of the site's own that install_repos would misread: a layout it does not know,
 a repo_url that is not a URL, a repo_gpg_key with no repo_url to go with it,
-or a mirror asked for a tier it does not carry. The settings ColdFront depends
-on are the collection's own once it is enabled, so pg_parameters may set them
-only where it is not; its tuning settings it may set either way. The e2e
-inventories are ones the validation accepts, so the refusals are checked here
-instead, without any containers: the validation reads only the inventory and
-the controller's own facts, so each case runs the real tasks against hosts
-that are the controller itself.
+or a mirror asked for a tier it does not carry. It refuses an AI DBA Workbench
+host with default or unacceptable passwords, colliding ports, a certificate
+without its key, incomplete model settings, a place in the pgedge group, or a
+second host beside it. The settings ColdFront depends on are the collection's
+own once it is enabled, so pg_parameters may set them only where it is not;
+its tuning settings it may set either way. The e2e inventories are ones the
+validation accepts, so the refusals are checked here instead, without any
+containers: the validation reads only the inventory and the controller's own
+facts, so each case runs the real tasks against hosts that are the controller
+itself.
 
 Each case names the inventory's hosts and whether the run must pass. A host is
 in the pgedge group unless its "groups" entry names others. A refusal must
@@ -74,6 +77,16 @@ NODE = {**SIMPLE, **COLDFRONT, "zone": 1}
 
 LAKEKEEPER = {"groups": ["lakekeeper"], **OBJECT_STORE,
               "lakekeeper_db_password": "ValidatePass5"}
+
+# An AI DBA Workbench host, and the monitoring password it shares with the
+# nodes, which a node beside it needs as well.
+MONITOR = {"ai_dba_workbench_monitor_password": "ValidateMonitor1"}
+
+AI_DBA_WORKBENCH = {"groups": ["ai_dba_workbench"], **MONITOR,
+          "ai_dba_workbench_db_password": "ValidatePass6",
+          "ai_dba_workbench_admin_password": "Validate-Admin-7"}
+
+MONITORED = {**SIMPLE, **MONITOR, "zone": 1}
 
 # Three single-node zones replicating one database: 20 workers, 16 slots.
 MESH = {f"n{z}": {**SIMPLE, "zone": z} for z in (1, 2, 3)}
@@ -247,6 +260,87 @@ CASES = [
      {"n1": {**SIMPLE, "zone": 1, "repo_url": "https://mirror.example.internal",
              "repo_layout": "mirror", "repo_name": "daily"}},
      False, ["mirrors only", "the release tier"]),
+    ("the AI DBA Workbench and its nodes",
+     {"n1": MONITORED, "w1": AI_DBA_WORKBENCH},
+     True, []),
+    ("a Workbench host with the default datastore password",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH, "ai_dba_workbench_db_password": "secret"}},
+     False, ["ai_dba_workbench_db_password or "
+             "ai_dba_workbench_admin_password is still set"]),
+    ("nodes beside a Workbench with the default monitoring password",
+     {"n1": {**SIMPLE, "zone": 1}, "w1": AI_DBA_WORKBENCH},
+     False, ["ai_dba_workbench_monitor_password is still set to the default"]),
+    ("a Workbench host with an empty datastore password",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH, "ai_dba_workbench_db_password": ""}},
+     False, ["or ai_dba_workbench_db_password is empty"]),
+    ("a Workbench host with its datastore password left null",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH, "ai_dba_workbench_db_password": None}},
+     False, ["or ai_dba_workbench_db_password is empty"]),
+    ("nodes beside a Workbench with an empty monitoring password",
+     {"n1": {**MONITORED, "ai_dba_workbench_monitor_password": ""},
+      "w1": AI_DBA_WORKBENCH},
+     False, ["ai_dba_workbench_monitor_password is still set to the default "
+             "value 'secret', or is empty"]),
+    ("two Workbench hosts",
+     {"n1": MONITORED, "w1": AI_DBA_WORKBENCH, "w2": AI_DBA_WORKBENCH},
+     False, ["The 'ai_dba_workbench' group holds 2 hosts"]),
+    ("a Workbench host that is also a pgEdge node",
+     {"n1": {**MONITORED, **AI_DBA_WORKBENCH,
+             "groups": ["pgedge", "ai_dba_workbench"]}},
+     False, ["both the 'pgedge' and 'ai_dba_workbench' groups"]),
+    ("a Workbench server on Postgres's port",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH, "ai_dba_workbench_server_port": 5432}},
+     False, ["they are 5432, 8444 and 5432"]),
+    ("a Workbench certificate without its key",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH,
+             "ai_dba_workbench_tls_cert_source": "/srv/tls/w1.crt"}},
+     False, ["must be set together"]),
+    ("a Workbench administrator password too short",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH,
+             "ai_dba_workbench_admin_password": "Short-1"}},
+     False, ["at least 12 characters and at most 72"]),
+    ("a Workbench administrator password over 72 bytes",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH,
+             "ai_dba_workbench_admin_password": "\u00e9" * 40}},
+     False, ["at least 12 characters and at most 72"]),
+    ("a Workbench language model without its key",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH, "ai_dba_workbench_llm_provider": "anthropic",
+             "ai_dba_workbench_llm_model": "claude-sonnet-4-5"}},
+     False, ["ai_dba_workbench_llm_api_key is empty"]),
+    ("a Workbench language model from an unknown provider",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH, "ai_dba_workbench_llm_provider": "mistral",
+             "ai_dba_workbench_llm_model": "mistral-large",
+             "ai_dba_workbench_llm_api_key": "ValidateKey"}},
+     False, ["ai_dba_workbench_llm_provider is mistral"]),
+    ("a Workbench language model through Ollama without its address",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH, "ai_dba_workbench_llm_provider": "ollama",
+             "ai_dba_workbench_llm_model": "qwen2.5:7b-instruct"}},
+     False, ["ai_dba_workbench_llm_base_url is empty"]),
+    ("Workbench embeddings from a provider that offers none",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH,
+             "ai_dba_workbench_embedding_provider": "anthropic",
+             "ai_dba_workbench_embedding_model": "claude-sonnet-4-5",
+             "ai_dba_workbench_embedding_api_key": "ValidateKey"}},
+     False, ["ai_dba_workbench_embedding_provider is anthropic"]),
+    ("Workbench chat and embeddings sharing one OpenAI key",
+     {"n1": MONITORED,
+      "w1": {**AI_DBA_WORKBENCH, "ai_dba_workbench_llm_provider": "openai",
+             "ai_dba_workbench_llm_model": "gpt-4o-mini",
+             "ai_dba_workbench_llm_api_key": "ValidateKey",
+             "ai_dba_workbench_embedding_provider": "openai",
+             "ai_dba_workbench_embedding_model": "text-embedding-3-small"}},
+     True, []),
 ]
 
 

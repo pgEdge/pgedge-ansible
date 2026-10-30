@@ -1,0 +1,53 @@
+---
+
+# Re-apply the AI DBA Workbench's roles to a deployed cluster, for run-test.sh
+# to fail if any task reports a change. Every file setup_ai_dba_workbench
+# writes feeds a service's restart condition, and every record it sends the
+# Workbench is sent only where it differs, so a task that reports a change it
+# did not make restarts a service or rewrites a record on every run.
+#
+# The run is pointed at the directory the deployment generated its certificate
+# in, through ai_dba_workbench_tls_staging_dir: it is staged beside the
+# deployment's playbook, not this one, and a new one generated here would be a
+# change. The certificate is still a generated one, so the web client's site
+# comes out as the deployment wrote it.
+#
+# Only these roles are re-run. install_repos is not, because switch-repo.yml
+# rewrites the repository file whenever a channel other than release is under
+# test.
+
+# Facts for every host, since setup_ai_dba_workbench registers the nodes by the
+# addresses their facts give.
+
+- hosts: all
+  any_errors_fatal: true
+
+  tasks:
+  - name: Confirm every host in the inventory is reachable
+    ping:
+
+# The nodes already hold the monitoring role, the extensions and the grants, so
+# a change here would be one the role made again on every run.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: setup_ai_dba_workbench_monitor
+
+- hosts: ai_dba_workbench
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: install_ai_dba_workbench
+
+  - include_role:
+      name: setup_ai_dba_workbench

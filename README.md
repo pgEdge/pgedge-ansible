@@ -139,6 +139,12 @@ Sample playbooks are provided in the
 - [ultra-ha-coldfront](./sample-playbooks/ultra-ha-coldfront) - The
   Ultra-HA cluster with the ColdFront tiered-storage add-on in mesh mode and
   a Lakekeeper catalog host.
+- [simple-cluster-ai-dba-workbench](./sample-playbooks/simple-cluster-ai-dba-workbench) -
+  The simple cluster with a pgEdge AI DBA Workbench host monitoring every
+  node.
+- [ultra-ha-ai-dba-workbench](./sample-playbooks/ultra-ha-ai-dba-workbench) -
+  The Ultra-HA cluster with a pgEdge AI DBA Workbench host monitoring every
+  member.
 
 Run a playbook with the following command, substituting your inventory file
 path:

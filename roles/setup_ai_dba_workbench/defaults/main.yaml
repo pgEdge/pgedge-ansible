@@ -1,0 +1,37 @@
+---
+
+# The Workbench's datastore, in the Postgres instance this role creates on the
+# Workbench host for it alone, which listens on pg_port.
+# ai_dba_workbench_db_password is in role_config, so init_server can check it.
+ai_dba_workbench_pg_data: "{{ pg_home }}/{{ pg_version }}/ai-dba-workbench"
+ai_dba_workbench_pg_service_name: ai-dba-workbench-postgres
+ai_dba_workbench_db: ai_workbench
+ai_dba_workbench_db_user: ai_workbench
+
+# The Workbench administrator this role creates, registers the pgEdge nodes as,
+# and the account to sign in to the web client with.
+# ai_dba_workbench_admin_password is in role_config, so init_server can check
+# it.
+ai_dba_workbench_admin_user: admin
+
+# The database each pgEdge node is registered with: the one the Workbench's
+# tools query, and the one its probes of the server as a whole run in. Left
+# empty, each node is registered with the first database in its db_names. The
+# collector reads every other database on the node as well.
+ai_dba_workbench_monitor_db: ""
+
+# How the Workbench connects to the nodes. require encrypts the connection with
+# the certificate setup_postgres gives every node, which is self-signed, so it
+# cannot be verified against an authority.
+ai_dba_workbench_monitor_sslmode: require
+
+# Further addresses the Workbench may register although they are private. It
+# refuses a private or loopback address it is not told to allow, and this role
+# tells it to allow the cluster's own nodes; list here any other server on a
+# private network that is to be registered through the web client. Each entry
+# is an address, a CIDR range or an exact host name.
+ai_dba_workbench_allowed_hosts: []
+
+# Whether the alerter sends notifications through the channels configured in
+# the web client. It decrypts their credentials with the Workbench's secret.
+ai_dba_workbench_notifications_enabled: true

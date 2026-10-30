@@ -91,6 +91,22 @@
   become: true
   become_user: postgres
 
+# The hosts of other components the collection deploys, which role_config
+# names in pg_required_hba_rules, each admitted as one role to the databases
+# it reads.
+
+- name: Allow connections from the hosts of other components
+  community.postgresql.postgresql_pg_hba:
+    dest: "{{ pg_config_dir }}/pg_hba.conf"
+    contype: host
+    users: "{{ item.0.users }}"
+    databases: "{{ item.0.databases }}"
+    method: scram-sha-256
+    source: "{{ hostvars[item.1].ansible_default_ipv4.address }}/32"
+  loop: "{{ pg_required_hba_rules | subelements('hosts') }}"
+  become: true
+  become_user: postgres
+
 - name: Add customized user / host access
   community.postgresql.postgresql_pg_hba:
     dest: "{{ pg_config_dir }}/pg_hba.conf"

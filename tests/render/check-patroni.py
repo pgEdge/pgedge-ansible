@@ -33,6 +33,11 @@ layering as well as the rendering. The worker and slot defaults among them are
 sized from the shape of the cluster, and are checked against the worked
 examples in Spock's sizing guide across clusters of other shapes.
 
+So are the HBA rules for the hosts of other components: pg_required_hba_rules
+is role_config's expression, evaluated against the inventory's groups, so the
+AI DBA Workbench case checks that the rule comes from role_config as well as
+how the template writes it.
+
 Ansible's template module turns trim_blocks on, unlike a bare Jinja2
 Environment, so a '{%- if %}' that renders cleanly here would not there.
 """
@@ -61,6 +66,7 @@ ROLE_VARS = REPO / "roles" / "role_config" / "vars" / "main.yaml"
 PGEDGE = ["10.0.0.%d" % n for n in (10, 11, 12, 13, 14, 15)]
 HAPROXY = ["10.0.0.16", "10.0.0.17"]
 BACKUP = ["10.0.0.18", "10.0.0.19"]
+AI_DBA_WORKBENCH = ["10.0.0.33"]
 ZONE_OF = dict([(h, 1) for h in PGEDGE[:3]] + [(h, 2) for h in PGEDGE[3:]])
 ZONE_OF.update({HAPROXY[0]: 1, HAPROXY[1]: 2, BACKUP[0]: 1, BACKUP[1]: 2})
 
@@ -208,6 +214,24 @@ def replica_from_backup(e, requested, backups):
                                       backup_repo_configured=backups)
 
 
+# role_config's HBA rules for the hosts of other components, in the order each
+# reads the one before.
+HBA_LAYERS = ("ai_dba_workbench_enabled", "pg_ai_dba_workbench_hba_rules",
+              "pg_required_hba_rules")
+
+
+def hba_rules(groups):
+    """role_config's pg_required_hba_rules for an inventory's groups, evaluated
+    as Ansible would."""
+    role_vars = yaml.safe_load(ROLE_VARS.read_text())
+    e = ansible_filters(NativeEnvironment(undefined=StrictUndefined))
+    ctx = dict(groups=groups,
+               ai_dba_workbench_monitor_user="ai_dba_workbench_monitor")
+    for name in HBA_LAYERS:
+        ctx[name] = e.from_string(role_vars[name]).render(**ctx)
+    return ctx["pg_required_hba_rules"]
+
+
 def context(e, os_family, backups, replica, hosts_with_facts,
             pg_parameters=None):
     """The template's variables. 'replica' is the inventory's
@@ -216,6 +240,7 @@ def context(e, os_family, backups, replica, hosts_with_facts,
     zone = 1
     layers = parameters(pg_parameters or {}, backups, zone)
     in_zone = [h for h in PGEDGE if ZONE_OF[h] == zone]
+    groups = {"pgedge": PGEDGE, "haproxy": HAPROXY, "backup": BACKUP}
     return dict(
         ansible_default_ipv4={"address": PGEDGE[0], "netmask": "255.255.255.0"},
         db_names=["demo"], patroni_dcs={"type": "etcd3"},
@@ -231,11 +256,12 @@ def context(e, os_family, backups, replica, hosts_with_facts,
         pg_config_dir="/var/lib/pgsql/17/data", pg_path="/usr/pgsql-17",
         pg_home="/var/lib/pgsql", pg_version=17, cluster_name="demo", zone=zone,
         patroni_pgbackrest_replica_script=REPLICA_SCRIPT,
-        groups={"pgedge": PGEDGE, "haproxy": HAPROXY, "backup": BACKUP},
+        groups=groups,
         hostvars=hostvars_for(hosts_with_facts),
         nodes_in_zone=in_zone,
         proxies_in_zone=[h for h in HAPROXY if ZONE_OF[h] == zone],
         proxy_node="", custom_hba_rules=[], backup_host="",
+        pg_required_hba_rules=hba_rules(groups),
         pgedge_user="pgedge", db_user="admin", replication_user="replicator",
         backup_user="backrest", db_password="p", replication_password="p",
         pg_user_parameters=layers["pg_user_parameters"],
@@ -581,6 +607,39 @@ def check_missing_facts(e, template):
             "'pgedge' would emit HBA rules with no addresses in them"]
 
 
+def check_ai_dba_workbench(e, template):
+    """An AI DBA Workbench host is admitted to every database as the monitoring
+    role, and to nothing else, and an inventory without one renders no such
+    rule. role_config's pg_required_hba_rules carries the rule, and on an HA
+    cluster Patroni's configuration writes it, from which Patroni writes
+    pg_hba.conf, so this is the only place it can be checked without a running
+    cluster.
+    """
+    failures = []
+    for hosts in ([], AI_DBA_WORKBENCH):
+        ctx = context(e, "RedHat", True, False,
+                      set(PGEDGE + HAPROXY + BACKUP))
+        ctx["groups"] = {**ctx["groups"], "ai_dba_workbench": hosts}
+        ctx["hostvars"] = {**ctx["hostvars"],
+                           **{h: {"inventory_hostname": h,
+                                  "ansible_default_ipv4": {"address": h}}
+                              for h in hosts}}
+        ctx["pg_required_hba_rules"] = hba_rules(ctx["groups"])
+        doc = yaml.safe_load(template.render(**ctx))
+        rules = [line for line in doc["postgresql"]["pg_hba"]
+                 if "ai_dba_workbench_monitor" in line]
+        want = [f"host all ai_dba_workbench_monitor {h}/32 scram-sha-256"
+                for h in hosts]
+        label = ("an AI DBA Workbench host is admitted as the monitoring role"
+                 if hosts else "no AI DBA Workbench host, no monitoring rule")
+        if rules == want:
+            print(f"ok       {label}")
+        else:
+            print(f"FAIL     {label}")
+            failures.append(f"{label}: expected {want}, rendered {rules}")
+    return failures
+
+
 def check_replica_script(e, template):
     """The pgbackrest replica script has to be valid shell and judge the backup
     before it restores; on Debian it then creates the cluster's configuration
@@ -737,6 +796,7 @@ def main():
     failures += check_sizing()
     print()
     failures += check_missing_facts(e, template)
+    failures += check_ai_dba_workbench(e, template)
     failures += check_replica_script(
         e, e.get_template("pgbackrest_replica.sh.j2"))
     failures += check_replica_decision(

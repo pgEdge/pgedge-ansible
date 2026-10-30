@@ -262,6 +262,19 @@
     fail_msg: "A host cannot be in both the 'pgedge' and 'lakekeeper' groups."
   run_once: true
 
+# The same for the AI DBA Workbench host, whose datastore is a Postgres
+# instance built the way the Lakekeeper catalog's is.
+
+- name: Ensure no host is in both the pgedge and ai_dba_workbench groups
+  assert:
+    that:
+    - >-
+      groups.pgedge | default([])
+      | intersect(groups.ai_dba_workbench | default([])) | length == 0
+    fail_msg: >-
+      A host cannot be in both the 'pgedge' and 'ai_dba_workbench' groups.
+  run_once: true
+
 # Pooling is a property of the cluster, not of a node: pgbouncer_enabled belongs
 # on the 'pgedge' group, and every pgEdge node then runs a pooler in front of its
 # own Postgres. Per-node values are rejected here rather than honoured, because
@@ -708,6 +721,155 @@
       {{ [pg_port, lakekeeper_port, lakekeeper_metrics_port]
          | map('int') | list }}
   when: inventory_hostname in (groups.lakekeeper | default([]))
+
+# The pgEdge AI DBA Workbench runs on one host. Its collector, server and
+# alerter share one datastore and one secret that encrypts the credentials they
+# store, so a second host would be a second Workbench, monitoring the same
+# nodes with a datastore and a secret of its own.
+
+- name: Ensure the ai_dba_workbench group holds one host at most
+  assert:
+    that:
+    - groups.ai_dba_workbench | default([]) | length <= 1
+    fail_msg: >-
+      The 'ai_dba_workbench' group holds
+      {{ groups.ai_dba_workbench | default([]) | length }} hosts, but the
+      AI DBA Workbench runs on one: its collector, server and alerter share a
+      datastore and an encryption secret on that host.
+  run_once: true
+
+# The monitoring role's password is read on both kinds of host:
+# setup_ai_dba_workbench_monitor gives it to the role on the pgEdge nodes, and
+# setup_ai_dba_workbench gives it to the Workbench. Asked of both, since an
+# inventory may set it on one group alone, and the two must agree.
+#
+# An empty password is refused here and for the datastore's role below:
+# postgresql_user takes one as a request to remove the role's password, which
+# leaves the role nothing to sign in with.
+
+- name: Ensure the AI DBA Workbench monitoring password has been changed
+  assert:
+    that:
+    - ai_dba_workbench_monitor_password != 'secret'
+    - >-
+      ai_dba_workbench_monitor_password | default('', true) | string
+      | length > 0
+    fail_msg: >-
+      ai_dba_workbench_monitor_password is still set to the default value
+      'secret', or is empty. It is the password the AI DBA Workbench logs in to
+      every pgEdge node with, so set it under all, where the pgedge and
+      ai_dba_workbench groups both read it.
+  when: >-
+    (ai_dba_workbench_enabled | bool
+     and inventory_hostname in (groups.pgedge | default([])))
+    or inventory_hostname in (groups.ai_dba_workbench | default([]))
+
+- name: Ensure the AI DBA Workbench passwords have been changed
+  assert:
+    that:
+    - ai_dba_workbench_db_password != 'secret'
+    - ai_dba_workbench_db_password | default('', true) | string | length > 0
+    - ai_dba_workbench_admin_password != 'secret'
+    fail_msg: >-
+      ai_dba_workbench_db_password or ai_dba_workbench_admin_password is still
+      set to the default value 'secret', or ai_dba_workbench_db_password is
+      empty. They are the passwords of the Workbench's datastore role and of
+      its administrator, so both must be set explicitly.
+  when: inventory_hostname in (groups.ai_dba_workbench | default([]))
+
+# The Workbench's own limits on a password, which it enforces when
+# setup_ai_dba_workbench creates the administrator, long after the cluster is
+# built: at least 12 characters, and at most 72 bytes, bcrypt's limit. The
+# bytes are counted by percent-encoding the password, which writes each byte of
+# a multi-byte character as one %XX, and counting each of those as one. The
+# Workbench also refuses a password on its list of common ones, which is not
+# checked here.
+
+- name: Ensure the AI DBA Workbench administrator password fits its policy
+  assert:
+    that:
+    - ai_dba_workbench_admin_password | string | length >= 12
+    - >-
+      ai_dba_workbench_admin_password | string | urlencode
+      | regex_replace('%[0-9A-Fa-f]{2}', '.') | length <= 72
+    fail_msg: >-
+      ai_dba_workbench_admin_password must be at least 12 characters and at
+      most 72 bytes long, which the AI DBA Workbench requires of every
+      password.
+  when: inventory_hostname in (groups.ai_dba_workbench | default([]))
+
+# The Workbench host binds its datastore's Postgres, nginx's port for the web
+# client, and the Workbench server's port behind it.
+
+- name: Ensure the ports on the AI DBA Workbench host do not collide
+  assert:
+    that:
+    - service_ports | count == service_ports | unique | count
+    fail_msg: >-
+      pg_port, ai_dba_workbench_port and ai_dba_workbench_server_port must
+      differ on {{ inventory_hostname }}, which binds all three; they are
+      {{ pg_port }}, {{ ai_dba_workbench_port }} and
+      {{ ai_dba_workbench_server_port }}.
+  vars:
+    service_ports: >-
+      {{ [pg_port, ai_dba_workbench_port, ai_dba_workbench_server_port]
+         | map('int') | list }}
+  when: inventory_hostname in (groups.ai_dba_workbench | default([]))
+
+- name: Ensure the Workbench's certificate is supplied as a pair or not at all
+  assert:
+    that: >-
+      (ai_dba_workbench_tls_cert_source | length > 0)
+      == (ai_dba_workbench_tls_key_source | length > 0)
+    fail_msg: >-
+      ai_dba_workbench_tls_cert_source and ai_dba_workbench_tls_key_source
+      must be set together, or both left empty for a self-signed certificate.
+      nginx needs the key that matches the certificate it serves.
+  when: inventory_hostname in (groups.ai_dba_workbench | default([]))
+
+# The Workbench's AI features, checked here rather than when the Workbench
+# first answers a question, which is long after the deployment has finished.
+# Each provider but ollama needs a key, and ollama needs the address of its
+# API.
+
+- name: Ensure the Workbench's language and embedding models are complete
+  assert:
+    that:
+    - model_problems | length == 0
+    fail_msg: >-
+      The AI DBA Workbench's model settings are incomplete or invalid on
+      {{ inventory_hostname }}: {{ model_problems | join('; ') }}.
+      ai_dba_workbench_llm_provider takes anthropic, openai, gemini or
+      ollama, and ai_dba_workbench_embedding_provider takes openai, gemini,
+      voyage or ollama. Each provider set needs its model, its key from
+      Ansible Vault, or for ollama the address of its API in the matching
+      base_url setting.
+  vars:
+    model_problems: >-
+      {% set found = [] %}
+      {%- for kind, providers in [('llm', ['anthropic', 'openai', 'gemini',
+                                           'ollama']),
+                                  ('embedding', ['openai', 'gemini', 'voyage',
+                                                 'ollama'])] %}
+      {%-   set prefix = 'ai_dba_workbench_' ~ kind ~ '_' %}
+      {%-   set provider = lookup('vars', prefix ~ 'provider') %}
+      {%-   if provider | length == 0 %}
+      {%-   elif provider not in providers %}
+      {%-     set _ = found.append(prefix ~ 'provider is ' ~ provider) %}
+      {%-   else %}
+      {%-     if lookup('vars', prefix ~ 'model') | length == 0 %}
+      {%-       set _ = found.append(prefix ~ 'model is empty') %}
+      {%-     endif %}
+      {%-     if provider == 'ollama'
+                 and lookup('vars', prefix ~ 'base_url') | length == 0 %}
+      {%-       set _ = found.append(prefix ~ 'base_url is empty') %}
+      {%-     elif provider != 'ollama'
+                 and lookup('vars', prefix ~ 'api_key') | length == 0 %}
+      {%-       set _ = found.append(prefix ~ 'api_key is empty') %}
+      {%-     endif %}
+      {%-   endif %}
+      {%- endfor %}{{ found }}
+  when: inventory_hostname in (groups.ai_dba_workbench | default([]))
 
 # Ensure that only "supported" DCS types are used. These are pulled from the
 # Patroni documentation:
