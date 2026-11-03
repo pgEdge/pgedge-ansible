@@ -141,6 +141,40 @@ db_names:
   - reporting_db
 ```
 
+### Removing a database from db_names
+
+Removing a name from `db_names` does not drop the database. It tells the
+collection to stop managing it, and the database stays exactly as it is on
+every node: its data, its Spock node, its subscriptions and their replication
+slots. Remove a name only when you want to take over the database yourself,
+or when you mean to retire it by hand, in your own time, after checking what
+still depends on it.
+
+From the next run on, the collection no longer does any of the following for
+the database:
+
+- Admits it in `pg_hba.conf`, for the `pgedge_user` and `db_user` connections
+  between nodes. Connections already open carry on, but any that reconnects is
+  refused. That includes every other zone's Spock subscription, so replication
+  of the database stops at the next restart, failover or network interruption.
+- Admits it in pgBouncer's client authentication rules, where pgBouncer is
+  enabled.
+- Creates it, or the Spock and Snowflake extensions in it, on any node.
+- Creates its Spock node or its subscriptions to the other zones, or repairs
+  any that are missing.
+- Cleans its Spock metadata and seeds it to the other zones during a recovery
+  with `recover_postgres`.
+
+The collection still backs the database up, since pgBackRest backs up the
+whole cluster, and it still sizes the worker and replication slot pools for
+everything the database holds, so that removing the name cannot keep Postgres
+or Spock from starting. See
+[Worker and Replication Sizing](postgres.md#worker-and-replication-sizing).
+
+To retire the database completely, drop its Spock subscriptions on every
+zone's primary, then drop the database on each. The next run brings the pools
+back down.
+
 ## db_user
 
 - Type: String

@@ -196,10 +196,12 @@ following values:
 - `N` is the number of zones. Every zone holds one Spock node, however many
   members it has.
 - `D` is the number of databases that accept connections: the databases in
-  `db_names`, plus `postgres` and `template1`. Spock starts a manager worker in
-  each, whether it replicates or not.
+  `db_names`, plus `postgres`, `template1` and any other database that already
+  exists on the zone's primary. Spock starts a manager worker in each, whether
+  it replicates or not.
 - `S` is the number of subscriptions on each node: the number of databases in
-  `db_names` multiplied by `N - 1`.
+  `db_names` multiplied by `N - 1`, or more while the zone's primary still
+  holds subscriptions for a database removed from `db_names`.
 - `P` is the number of physical standbys in the node's zone: one less than the
   zone's members in an Ultra-HA cluster, and zero otherwise.
 - `W` is `max_parallel_workers` from `pg_parameters`, or `8`, its Postgres
@@ -243,11 +245,13 @@ Every one of these parameters requires a restart, so `pg_allow_restart` decides
 whether the run restarts each node or leaves the restart pending.
 
 Removing a database from `db_names` does not lower the values while the
-database still exists. The collection does not drop the database, its Spock
-node, or its subscriptions and replication slots, so each run reads what the
-zone's primary actually uses and never sizes the pools below it. The values
-come down on the next run after the database itself is dropped. See
-[Sizing Floor](../roles/role_config.md#sizing-floor).
+database still exists. The collection stops managing the database but does not
+drop it, its Spock node, or its subscriptions and replication slots, so each
+run reads what the zone's primary actually uses and never sizes the pools
+below it. The values come down on the next run after the database itself is
+dropped. See [Removing a database from
+db_names](cluster.md#removing-a-database-from-db_names) for what else changes,
+and [Sizing Floor](../roles/role_config.md#sizing-floor).
 
 !!! warning "Overriding the calculated values"
 

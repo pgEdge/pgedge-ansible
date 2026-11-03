@@ -53,8 +53,6 @@
 
   vars:
     added_db: addeddb
-    deployed_db_names:
-    - demo
     grown_db_names: "{{ deployed_db_names + [added_db] }}"
     ctl: >-
       patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}
@@ -82,6 +80,22 @@
       name: role_config
       tasks_from: zone_primary
       public: true
+
+  # db_names as the deployment set it, whether in the inventory or by
+  # role_config's default, which the include above has just made visible. A
+  # fact, so the role variables below that extend it do not refer to
+  # themselves.
+
+  - name: Note the databases the deployment replicates
+    set_fact:
+      deployed_db_names: "{{ db_names }}"
+
+  - name: Assert the added database is not one the deployment already has
+    assert:
+      that:
+      - added_db not in deployed_db_names
+      fail_msg: >-
+        db_names already lists {{ added_db }}, so this test cannot add it.
 
   - name: Assert each zone's leader starts on its first node
     assert:
@@ -118,8 +132,11 @@
     become: true
     become_user: postgres
     shell: |-
+      set -o pipefail
       {{ ctl }} list {{ patroni_scope }} -f json \
           | jq -c 'map({(.Host | sub(":[0-9]+$"; "")): [.Role, .State]}) | add'
+    args:
+      executable: /bin/bash
     register: moved_members
     until: >-
       moved_members.rc == 0 and
@@ -273,8 +290,8 @@
   - name: Assert the floor counts the added database and its subscriptions
     assert:
       that:
-      - pg_sizing_floor.databases | int
-        >= (grown_db_names + ['postgres', 'template1']) | unique | length
+      - added_db in pg_sizing_floor.databases
+      - added_db in pg_sizing_floor.replicating or zone_list | length == 1
       - pg_sizing_floor.subscriptions | int
         >= grown_db_names | length * (zone_list | length - 1)
       fail_msg: >-
@@ -423,8 +440,11 @@
     become: true
     become_user: postgres
     shell: |-
+      set -o pipefail
       {{ ctl }} list {{ patroni_scope }} -f json \
           | jq -c 'map({(.Host | sub(":[0-9]+$"; "")): [.Role, .State]}) | add'
+    args:
+      executable: /bin/bash
     register: restored_members
     until: >-
       restored_members.rc == 0 and

@@ -9,7 +9,14 @@
 # is wherever Patroni last put it, which after a failover or switchover is not
 # the zone's first node, so Patroni is asked. Every node whose Patroni is
 # running asks, and the answers are pooled through hostvars, so a node new to
-# the zone and a run limited to part of it still find the leader.
+# the zone still finds the leader. The nodes have to agree: two leaders means
+# the zone is changing under the run, by a switchover or failover started
+# outside it, and nothing can be written safely until it settles.
+#
+# The primary also has to be one of the play's hosts. Writes run there, and
+# the sizing floor is read there; a run that leaves it out, with --limit or
+# because it failed earlier in the play, would skip both without a word and
+# size the zone from the inventory alone.
 #
 # Until Patroni runs somewhere in the zone, nothing has a leader to report:
 # the zone is being built, and the first node is the one setup_postgres
@@ -68,11 +75,36 @@
       'patronictl list {{ patroni_scope }}' on {{ inventory_hostname }}.
   when: zone_primary_leader is not skipped
 
-- name: Record which node runs this zone's primary
+- name: Gather the leaders this zone's nodes reported
   set_fact:
-    zone_primary: "{{ leaders | first if leaders else first_node_in_zone }}"
-  vars:
-    leaders: >-
+    zone_primary_leaders: >-
       {{ nodes_in_zone | map('extract', hostvars)
          | map(attribute='zone_primary_leader.stdout_lines', default=[])
          | flatten | map('trim') | unique | list }}
+
+- name: Ensure this zone's nodes agree on its leader
+  assert:
+    that:
+    - zone_primary_leaders | length <= 1
+    fail_msg: >-
+      The nodes of zone {{ zone }} disagree on its leader, reporting
+      {{ zone_primary_leaders | join(', ') }}. The zone is changing while this
+      runs, by a switchover or failover started elsewhere. Let it settle and
+      run this again.
+
+- name: Record which node runs this zone's primary
+  set_fact:
+    zone_primary: >-
+      {{ zone_primary_leaders | first if zone_primary_leaders
+         else first_node_in_zone }}
+
+- name: Ensure this run includes the node that runs this zone's primary
+  assert:
+    that:
+    - zone_primary in ansible_play_hosts
+    fail_msg: >-
+      {{ zone_primary }} runs zone {{ zone }}'s primary, but is not among this
+      play's hosts, whether left out with --limit or failed earlier in the run.
+      Everything written to the zone is written there, and what the zone
+      already uses is read there. Run this again with {{ zone_primary }}
+      included.

@@ -186,19 +186,28 @@ pg_config_dir: >-
 # removed from db_names keeps its Spock node, its subscriptions and their
 # slots, so sizing from db_names alone would shrink every pool beneath them at
 # the next restart. sizing_floor reads what the zone's primary actually holds
-# into pg_sizing_floor, and D, S and the slot total each take the larger of the
-# two. The floor goes down only once the database itself is gone. A cluster
-# not yet built has no floor.
+# into pg_sizing_floor. D counts every database in db_names or on the primary.
+# S and the slot total take the larger of the inventory's value and what the
+# primary holds plus what each database in db_names that nothing subscribes to
+# yet is about to add, so a run that swaps one name for another sizes for both.
+# The floor goes down only once the database itself is gone. A cluster not yet
+# built has no floor, and every database in db_names counts as new.
 
 pg_spock_nodes: "{{ zone_list | length }}"
 
+pg_sizing_floor_new_dbs: >-
+  {{ db_names | difference((pg_sizing_floor | default({})).replicating
+                           | default([])) }}
+
 pg_connectable_dbs: >-
-  {{ [(db_names + ['postgres', 'template1']) | unique | length,
-      (pg_sizing_floor | default({})).databases | default(0) | int] | max }}
+  {{ (db_names + ['postgres', 'template1']
+      + (pg_sizing_floor | default({})).databases | default([]))
+     | unique | length }}
 
 pg_spock_subscriptions: >-
   {{ [db_names | length * (pg_spock_nodes | int - 1),
-      (pg_sizing_floor | default({})).subscriptions | default(0) | int] | max }}
+      (pg_sizing_floor | default({})).subscriptions | default(0) | int
+      + pg_sizing_floor_new_dbs | length * (pg_spock_nodes | int - 1)] | max }}
 
 pg_physical_standbys: "{{ nodes_in_zone | length - 1 if is_ha_cluster | bool else 0 }}"
 
@@ -217,7 +226,9 @@ pg_worker_processes: >-
 # Postgres 18 needs an origin for each.
 pg_replication_slots: >-
   {{ [16, 2 * pg_spock_subscriptions | int + pg_physical_standbys | int + 2,
-      (pg_sizing_floor | default({})).slots | default(0) | int] | max }}
+      (pg_sizing_floor | default({})).slots | default(0) | int
+      + 2 * pg_sizing_floor_new_dbs | length * (pg_spock_nodes | int - 1)]
+     | max }}
 
 # The calculated parameters by name, which init_server compares pg_parameters
 # against.

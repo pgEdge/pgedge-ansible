@@ -123,7 +123,7 @@ PARAMETER_LAYERS = ("pg_coldfront_parameters",
                     "pg_coldfront_preload_libraries",
                     "pg_user_parameters",
                     "zone_list", "nodes_in_zone", "pg_spock_nodes",
-                    "pg_connectable_dbs", "pg_spock_subscriptions",
+                    "pg_sizing_floor_new_dbs", "pg_connectable_dbs", "pg_spock_subscriptions",
                     "pg_physical_standbys", "pg_parallel_workers",
                     "pg_worker_processes", "pg_replication_slots",
                     "pg_sized_parameters", "pg_default_parameters",
@@ -489,6 +489,50 @@ def check_parameters(e, template):
     }
     bad = [name for name, ok in checks.items() if not ok]
     label = "ColdFront mesh parameters"
+    if bad:
+        failures.append(f"{label}: {', '.join(bad)}")
+        print(f"FAIL     {label}: {', '.join(bad)}")
+    else:
+        print(f"ok       {label}")
+
+    # sizing_floor's reading of a running zone. Each zone of the two subscribes
+    # to the other, so a replicated database holds one origin and one slot,
+    # and each standby a physical slot. With nothing more than the inventory
+    # describes, the floor changes nothing. A database removed from db_names
+    # but still replicating keeps its manager and subscription. And a run that
+    # swaps one name for another, where the new database already exists but
+    # nothing subscribes to it yet, as setup_patroni finds it after
+    # setup_postgres, sizes for both.
+    def floor(databases, replicating):
+        return dict(databases=databases + ["postgres", "template1"],
+                    replicating=replicating,
+                    subscriptions=len(replicating),
+                    slots=len(replicating) + 2)
+
+    def sizing(db_names, pg_sizing_floor=None):
+        shape = dict(ULTRA_HA, db_names=db_names)
+        if pg_sizing_floor is not None:
+            shape["pg_sizing_floor"] = pg_sizing_floor
+        layers = parameters({}, True, shape=shape)
+        return (int(layers["pg_connectable_dbs"]),
+                int(layers["pg_spock_subscriptions"]))
+
+    one = sizing(["demo"])
+    two = sizing(["demo", "old"])
+    checks = {
+        "no floor": one == (3, 1),
+        "floor matching the inventory": sizing(
+            ["demo"], floor(["demo"], ["demo"])) == one,
+        "removed name still counted": sizing(
+            ["demo"], floor(["demo", "old"], ["demo", "old"])) == two,
+        "swapped names both counted": sizing(
+            ["demo", "new"], floor(["demo", "old", "new"], ["demo", "old"]))
+            == (two[0] + 1, two[1] + 1),
+        "dropped database not counted": sizing(
+            ["demo"], floor(["demo"], ["demo"])) == one,
+    }
+    bad = [name for name, ok in checks.items() if not ok]
+    label = "Sizing floor"
     if bad:
         failures.append(f"{label}: {', '.join(bad)}")
         print(f"FAIL     {label}: {', '.join(bad)}")

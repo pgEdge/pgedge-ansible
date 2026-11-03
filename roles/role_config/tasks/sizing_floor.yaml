@@ -9,12 +9,22 @@
 # place. Sized from db_names alone, the pools would shrink beneath them at the
 # next restart. Spock would then fail to start the workers it needs, and
 # Postgres refuses to start at all with more slots on disk than
-# max_replication_slots allows. So the floor counts what is there:
+# max_replication_slots allows. So the floor records what is there:
 #
-#   - every database that accepts connections, where Spock starts a manager,
-#   - every replication origin, which Spock creates for each subscription and
-#     drops with it,
-#   - and every replication slot.
+#   - the name of every database that accepts connections, where Spock starts
+#     a manager,
+#   - the name of every database other zones already subscribe to, which holds
+#     a logical slot for each of them,
+#   - the number of replication origins, which Spock creates for each
+#     subscription and drops with it,
+#   - and the number of replication slots.
+#
+# Names rather than counts, because a run can remove one name from db_names
+# and add another. The new database's manager and subscriptions come on top of
+# everything the old one still holds, and only names tell the two apart. A
+# database counts as subscribed to only once it holds slots, which is not
+# until setup_pgedge has run, so one setup_postgres has just created still
+# counts as new when setup_patroni reads the floor.
 #
 # It is read on the zone's primary, which in an HA zone holds the physical
 # slots and whose configuration every member shares. A zone not yet built has
@@ -43,7 +53,11 @@
     login_db: postgres
     login_unix_socket: /var/run/postgresql
     query: >-
-      SELECT (SELECT count(*) FROM pg_database WHERE datallowconn) AS databases,
+      SELECT (SELECT coalesce(array_agg(datname::text ORDER BY datname), '{}')
+                FROM pg_database WHERE datallowconn) AS databases,
+             (SELECT coalesce(array_agg(DISTINCT database::text), '{}')
+                FROM pg_replication_slots
+               WHERE slot_type = 'logical') AS replicating,
              (SELECT count(*) FROM pg_replication_origin) AS subscriptions,
              (SELECT count(*) FROM pg_replication_slots) AS slots
   register: sizing_floor_usage
@@ -86,7 +100,7 @@
     fail_msg: >-
       pg_parameters on {{ inventory_hostname }} sets
       {{ pg_undersized_parameters | join('; ') }}. Zone {{ zone }} already
-      holds {{ pg_sizing_floor.databases }} databases,
+      holds {{ pg_sizing_floor.databases | length }} databases,
       {{ pg_sizing_floor.subscriptions }} subscriptions and
       {{ pg_sizing_floor.slots }} replication slots, and a smaller pool keeps
       Spock from starting the workers it needs, or Postgres from starting at

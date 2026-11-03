@@ -157,11 +157,19 @@ as the `zone_primary` fact on every node of the zone:
 
 On an HA cluster, every node whose Patroni service is running asks
 `patronictl list` for the zone's leader, and the answers are pooled, so a node
-new to the zone or a run limited to part of it still finds the leader. Until
-Patroni runs anywhere in the zone, the zone is being built and its first node
-is the primary. Once Patroni runs, the task file waits briefly for an
-election to settle, then stops unless Patroni reports exactly one leader among
-the zone's nodes.
+new to the zone still finds the leader. Until Patroni runs anywhere in the
+zone, the zone is being built and its first node is the primary. Once Patroni
+runs, the task file waits briefly for an election to settle, then stops unless
+Patroni reports exactly one leader among the zone's nodes, and unless every
+node reports the same one. Nodes that disagree mean a switchover or failover
+is under way outside the run, and the collection does not manage a zone while
+something else is changing it.
+
+The task file also stops the run when the zone's primary is not one of the
+play's hosts, whether `--limit` left it out or it failed earlier in the run.
+Every write to the zone runs there, and the [sizing floor](#sizing-floor) is
+read there, so a run without it would skip both and size the zone from the
+inventory alone.
 
 The `setup_postgres`, `setup_pgedge` and `finalize_backrest` roles include
 it.
@@ -178,15 +186,22 @@ replication slots than `max_replication_slots` allows.
 The role provides a `sizing_floor` task file that reads what the zone's primary
 uses and records it as the `pg_sizing_floor` fact:
 
-- `databases` counts the databases that accept connections, including any
+- `databases` lists the databases that accept connections, including any
   created outside `db_names`.
+- `replicating` lists the databases other zones already subscribe to, which
+  hold a logical replication slot for each subscriber.
 - `subscriptions` counts replication origins. Spock creates one for each
   subscription and drops it with the subscription.
 - `slots` counts replication slots, logical and physical.
 
-`pg_connectable_dbs`, `pg_spock_subscriptions` and `pg_replication_slots` each
-take the larger of the inventory's value and the floor. The pools therefore
-grow with `db_names` but shrink only once a database is actually gone. A zone
+`pg_connectable_dbs` counts every database in `db_names` or in `databases`.
+`pg_spock_subscriptions` and `pg_replication_slots` each take the larger of the
+inventory's value and the floor, where the floor adds what each database in
+`db_names` but not yet in `replicating` is about to need. A run that removes
+one name and adds another therefore sizes for both: the removed database
+still holds its subscriptions and slots, and the added one is about to create
+its own. The pools grow with `db_names` but shrink only once a database is
+actually gone. A zone
 that has not been built yet has no floor: on a simple cluster, the node has no
 initialized data directory, and on an HA cluster, the zone's primary has no
 Patroni configuration file. A zone that has been built but whose Postgres does
