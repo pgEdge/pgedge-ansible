@@ -146,9 +146,20 @@ db_names:
 Removing a name from `db_names` does not drop the database. It tells the
 collection to stop managing it, and the database stays exactly as it is on
 every node: its data, its Spock node, its subscriptions and their replication
-slots. Remove a name only when you want to take over the database yourself,
-or when you mean to retire it by hand, in your own time, after checking what
-still depends on it.
+slots.
+
+!!! warning "Retire the database before you remove its name"
+    Removing the name also removes the `pg_hba.conf` rules that let the nodes
+    connect to the database as `pgedge_user`, and Spock needs those
+    connections to take the database apart. `spock.sub_drop` connects to the
+    provider to drop the subscription's replication slot there; once the
+    provider refuses that connection, the slot stays behind, and
+    `DROP DATABASE` then fails because a replication slot still exists in
+    the database. A database whose name is removed first can be left
+    partially dismantled, with slots that only manual cleanup removes.
+
+    Follow [Retiring a database](#retiring-a-database) while the name is
+    still in `db_names`, and remove the name as the last step.
 
 From the next run on, the collection no longer does any of the following for
 the database:
@@ -171,9 +182,55 @@ everything the database holds, so that removing the name cannot keep Postgres
 or Spock from starting. See
 [Worker and Replication Sizing](postgres.md#worker-and-replication-sizing).
 
-To retire the database completely, drop its Spock subscriptions on every
-zone's primary, then drop the database on each. The next run brings the pools
-back down.
+#### Retiring a database
+
+Take the database apart in this order, while its name is still in `db_names`:
+
+1. Stop every application that writes to the database.
+2. On every zone's primary, connect to the database and drop each of its
+   subscriptions with `spock.sub_drop`. Each call reaches the provider zone to
+   drop the matching replication slot there, which works only while the
+   provider still admits `pgedge_user`.
+3. On every zone's primary, confirm that `pg_replication_slots` shows no slot
+   left for the database. A slot that remains means a `spock.sub_drop` call
+   could not reach its provider; resolve that before going on.
+4. Remove the name from `db_names`.
+5. Drop the database on every zone's primary. Replicas in an Ultra-HA zone
+   follow their primary.
+6. Run the deployment playbook. It removes the database's `pg_hba.conf` and
+   pgBouncer rules and brings the pools back down.
+
+Do not run the playbook between dropping the database and removing its name:
+while the name is in `db_names`, a run creates the database again, empty, and
+subscribes it to the other zones.
+
+#### Reopening access to a removed database
+
+If the name is already gone from `db_names` and the database is not, use
+`custom_hba_rules` to admit `pgedge_user` to it again, then follow
+[Retiring a database](#retiring-a-database) from step 2. The same rules also
+keep the database replicating when you mean to take it over and manage it
+yourself, rather than retire it.
+
+Each rule must admit the address that Spock connections to the database come
+from: every pgEdge node, and on Ultra-HA, every proxy the subscriptions
+connect through. A single rule whose `source` covers the cluster's network
+does both. In the following example, the inventory admits `pgedge_user`, here
+the default `pgedge`, to the removed `reporting_db` database from the
+cluster's network:
+
+```yaml
+custom_hba_rules:
+  - contype: host
+    users: pgedge
+    databases: reporting_db
+    source: 10.0.0.0/24
+```
+
+Run the deployment playbook to apply the rule, which reloads Postgres or
+Patroni on each node. Do not add the name back to `db_names` instead: the
+next run would create the subscriptions the retirement has already dropped.
+Once the database is dropped, remove the rule and run the playbook again.
 
 ## db_user
 

@@ -34,7 +34,9 @@ in full.
   walsender, slot and origin pools beneath what the running cluster still
   uses, and a run that swaps one name for another sizes for both databases.
   The documentation now lists what a database removed from `db_names` stops
-  getting from the collection. (EE-44)
+  getting from the collection, and says to retire the database before
+  removing its name, since Spock cannot drop a subscription's slot once
+  `pg_hba.conf` no longer admits it. (EE-44)
 
 ## v2.1.0
 

@@ -73,7 +73,10 @@ the limit.
 - The configuration reference now says what removing a name from `db_names`
   means: the collection stops managing the database but does not drop it. It
   lists what the database no longer gets, including its `pg_hba` rules, which
-  stops its replication the next time a subscription reconnects. See
+  stops its replication the next time a subscription reconnects. Because
+  `spock.sub_drop` cannot then reach the provider to drop the subscription's
+  slot, it gives the order in which to retire a database before removing its
+  name, and how `custom_hba_rules` reopens access to one already removed. See
   [Removing a database from
   db_names](../configuration/cluster.md#removing-a-database-from-db_names).
   (EE-44)
