@@ -23,6 +23,15 @@ RUN useradd -m -s /bin/bash ansible && \
     chown ansible:ansible /home/ansible/.ssh && \
     chmod 700 /home/ansible/.ssh
 
+# Rocky ships /etc/shadow with mode 0000, which root can read only with a
+# capability that bypasses file permissions. On GitHub's Ubuntu 24.04
+# runners, the runner's AppArmor unix-chkpwd profile is applied to this
+# image's unix_chkpwd, since the privileged containers run without a
+# profile of their own, and it does not grant that capability, so
+# pam_unix's account check fails and sshd refuses every login. With mode
+# 0400 root reads the file as its owner.
+RUN chmod 0400 /etc/shadow
+
 COPY authorized_keys /home/ansible/.ssh/authorized_keys
 RUN chown ansible:ansible /home/ansible/.ssh/authorized_keys && \
     chmod 600 /home/ansible/.ssh/authorized_keys
