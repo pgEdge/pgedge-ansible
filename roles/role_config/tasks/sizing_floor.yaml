@@ -1,0 +1,76 @@
+---
+
+# Read the pool sizes this zone is already configured with into
+# pg_sizing_floor, which role_config's calculated sizes never go beneath.
+# Anything that writes the sized parameters includes this first.
+#
+# The calculation follows db_names, but Postgres refuses to start with more
+# replication slots on disk than max_replication_slots allows, and Spock cannot
+# start the workers it needs in a smaller pool. A calculation that went down --
+# a name removed from db_names before its database was retired, say -- could
+# leave a restarted node in either state. So the calculated sizes only ever
+# ratchet up: each is the larger of the formula and what the zone was last
+# given. An explicit value in pg_parameters still replaces them, which is how
+# an operator brings a pool back down.
+#
+# What the zone was last given is what the collection wrote, read back from
+# the file it wrote it to: the managed block in postgresql.conf on a simple
+# cluster, and the parameters in patroni.yml's bootstrap section on an HA one.
+# setup_patroni writes the same parameters into the zone's store, so the two
+# agree. A file answers whether or not Postgres or Patroni is running, and a
+# zone not yet built has no file, and so no floor.
+#
+# Every node of the zone is read and the largest value kept, so a member left
+# behind by an earlier run that failed part way still holds the zone up.
+
+- name: Find the node that runs this zone's primary
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
+
+- name: Check whether this node has been configured
+  stat:
+    path: "{{ sizing_floor_file }}"
+  register: sizing_floor_built
+  become: true
+
+# patroni.yml holds the superuser and replication passwords.
+
+- name: Read the configuration this node was last given
+  slurp:
+    path: "{{ sizing_floor_file }}"
+  register: sizing_floor_config
+  no_log: true
+  become: true
+  when: sizing_floor_built.stat.exists
+
+# postgresql.conf is read whole rather than only the collection's block, and
+# where a parameter appears twice the later line wins, as it does for Postgres.
+
+- name: Note the pool sizes this node was last given
+  set_fact:
+    sizing_floor_node: >-
+      {{ ((((sizing_floor_text | from_yaml).bootstrap | default({})).dcs
+             | default({})).postgresql | default({})).parameters
+           | default({})
+         if is_ha_cluster | bool
+         else dict(sizing_floor_text | regex_findall(
+                '^\s*([a-z_]+)\s*=\s*\x27?([0-9]+)\x27?\s*(?:#.*)?$',
+                multiline=True)) }}
+  vars:
+    sizing_floor_text: "{{ sizing_floor_config.content | b64decode }}"
+  when: sizing_floor_built.stat.exists
+
+- name: Record the pool sizes this zone was last given
+  set_fact:
+    pg_sizing_floor: >-
+      {% set floor = {} %}
+      {%- for node in nodes_in_zone | select('in', ansible_play_hosts) %}
+      {%-   for name, value in hostvars[node].sizing_floor_node
+                                 | default({}) | dictsort
+              if name in pg_calculated_parameters
+                 and value | string is match('^[0-9]+$') %}
+      {%-     set _ = floor.update({name: [value | int,
+                                           floor[name] | default(0)] | max}) %}
+      {%-   endfor %}
+      {%- endfor %}{{ floor }}

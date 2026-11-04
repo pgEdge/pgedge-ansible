@@ -206,6 +206,17 @@ jobs:
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519
 
+      # Last, and puts the cluster back as it was deployed. Not with ColdFront
+      # in mesh mode, which sets db_names as an extra variable that no role
+      # variable can extend.
+      - name: Check a database added to db_names is applied
+        if: ${{ !inputs.coldfront }}
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/db-add.yml \
+            -i tests/inventories/simple-cluster.yml \
+            --private-key tests/.ssh/id_ed25519
+
       - name: Show container logs on failure
         if: failure()
         run: docker compose -p e2e $COMPOSE_ARGS logs

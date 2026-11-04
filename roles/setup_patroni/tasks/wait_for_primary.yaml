@@ -1,14 +1,20 @@
 ---
 
-# patronictl shows Host as host:port once any member runs on a port other than
-# 5432 (or two members share a host), so the port is stripped before the name
-# is compared.
+# Wait for the zone to have a running leader. On a new zone that is the first
+# node, the only one started before this wait. On a running zone it is wherever
+# Patroni last put it, which after a failover is not the first node, and the
+# first node then reports itself streaming rather than running.
+#
+# pipefail keeps a patronictl failure from passing as an empty answer, so a
+# zone that never answers fails with patronictl's own error.
 
 - name: Wait until Patroni cluster is established
   shell: |-
+    set -o pipefail
     {{ ctl }} list {{ patroni_scope }} -f json \
-        | jq -r '.[] | select((.Host | sub(":[0-9]+$"; ""))
-                              == "{{ first_node_in_zone }}") | .State'
+        | jq -r '.[] | select(.Role == "Leader") | .State'
+  args:
+    executable: /bin/bash
   vars:
     ctl: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
   register: patroni_status

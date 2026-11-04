@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+The [release notes](release_notes/unreleased.md#changes) describe each change
+in full.
+
+### Added
+
+- New `zone_primary` task file in `role_config` finds the node running each
+  zone's primary, for any role that writes to the zone, and stops the run if
+  that node is not in the play or the zone's nodes disagree on it. A built
+  zone whose Patroni is stopped everywhere has Patroni started so its members
+  elect a leader, rather than taking the first node as primary.
+  `finalize_backrest` uses it in place of its own lookup. (EE-44)
+- New `sizing_floor` task file in `role_config` reads back the worker and
+  slot pool sizes each zone was last configured with, and the calculated
+  sizes never go below them. (EE-44)
+- New `unmanaged_db_names` parameter lists databases the collection does not
+  manage, such as one removed from `db_names` and kept replicating, so that
+  the worker and slot pools are sized for them as well. `init_server` refuses
+  a name listed there and in `db_names` both. (EE-44)
+- `init_server` refuses an inventory whose pgEdge nodes list different
+  databases in `db_names` or `unmanaged_db_names`. (EE-44)
+
+### Fixed
+
+- The worker pool counts the Spock manager in `coldfront_db` where ColdFront
+  is enabled outside mesh mode, which it previously missed. (EE-44)
+- A database added to `db_names` reaches a running cluster. On Ultra-HA,
+  `setup_postgres` and `setup_pgedge` write to each zone's current leader
+  rather than its first node, and `setup_patroni` reloads Patroni so the new
+  `pg_hba` rules take effect. On a simple cluster, `setup_postgres` reloads
+  Postgres when `pg_hba.conf` changes. (EE-44)
+- `setup_patroni` no longer times out on a zone whose leader has moved off its
+  first node, and `setup_postgres` no longer rewrites the `pg_hba.conf` and
+  `postgresql.conf` of a node Patroni manages. (EE-44)
+- Removing a database from `db_names` no longer shrinks the calculated worker,
+  walsender, slot and origin pools, which now only ever grow unless
+  `pg_parameters` sets them. The documentation now lists what a database removed from `db_names` stops
+  getting from the collection, and says to retire the database before
+  removing its name, since Spock cannot drop a subscription's slot once
+  `pg_hba.conf` no longer admits it. (EE-44)
+
 ## v2.1.0
 
 This release adds ColdFront tiered storage, which keeps recent data in native

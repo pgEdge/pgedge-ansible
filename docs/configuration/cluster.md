@@ -131,13 +131,157 @@ repo_gpg_key: https://keys.example.com/pgedge-rsa.pub
 - Description: This parameter specifies the database names for the Spock
   cluster. At least one name is required. The roles create any missing
   databases automatically and install the Spock and Snowflake extensions in
-  each.
+  each. Every pgEdge node must list the same databases, in any order, since
+  Spock replicates each one between all of them; set it on the `pgedge`
+  group. `init_server` refuses an inventory whose nodes disagree.
 
 In the following example, the inventory specifies multiple database names:
 
 ```yaml
 db_names:
   - app_db
+  - reporting_db
+```
+
+### Removing a database from db_names
+
+Removing a name from `db_names` does not drop the database. It tells the
+collection to stop managing it, and the database stays exactly as it is on
+every node: its data, its Spock node, its subscriptions and their replication
+slots.
+
+!!! warning "Retire the database before you remove its name"
+    Removing the name also removes the `pg_hba.conf` rules that let the nodes
+    connect to the database as `pgedge_user`, and Spock needs those
+    connections to take the database apart. `spock.sub_drop` connects to the
+    provider to drop the subscription's replication slot there; once the
+    provider refuses that connection, the slot stays behind, and
+    `DROP DATABASE` then fails because a replication slot still exists in
+    the database. A database whose name is removed first can be left
+    partially dismantled, with slots that only manual cleanup removes.
+
+    Follow [Retiring a database](#retiring-a-database) while the name is
+    still in `db_names`, and remove the name as the last step.
+
+From the next run on, the collection no longer does any of the following for
+the database:
+
+- Admits it in `pg_hba.conf`, for the `pgedge_user` and `db_user` connections
+  between nodes. Connections already open carry on, but any that reconnects is
+  refused. That includes every other zone's Spock subscription, so replication
+  of the database stops at the next restart, failover or network interruption.
+- Admits it in pgBouncer's client authentication rules, where pgBouncer is
+  enabled.
+- Creates it, or the Spock and Snowflake extensions in it, on any node.
+- Creates its Spock node or its subscriptions to the other zones, or repairs
+  any that are missing.
+- Cleans its Spock metadata and seeds it to the other zones during a recovery
+  with `recover_postgres`.
+
+The collection still backs the database up, since pgBackRest backs up the
+whole cluster. It also never shrinks the worker and replication slot pools on
+its own, so removing the name cannot keep Postgres or Spock from starting. It
+does stop counting the database, though, so a database added to `db_names`
+later takes the room the removed one still uses. List a database you keep in
+[unmanaged_db_names](#unmanaged_db_names) so that the pools grow for both. See
+[Worker and Replication Sizing](postgres.md#worker-and-replication-sizing).
+
+#### Retiring a database
+
+Take the database apart in this order, while its name is still in `db_names`:
+
+1. Stop every application that writes to the database.
+2. On every zone's primary, connect to the database and drop each of its
+   subscriptions with `spock.sub_drop`. Each call reaches the provider zone to
+   drop the matching replication slot there, which works only while the
+   provider still admits `pgedge_user`.
+3. On every zone's primary, confirm that `pg_replication_slots` shows no slot
+   left for the database. A slot that remains means a `spock.sub_drop` call
+   could not reach its provider; resolve that before going on.
+4. Remove the name from `db_names`.
+5. Drop the database on every zone's primary. Replicas in an Ultra-HA zone
+   follow their primary.
+6. Run the deployment playbook. It removes the database's `pg_hba.conf` and
+   pgBouncer rules. The worker and replication slot pools stay at their
+   current size; to bring them down, set them in `pg_parameters`, as
+   [Worker and Replication Sizing](postgres.md#worker-and-replication-sizing)
+   describes.
+
+Do not run the playbook between dropping the database and removing its name:
+while the name is in `db_names`, a run creates the database again, empty, and
+subscribes it to the other zones.
+
+#### Reopening access to a removed database
+
+If the name is already gone from `db_names` and the database is not, use
+`custom_hba_rules` to admit `pgedge_user` to it again, then follow
+[Retiring a database](#retiring-a-database) from step 2. The same rules also
+keep the database replicating when you mean to take it over and manage it
+yourself, rather than retire it. In that case, also add its name to
+[unmanaged_db_names](#unmanaged_db_names), so that the worker and replication
+slot pools keep counting its subscriptions.
+
+Each rule must admit the address that Spock connections to the database come
+from: every pgEdge node, and on Ultra-HA, every proxy the subscriptions
+connect through. A single rule whose `source` covers the cluster's network
+does both. In the following example, the inventory admits `pgedge_user`, here
+the default `pgedge`, to the removed `reporting_db` database from the
+cluster's network:
+
+```yaml
+custom_hba_rules:
+  - contype: host
+    users: pgedge
+    databases: reporting_db
+    source: 10.0.0.0/24
+```
+
+Run the deployment playbook to apply the rule, which reloads Postgres or
+Patroni on each node. Do not add the name back to `db_names` instead: the
+next run would create the subscriptions the retirement has already dropped.
+Once the database is dropped, remove the rule and run the playbook again.
+
+## unmanaged_db_names
+
+- Type: List
+- Default: `[]`
+- Description: This parameter lists databases that the collection does not
+  manage but that the worker and replication slot pools must still be sized
+  for. The collection does not create, admit, replicate or retire them; it
+  only counts them in
+  [Worker and Replication Sizing](postgres.md#worker-and-replication-sizing).
+  A name may not appear in both `unmanaged_db_names` and `db_names`, or name
+  a database the collection creates for a component it sets up, such as
+  `coldfront_db`, which the sizing already counts. Like `db_names`, it must
+  be the same on every pgEdge node, since every node's pools are sized for
+  every database; set it on the `pgedge` group.
+
+The collection cannot see what a database it does not manage holds, so it
+counts each one listed as though it replicates to every other zone, the same as
+a database in `db_names`. A database that does not replicate needs fewer
+workers and slots than that, and the difference is a few spare of each.
+
+List a database here when the cluster runs one that `db_names` does not name:
+
+- A database removed from `db_names` that you keep replicating yourself, as
+  [Reopening access to a removed
+  database](#reopening-access-to-a-removed-database) describes. Move the name
+  from `db_names` to `unmanaged_db_names` in the same change, and add the
+  `custom_hba_rules` that keep it reachable.
+- A database created by hand on the cluster's nodes, replicated or not. Spock
+  starts a manager worker in every database that accepts connections.
+
+Remove the name once the database is dropped. The pools do not shrink on their
+own when you do; see
+[Worker and Replication Sizing](postgres.md#worker-and-replication-sizing).
+
+In the following example, the inventory keeps `reporting_db`, taken over from
+`db_names`, counted alongside the databases the collection manages:
+
+```yaml
+db_names:
+  - app_db
+unmanaged_db_names:
   - reporting_db
 ```
 

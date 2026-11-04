@@ -1,5 +1,13 @@
 ---
 
+# The sizing in postgresql.conf never drops beneath what the node was last
+# configured with.
+
+- name: Read the pool sizes the node was last configured with
+  include_role:
+    name: role_config
+    tasks_from: sizing_floor
+
 - name: Ensure Postgres data directory is initialized and properly configured
   include_tasks: prep_instance.yaml
 
@@ -14,10 +22,10 @@
   become: true
   register: pg_service_start
 
-# A running server reads a changed configuration only when told to. One just
-# started has already read it. The time of the request is kept, because the
-# reload is only a signal: the server re-reads its configuration some moments
-# later, and until then it reports nothing pending.
+# A running server reads a changed configuration or pg_hba.conf only when told
+# to. One just started has already read both. The time of the request is kept,
+# because the reload is only a signal: the server re-reads its configuration
+# some moments later, and until then it reports nothing pending.
 
 - name: Reload Postgres to apply configuration changes
   community.postgresql.postgresql_query:
@@ -30,7 +38,7 @@
   become: true
   become_user: postgres
   when:
-  - pg_conf_block is changed
+  - pg_conf_block is changed or pg_hba_changed | bool
   - pg_service_start is not changed
 
 # Some parameters take effect only when the server starts, and a reload leaves

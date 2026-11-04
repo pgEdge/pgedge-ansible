@@ -8,15 +8,10 @@
 # first node is its primary. An HA zone's primary is wherever Patroni last put
 # it, which after a failover is not the first node, so it is asked for first.
 
-- name: Find this zone's Patroni leader
-  include_tasks: find_leader.yaml
-  when: is_ha_cluster
-
-- name: Choose the node that writes for this zone
-  set_fact:
-    zone_primary: >-
-      {{ hostvars[first_node_in_zone].zone_leader.stdout | trim
-         if is_ha_cluster | bool else first_node_in_zone }}
+- name: Find the node that writes for this zone
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
 
 - name: Ensure the backup user exists and can reach this cluster
   include_tasks: add_backup_user.yaml

@@ -1,0 +1,494 @@
+---
+# Add a database to db_names on a deployed cluster.
+#
+# A fresh deployment creates every database before anything replicates, so
+# only a change to a running cluster exercises what has to happen afterwards:
+# the database created on each zone's primary, the client authentication rules
+# that name it reloaded, and Spock's node and subscriptions created in it.
+#
+# On Ultra-HA the zone's leader is first moved off the zone's first node, which
+# is where every write went before zone_primary existed. The first node is then
+# a replica: it refuses CREATE DATABASE, and a wait for it to report itself
+# running never ends, since a Patroni replica reports itself streaming.
+# patroni.yml renders pg_hba, so the new rules reach Postgres only if Patroni is
+# told to reload it.
+#
+# This checks what the collection promises:
+#
+#   - the database exists on every node, the replicas included,
+#   - each zone subscribes to every other zone's copy of it, through the
+#     proxies on Ultra-HA, which pg_hba has to admit,
+#   - a row written in one zone arrives in every other,
+#   - and taking the name back out of db_names, or dropping the database
+#     altogether, never shrinks the worker and slot pools sized for it.
+#
+# Afterwards it puts the cluster back as it was deployed: the database is
+# dropped, the rules naming it are removed, and each zone's leader returns to
+# its first node, so the steps after this one see the deployment and nothing
+# else. The pools alone stay as large as the added database made them, which
+# is the point of them. The database is only ever added in this run's role
+# variables, never in the inventory, so ColdFront's mesh layer, which sets
+# db_names as an extra variable, cannot run it.
+
+# setup_patroni's template names this zone's proxies and backup servers by
+# address, and an address is a fact, so every host's facts have to be gathered
+# first -- without become, as the deployment gathers them.
+
+- hosts: all
+  any_errors_fatal: true
+
+  tasks:
+  - name: Confirm every host in the inventory is reachable
+    ping:
+
+# No play-level become: the roles stage certificates on the controller, and
+# those tasks would then run there as root and leave the staging directory
+# unreadable to the next run. The roles escalate where they need to, and so do
+# the checks below.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    added_db: addeddb
+    grown_db_names: "{{ deployed_db_names + [added_db] }}"
+    ctl: >-
+      patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}
+    # The node the test moves each zone's leader to: the second, so the first
+    # is left a replica.
+    second_node_in_zone: "{{ nodes_in_zone[1] | default('') }}"
+    # The pools as Postgres is given them: calculated, unless pg_parameters
+    # raises them.
+    pool_sizes: >-
+      {{ pg_effective_parameters | dict2items
+         | selectattr('key', 'in', pg_sized_parameters.keys() | list)
+         | items2dict }}
+    # The pools the floor read back, and the sizing ratcheted up to it, hold
+    # below what the added database was given.
+    floor_short: >-
+      {% set short = [] %}
+      {%- for name, given in grown_calculated.items()
+            if (pg_sizing_floor | default({}))[name] | default(0) | int
+               < given | int %}
+      {%-   set _ = short.append(name) %}
+      {%- endfor %}{{ short }}
+    sized_short: >-
+      {% set short = [] %}
+      {%- for name, given in grown_calculated.items()
+            if pg_sized_parameters[name] | default(0) | int < given | int %}
+      {%-   set _ = short.append(name) %}
+      {%- endfor %}{{ short }}
+
+  # role_config's defaults reach the play only once the first include_role has
+  # made them public, and this is evaluated for that very task too.
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version | default(17) }}/bin:/usr/lib/postgresql/{{ pg_version | default(17) }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  # The checks below read role_config's variables: the store's scope, each
+  # zone's nodes and where patronictl's configuration lives.
+
+  - name: Find each zone's primary as deployed
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+
+  # db_names as the deployment set it, whether in the inventory or by
+  # role_config's default, which the include above has just made visible. A
+  # fact, so the role variables below that extend it do not refer to
+  # themselves.
+
+  - name: Note the databases the deployment replicates
+    set_fact:
+      deployed_db_names: "{{ db_names }}"
+
+  - name: Assert the added database is not one the deployment already has
+    assert:
+      that:
+      - added_db not in deployed_db_names
+      fail_msg: >-
+        db_names already lists {{ added_db }}, so this test cannot add it.
+
+  - name: Assert each zone's leader starts on its first node
+    assert:
+      that:
+      - zone_primary == first_node_in_zone
+      fail_msg: >-
+        Zone {{ zone }} is led by {{ zone_primary }}, not its first node
+        {{ first_node_in_zone }}, before this test moved anything. Something
+        earlier in the run failed the zone over.
+
+  # The formula's sizes for the deployment, which it returns to once the added
+  # database is gone, though the pools themselves do not.
+
+  - name: Note the pools the deployment needs
+    set_fact:
+      deployed_calculated: "{{ pg_calculated_parameters }}"
+
+  # Patroni names its members by host name, and the inventory by address.
+
+  - name: Move each zone's leader off its first node
+    become: true
+    become_user: postgres
+    command: >-
+      {{ ctl }} switchover {{ patroni_scope }}
+      --leader {{ hostvars[first_node_in_zone].ansible_hostname }}
+      --candidate {{ hostvars[second_node_in_zone].ansible_hostname }}
+      --force
+    when:
+    - is_ha_cluster | bool
+    - inventory_hostname == first_node_in_zone
+
+  - name: Wait for the new leader to run and the first node to follow it
+    become: true
+    become_user: postgres
+    shell: |-
+      set -o pipefail
+      {{ ctl }} list {{ patroni_scope }} -f json \
+          | jq -c 'map({(.Host | sub(":[0-9]+$"; "")): [.Role, .State]}) | add'
+    args:
+      executable: /bin/bash
+    register: moved_members
+    until: >-
+      moved_members.rc == 0 and
+      (moved_members.stdout | from_json)[second_node_in_zone]
+        == ['Leader', 'running'] and
+      (moved_members.stdout | from_json)[first_node_in_zone][1] == 'streaming'
+    retries: 30
+    delay: 2
+    changed_when: false
+    when:
+    - is_ha_cluster | bool
+    - inventory_hostname == first_node_in_zone
+
+  # In the order the sample playbooks run them. setup_haproxy names no
+  # database, so it has nothing to apply.
+
+  - name: Create the added database on each zone's primary
+    include_role:
+      name: setup_postgres
+    vars:
+      db_names: "{{ grown_db_names }}"
+
+  - name: Admit the added database through Patroni's rules
+    include_role:
+      name: setup_patroni
+    vars:
+      db_names: "{{ grown_db_names }}"
+    when: is_ha_cluster | bool
+
+  - name: Admit the added database through the pooler's rules
+    include_role:
+      name: setup_pgbouncer
+    vars:
+      db_names: "{{ grown_db_names }}"
+    when: pgbouncer_enabled | default(false) | bool
+
+  - name: Add the database to Spock
+    include_role:
+      name: setup_pgedge
+    vars:
+      db_names: "{{ grown_db_names }}"
+
+  - name: Assert the roles found each zone's moved leader
+    assert:
+      that:
+      - zone_primary == (second_node_in_zone if is_ha_cluster | bool
+                         else first_node_in_zone)
+      fail_msg: >-
+        The roles took {{ zone_primary }} for zone {{ zone }}'s primary, but
+        the test moved the leader to {{ second_node_in_zone }}.
+
+  - name: Check the added database exists on every node
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d postgres -t -A -c
+      "SELECT count(*) FROM pg_database WHERE datname = '{{ added_db }}'"
+    register: added_db_present
+    until: added_db_present.stdout | trim == '1'
+    retries: 15
+    delay: 2
+    changed_when: false
+
+  - name: Read the added database's subscriptions on each zone's primary
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ added_db }} -t -A -F '|' -c
+      "SELECT sub_name, (spock.sub_show_status(sub_name)).status
+         FROM spock.subscription ORDER BY sub_name"
+    register: added_subs
+    until: >-
+      added_subs.stdout_lines | length == zone_list | length - 1 and
+      added_subs.stdout_lines | map('split', '|') | map(attribute=1)
+        | reject('eq', 'replicating') | list | length == 0
+    retries: 30
+    delay: 2
+    changed_when: false
+    when: inventory_hostname == zone_primary
+
+  # The subscriptions only show replicating once the provider has admitted
+  # them, but a row crossing between zones is the thing actually promised.
+  # spock.enable_ddl_replication carries the table to the other zones too.
+
+  - name: Write a row into the added database in the first zone
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ added_db }} -v ON_ERROR_STOP=1 -c "
+        CREATE TABLE IF NOT EXISTS db_add_test (id int PRIMARY KEY, val text);
+        INSERT INTO db_add_test VALUES (1, 'from_zone_{{ zone }}')
+          ON CONFLICT (id) DO NOTHING;"
+    changed_when: false
+    when:
+    - inventory_hostname == zone_primary
+    - zone | string == zone_list | first | string
+
+  - name: Wait for the row to reach every zone's primary
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ added_db }} -t -A -c
+      "SELECT val FROM db_add_test WHERE id = 1"
+    register: added_row
+    until: added_row.stdout | trim == 'from_zone_' ~ (zone_list | first)
+    retries: 30
+    delay: 2
+    failed_when: false
+    changed_when: false
+    when: inventory_hostname == zone_primary
+
+  - name: Assert the row arrived
+    assert:
+      that:
+      - added_row.stdout | default('') | trim
+        == 'from_zone_' ~ (zone_list | first)
+      fail_msg: >-
+        The row written in zone {{ zone_list | first }} did not reach
+        {{ added_db }} on {{ inventory_hostname }}:
+        {{ added_row.stdout | default('') }} {{ added_row.stderr | default('') }}
+    when: inventory_hostname == zone_primary
+
+  # Taking the name out of db_names leaves the database, its Spock node and its
+  # subscriptions in place, so the pools sized for it have to stay.
+  #
+  # The test inventories set max_worker_processes in pg_parameters, which
+  # replaces the calculation, so the pools the nodes run with show only that
+  # the roles wrote what they meant to. The calculation is checked on its own:
+  # on three zones one more database raises its worker total, which would drop
+  # again without the floor. On two zones it stays within the same multiple of
+  # four and the slots at their minimum of 16, so there the floor read back is
+  # what shows it held.
+
+  - name: Note the pools the added database needs
+    set_fact:
+      grown_sizes: "{{ pool_sizes }}"
+      grown_calculated: "{{ pg_calculated_parameters }}"
+    vars:
+      db_names: "{{ grown_db_names }}"
+
+  - name: Take the added database out of db_names while it still replicates
+    include_role:
+      name: setup_postgres
+    when: not is_ha_cluster | bool
+
+  - name: Take the added database out of Patroni's db_names while it replicates
+    include_role:
+      name: setup_patroni
+    when: is_ha_cluster | bool
+
+  - name: Assert the floor holds what the added database was given
+    assert:
+      that:
+      - floor_short | length == 0
+      fail_msg: >-
+        The roles read {{ pg_sizing_floor }} back from zone {{ zone }}, which
+        is short of the {{ grown_calculated }} written for {{ added_db }}.
+
+  - name: Assert the calculation still sizes for the added database
+    assert:
+      that:
+      - sized_short | length == 0
+      fail_msg: >-
+        Without {{ added_db }} in db_names, the roles calculated
+        {{ pg_sized_parameters }} for {{ inventory_hostname }}, though the
+        database still needs {{ grown_calculated }}.
+
+  # pg_allow_restart is on, so the roles restart each node into whatever they
+  # wrote, and what it runs with is what they sized. Patroni passes these
+  # parameters on Postgres's command line, so no configuration file shows them.
+
+  - name: Read the pool sizes each node now runs with
+    become: true
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: postgres
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT name, setting FROM pg_settings
+         WHERE name IN ('{{ grown_sizes.keys() | join("', '") }}')
+    register: shrunk_sizes
+    changed_when: false
+
+  - name: Assert removing the name kept the pools the database needs
+    assert:
+      that:
+      - configured == expected
+      fail_msg: >-
+        With {{ added_db }} still replicating, {{ inventory_hostname }} runs
+        with {{ configured }}, not {{ expected }}.
+    vars:
+      configured: >-
+        {{ shrunk_sizes.query_result | default([], true)
+           | items2dict(key_name='name', value_name='setting') }}
+      expected: >-
+        {{ dict(grown_sizes.keys()
+                | zip(grown_sizes.values() | map('string'))) }}
+
+  # Put the cluster back. psql runs a single -c as one transaction, which
+  # DROP DATABASE refuses, so the two statements go in separate ones. Every
+  # zone drops its subscriptions before any drops the database, because each
+  # subscription holds a slot in its provider's copy of the database, and a
+  # database with a slot in it cannot be dropped. A slot stays active until its
+  # subscriber's walsender exits, which the retries wait out.
+
+  - name: Drop the added database's subscriptions on each zone's primary
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ added_db }} -v ON_ERROR_STOP=1 -c
+      "SELECT spock.sub_drop(sub_name) FROM spock.subscription"
+    changed_when: true
+    when: inventory_hostname == zone_primary
+
+  - name: Drop the added database on each zone's primary
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d postgres -v ON_ERROR_STOP=1
+      -c "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots
+           WHERE database = '{{ added_db }}' AND NOT active"
+      -c "DROP DATABASE IF EXISTS {{ added_db }} WITH (FORCE)"
+    register: added_db_dropped
+    until: added_db_dropped is success
+    retries: 10
+    delay: 3
+    changed_when: true
+    when: inventory_hostname == zone_primary
+
+  - name: Remove the added database from Postgres's rules
+    include_role:
+      name: setup_postgres
+    when: not is_ha_cluster | bool
+
+  - name: Remove the added database from Patroni's rules
+    include_role:
+      name: setup_patroni
+    when: is_ha_cluster | bool
+
+  - name: Remove the added database from the pooler's rules
+    include_role:
+      name: setup_pgbouncer
+    when: pgbouncer_enabled | default(false) | bool
+
+  # The pools only ever ratchet up, so dropping the database leaves them where
+  # it put them.
+
+  - name: Read the pool sizes each node runs with without it
+    become: true
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: postgres
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT name, setting FROM pg_settings
+         WHERE name IN ('{{ grown_sizes.keys() | join("', '") }}')
+    register: restored_sizes
+    changed_when: false
+
+  - name: Assert the pools kept what the added database was given
+    assert:
+      that:
+      - configured == expected
+      fail_msg: >-
+        With {{ added_db }} dropped, {{ inventory_hostname }} runs with
+        {{ configured }}, not the {{ expected }} it was given before.
+    vars:
+      configured: >-
+        {{ restored_sizes.query_result | default([], true)
+           | items2dict(key_name='name', value_name='setting') }}
+      expected: >-
+        {{ dict(grown_sizes.keys()
+                | zip(grown_sizes.values() | map('string'))) }}
+
+  - name: Assert the calculation kept sizing for the added database
+    assert:
+      that:
+      - sized_short | length == 0
+      - pg_calculated_parameters == deployed_calculated
+      fail_msg: >-
+        With {{ added_db }} dropped, the roles sized
+        {{ pg_sized_parameters }} for {{ inventory_hostname }} from a formula
+        of {{ pg_calculated_parameters }}, where the pools were given
+        {{ grown_calculated }} and the deployment's formula is
+        {{ deployed_calculated }}.
+
+  - name: Return each zone's leader to its first node
+    become: true
+    become_user: postgres
+    command: >-
+      {{ ctl }} switchover {{ patroni_scope }}
+      --leader {{ hostvars[second_node_in_zone].ansible_hostname }}
+      --candidate {{ hostvars[first_node_in_zone].ansible_hostname }}
+      --force
+    when:
+    - is_ha_cluster | bool
+    - inventory_hostname == first_node_in_zone
+
+  - name: Wait for the first node to lead its zone again
+    become: true
+    become_user: postgres
+    shell: |-
+      set -o pipefail
+      {{ ctl }} list {{ patroni_scope }} -f json \
+          | jq -c 'map({(.Host | sub(":[0-9]+$"; "")): [.Role, .State]}) | add'
+    args:
+      executable: /bin/bash
+    register: restored_members
+    until: >-
+      restored_members.rc == 0 and
+      (restored_members.stdout | from_json)[first_node_in_zone]
+        == ['Leader', 'running'] and
+      (restored_members.stdout | from_json).values() | map('last')
+        | reject('in', ['running', 'streaming']) | list | length == 0
+    retries: 30
+    delay: 2
+    changed_when: false
+    when:
+    - is_ha_cluster | bool
+    - inventory_hostname == first_node_in_zone
+
+  - name: Check the deployed databases still replicate
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ item }} -t -A -c
+      "SELECT (spock.sub_show_status(sub_name)).status
+         FROM spock.subscription"
+    register: deployed_subs
+    until: >-
+      deployed_subs.stdout_lines | length == zone_list | length - 1 and
+      deployed_subs.stdout_lines | reject('eq', 'replicating') | list
+        | length == 0
+    retries: 30
+    delay: 2
+    changed_when: false
+    loop: "{{ deployed_db_names }}"
+    when: inventory_hostname == first_node_in_zone

@@ -277,6 +277,20 @@ jobs:
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
             --private-key tests/.ssh/id_ed25519
 
+      # After the verification, because it moves each zone's leader off its
+      # first node before adding the database, and before the recovery, which
+      # it leaves the cluster as deployed for. Not with ColdFront, whose mesh
+      # mode sets db_names as an extra variable that no role variable can
+      # extend.
+      - name: Check a database added to db_names is applied
+        if: ${{ !inputs.coldfront }}
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/db-add.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
+
       # Last, because it wipes the cluster the steps above just verified.
       # The deployment is what produces the backups this restores from, so the
       # two belong in one job against one set of containers rather than a job

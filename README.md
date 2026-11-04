@@ -116,6 +116,7 @@ variables. The following table lists the most commonly used parameters:
 | zone | 1 | Zone or region for a node; also the Snowflake node ID. |
 | pg_version | 17 | PostgreSQL version to install. |
 | db_names | [demo] | List of databases to create. |
+| unmanaged_db_names | [] | Databases outside db_names to size the worker and slot pools for. |
 | db_user | admin | Database superuser username. |
 | db_password | secret | Password for db_user. |
 | is_ha_cluster | false | When true, installs etcd, Patroni, and HAProxy. |

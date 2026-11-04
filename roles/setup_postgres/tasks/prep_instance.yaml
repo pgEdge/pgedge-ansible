@@ -16,91 +16,125 @@
 
 - include_tasks: certificate.yaml
 
-# Write the Postgres configuration the collection and the inventory describe.
-# The block is rewritten whole on every run, so a parameter removed from
-# pg_parameters leaves the file too. Numbers are written bare and everything
-# else quoted, which Postgres accepts for any parameter type.
-#
-# An HA node writes only the parameters it needs to run outside Patroni, as it
-# does while setup_postgres creates its users. Patroni sets aside this file
-# and includes it beneath its own, so the rest of the configuration lives in
-# Patroni's store, where removing a parameter actually removes it.
+# Everything from here on is configuration Patroni takes over once it runs an
+# HA node: it rewrites postgresql.conf and pg_hba.conf from patroni.yml and the
+# zone's store, so neither is touched here after that. setup_patroni carries
+# changes to either into a running zone.
 
-- name: Configure Postgres for pgEdge compatibility
-  blockinfile:
-    path: "{{ pg_config_dir }}/postgresql.conf"
-    block: |
-      {% for name, value in pg_conf_parameters | dictsort %}
-      {{ name }} = {{ value if value is number
-                      else "'" ~ (value | string | replace("'", "''")) ~ "'" }}
-      {% endfor %}
-    state: present
-    marker: "# {mark} pgEdge ANSIBLE MANAGED BLOCK"
-    insertafter: EOF
-  vars:
-    pg_conf_parameters: >-
-      {{ pg_standalone_parameters if is_ha_cluster | bool
-         else pg_effective_parameters }}
-  register: pg_conf_block
-  become: true
-  become_user: postgres
+- block:
+  # Write the Postgres configuration the collection and the inventory describe.
+  # The block is rewritten whole on every run, so a parameter removed from
+  # pg_parameters leaves the file too. Numbers are written bare and everything
+  # else quoted, which Postgres accepts for any parameter type.
+  #
+  # An HA node writes only the parameters it needs to run outside Patroni, as it
+  # does while setup_postgres creates its users. Patroni sets aside this file
+  # and includes it beneath its own, so the rest of the configuration lives in
+  # Patroni's store, where removing a parameter actually removes it.
 
-# Ensure all necessary pg_hba.conf lines are listed for:
-#
-# - Local postgres peer user for automated administration.
-# - The db_user superuser that will administer the cluster.
-# - The pgedge user for node-to-node communication.
-#
-# Otherwise, follow the principal of least access and only name necessary
-# database and user combinations.
-#
-# Do this with one line per rule for easier editing later.
+  - name: Configure Postgres for pgEdge compatibility
+    blockinfile:
+      path: "{{ pg_config_dir }}/postgresql.conf"
+      block: |
+        {% for name, value in pg_conf_parameters | dictsort %}
+        {{ name }} = {{ value if value is number
+                        else "'" ~ (value | string | replace("'", "''")) ~ "'" }}
+        {% endfor %}
+      state: present
+      marker: "# {mark} pgEdge ANSIBLE MANAGED BLOCK"
+      insertafter: EOF
+    vars:
+      pg_conf_parameters: >-
+        {{ pg_standalone_parameters if is_ha_cluster | bool
+           else pg_effective_parameters }}
+    register: pg_conf_block
+    become: true
+    become_user: postgres
 
-- name: Ensure local peer access for the postgres user
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: local
-    users: postgres
-    databases: all
-    method: peer
-    create: true
-    overwrite: true
-  become: true
-  become_user: postgres
+  # Ensure all necessary pg_hba.conf lines are listed for:
+  #
+  # - Local postgres peer user for automated administration.
+  # - The db_user superuser that will administer the cluster.
+  # - The pgedge user for node-to-node communication.
+  #
+  # Otherwise, follow the principal of least access and only name necessary
+  # database and user combinations.
+  #
+  # Do this with one line per rule for easier editing later.
+  #
+  # The first rule starts the file over, so every task reports a change on
+  # every run whether or not the file ends up any different. What it held
+  # before is compared with what it holds after instead, which is what decides
+  # whether a running server has to reload: a database added to db_names is
+  # otherwise closed to its own subscriptions until something else does.
 
-- name: Allow localhost connections from any user
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: host
-    users: all
-    databases: all
-    method: scram-sha-256
-    source: 127.0.0.1/32
-  become: true
-  become_user: postgres
+  - name: Read the client authentication rules Postgres was last given
+    stat:
+      path: "{{ pg_config_dir }}/pg_hba.conf"
+      checksum_algorithm: sha256
+    register: pg_hba_before
+    become: true
 
-- name: Add access for the pgedge communication and admin/DB user
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: host
-    users: "{{ pgedge_user + ',' + db_user }}"
-    databases: "{{ (db_names + ['postgres']) | join(',') }}"
-    method: scram-sha-256
-    source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
-  loop: "{{ groups['pgedge'] }}"
-  become: true
-  become_user: postgres
+  - name: Ensure local peer access for the postgres user
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: local
+      users: postgres
+      databases: all
+      method: peer
+      create: true
+      overwrite: true
+    become: true
+    become_user: postgres
 
-- name: Add customized user / host access
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: "{{ item.contype | default('host') }}"
-    users: "{{ item.users | default('postgres') }}"
-    databases: "{{ item.databases | default('postgres') }}"
-    method: "{{ item.method | default('scram-sha-256') }}"
-    source: "{{ item.source | default('127.0.0.1/32') }}"
-  loop: "{{ custom_hba_rules }}"
-  become: true
-  become_user: postgres
-  when: 
-  - custom_hba_rules | length > 0
+  - name: Allow localhost connections from any user
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: host
+      users: all
+      databases: all
+      method: scram-sha-256
+      source: 127.0.0.1/32
+    become: true
+    become_user: postgres
+
+  - name: Add access for the pgedge communication and admin/DB user
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: host
+      users: "{{ pgedge_user + ',' + db_user }}"
+      databases: "{{ (db_names + ['postgres']) | join(',') }}"
+      method: scram-sha-256
+      source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
+    loop: "{{ groups['pgedge'] }}"
+    become: true
+    become_user: postgres
+
+  - name: Add customized user / host access
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: "{{ item.contype | default('host') }}"
+      users: "{{ item.users | default('postgres') }}"
+      databases: "{{ item.databases | default('postgres') }}"
+      method: "{{ item.method | default('scram-sha-256') }}"
+      source: "{{ item.source | default('127.0.0.1/32') }}"
+    loop: "{{ custom_hba_rules }}"
+    become: true
+    become_user: postgres
+    when: 
+    - custom_hba_rules | length > 0
+
+  - name: Read the client authentication rules as they now stand
+    stat:
+      path: "{{ pg_config_dir }}/pg_hba.conf"
+      checksum_algorithm: sha256
+    register: pg_hba_after
+    become: true
+
+  - name: Note whether the client authentication rules changed
+    set_fact:
+      pg_hba_changed: >-
+        {{ pg_hba_before.stat.checksum | default('')
+           != pg_hba_after.stat.checksum | default('') }}
+
+  when: not patroni_manages_postgres | default(false) | bool
