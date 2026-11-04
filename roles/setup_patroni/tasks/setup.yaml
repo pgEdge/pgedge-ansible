@@ -20,9 +20,9 @@
   when: replica_from_backup | bool
 
 # The sizing in patroni.yml and the zone's store never drops beneath what the
-# zone's running leader uses.
+# zone was last configured with.
 
-- name: Read what the zone's Postgres already uses
+- name: Read the pool sizes the zone was last configured with
   include_role:
     name: role_config
     tasks_from: sizing_floor

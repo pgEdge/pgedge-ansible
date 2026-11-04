@@ -1,8 +1,9 @@
 ---
 
-# The sizing in postgresql.conf never drops beneath what the running node uses.
+# The sizing in postgresql.conf never drops beneath what the node was last
+# configured with.
 
-- name: Read what Postgres already uses
+- name: Read the pool sizes the node was last configured with
   include_role:
     name: role_config
     tasks_from: sizing_floor

@@ -123,10 +123,11 @@ PARAMETER_LAYERS = ("pg_coldfront_parameters",
                     "pg_coldfront_preload_libraries",
                     "pg_user_parameters",
                     "zone_list", "nodes_in_zone", "pg_spock_nodes",
-                    "pg_sizing_floor_new_dbs", "pg_connectable_dbs", "pg_spock_subscriptions",
+                    "pg_connectable_dbs", "pg_spock_subscriptions",
                     "pg_physical_standbys", "pg_parallel_workers",
                     "pg_worker_processes", "pg_replication_slots",
-                    "pg_sized_parameters", "pg_default_parameters",
+                    "pg_calculated_parameters", "pg_sized_parameters",
+                    "pg_default_parameters",
                     "pg_user_preload_libraries",
                     "pg_preload_libraries", "pg_required_parameters",
                     "pg_merged_parameters", "pg_effective_parameters")
@@ -495,41 +496,47 @@ def check_parameters(e, template):
     else:
         print(f"ok       {label}")
 
-    # sizing_floor's reading of a running zone. Each zone of the two subscribes
-    # to the other, so a replicated database holds one origin and one slot,
-    # and each standby a physical slot. With nothing more than the inventory
-    # describes, the floor changes nothing. A database removed from db_names
-    # but still replicating keeps its manager and subscription. And a run that
-    # swaps one name for another, where the new database already exists but
-    # nothing subscribes to it yet, as setup_patroni finds it after
-    # setup_postgres, sizes for both.
-    def floor(databases, replicating):
-        return dict(databases=databases + ["postgres", "template1"],
-                    replicating=replicating,
-                    subscriptions=len(replicating),
-                    slots=len(replicating) + 2)
-
-    def sizing(db_names, pg_sizing_floor=None):
+    # sizing_floor's reading of what a zone was last configured with. With
+    # nothing written yet, or with what the inventory describes, the floor
+    # changes nothing. A larger size, left by a database since removed from
+    # db_names or by a pg_parameters value since taken out, holds, while a
+    # parameter the floor does not mention follows the formula. An explicit
+    # pg_parameters value replaces the floor as it does the formula, so an
+    # operator can bring a pool down, and init_server measures it against the
+    # formula alone.
+    def sizing(db_names, pg_sizing_floor=None, pg_parameters=None):
         shape = dict(ULTRA_HA, db_names=db_names)
         if pg_sizing_floor is not None:
             shape["pg_sizing_floor"] = pg_sizing_floor
-        layers = parameters({}, True, shape=shape)
-        return (int(layers["pg_connectable_dbs"]),
-                int(layers["pg_spock_subscriptions"]))
+        layers = parameters(pg_parameters or {}, True, shape=shape)
+        return layers
 
-    one = sizing(["demo"])
-    two = sizing(["demo", "old"])
+    def pools(layers, name="pg_sized_parameters"):
+        return {k: int(v) for k, v in layers[name].items()}
+
+    def effective(layers):
+        return {k: int(layers["pg_effective_parameters"][k])
+                for k in layers["pg_sized_parameters"]}
+
+    one = pools(sizing(["demo"]))
+    two = pools(sizing(["demo", "old"]))
+    raised = dict(one, max_worker_processes=40, max_replication_slots=30)
+    lowered = sizing(["demo"], raised,
+                     {"max_replication_slots": 20, "max_wal_senders": 20})
     checks = {
-        "no floor": one == (3, 1),
-        "floor matching the inventory": sizing(
-            ["demo"], floor(["demo"], ["demo"])) == one,
-        "removed name still counted": sizing(
-            ["demo"], floor(["demo", "old"], ["demo", "old"])) == two,
-        "swapped names both counted": sizing(
-            ["demo", "new"], floor(["demo", "old", "new"], ["demo", "old"]))
-            == (two[0] + 1, two[1] + 1),
-        "dropped database not counted": sizing(
-            ["demo"], floor(["demo"], ["demo"])) == one,
+        "no floor": one == pools(sizing(["demo"]), "pg_calculated_parameters"),
+        "floor matching the inventory": pools(sizing(["demo"], one)) == one,
+        "removed name still sized for": pools(sizing(["demo"], two)) == two,
+        "grows past the floor": pools(sizing(["demo", "old"], one)) == two,
+        "each parameter its own": pools(sizing(
+            ["demo"], {"max_worker_processes": 40})) == dict(
+                one, max_worker_processes=40),
+        "stray values ignored": pools(sizing(
+            ["demo"], {"work_mem": 64, "max_wal_senders": "lots"})) == one,
+        "pg_parameters brings it down": effective(lowered) == dict(
+            raised, max_replication_slots=20, max_wal_senders=20),
+        "formula alone validated": pools(lowered, "pg_calculated_parameters")
+            == one,
     }
     bad = [name for name, ok in checks.items() if not ok]
     label = "Sizing floor"

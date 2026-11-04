@@ -13,10 +13,9 @@
 # the zone is changing under the run, by a switchover or failover started
 # outside it, and nothing can be written safely until it settles.
 #
-# The primary also has to be one of the play's hosts. Writes run there, and
-# the sizing floor is read there; a run that leaves it out, with --limit or
-# because it failed earlier in the play, would skip both without a word and
-# size the zone from the inventory alone.
+# The primary also has to be one of the play's hosts. Writes run there, and a
+# run that leaves it out, with --limit or because it failed earlier in the
+# play, would skip them without a word.
 #
 # Only a zone that has never been built has no leader to find: no node has a
 # patroni.yml, which setup_patroni writes before Patroni first starts. Its
@@ -190,6 +189,5 @@
     fail_msg: >-
       {{ zone_primary }} runs zone {{ zone }}'s primary, but is not among this
       play's hosts, whether left out with --limit or failed earlier in the run.
-      Everything written to the zone is written there, and what the zone
-      already uses is read there. Run this again with {{ zone_primary }}
-      included.
+      Everything written to the zone is written there. Run this again with
+      {{ zone_primary }} included.

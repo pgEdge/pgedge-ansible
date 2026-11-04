@@ -19,15 +19,16 @@
 #   - each zone subscribes to every other zone's copy of it, through the
 #     proxies on Ultra-HA, which pg_hba has to admit,
 #   - a row written in one zone arrives in every other,
-#   - and taking the name back out of db_names alone, which leaves the database
-#     replicating, does not shrink the worker and slot pools it needs.
+#   - and taking the name back out of db_names, or dropping the database
+#     altogether, never shrinks the worker and slot pools sized for it.
 #
 # Afterwards it puts the cluster back as it was deployed: the database is
 # dropped, the rules naming it are removed, and each zone's leader returns to
 # its first node, so the steps after this one see the deployment and nothing
-# else. The database is only ever added in this run's role variables, never in
-# the inventory, so ColdFront's mesh layer, which sets db_names as an extra
-# variable, cannot run it.
+# else. The pools alone stay as large as the added database made them, which
+# is the point of them. The database is only ever added in this run's role
+# variables, never in the inventory, so ColdFront's mesh layer, which sets
+# db_names as an extra variable, cannot run it.
 
 # setup_patroni's template names this zone's proxies and backup servers by
 # address, and an address is a fact, so every host's facts have to be gathered
@@ -65,6 +66,21 @@
       {{ pg_effective_parameters | dict2items
          | selectattr('key', 'in', pg_sized_parameters.keys() | list)
          | items2dict }}
+    # The pools the floor read back, and the sizing ratcheted up to it, hold
+    # below what the added database was given.
+    floor_short: >-
+      {% set short = [] %}
+      {%- for name, given in grown_calculated.items()
+            if (pg_sizing_floor | default({}))[name] | default(0) | int
+               < given | int %}
+      {%-   set _ = short.append(name) %}
+      {%- endfor %}{{ short }}
+    sized_short: >-
+      {% set short = [] %}
+      {%- for name, given in grown_calculated.items()
+            if pg_sized_parameters[name] | default(0) | int < given | int %}
+      {%-   set _ = short.append(name) %}
+      {%- endfor %}{{ short }}
 
   # role_config's defaults reach the play only once the first include_role has
   # made them public, and this is evaluated for that very task too.
@@ -106,13 +122,12 @@
         {{ first_node_in_zone }}, before this test moved anything. Something
         earlier in the run failed the zone over.
 
-  # Before any role has read the running cluster, the sizing follows the
-  # inventory alone, which is what the cleanup has to bring it back to.
+  # The formula's sizes for the deployment, which it returns to once the added
+  # database is gone, though the pools themselves do not.
 
   - name: Note the pools the deployment needs
     set_fact:
-      deployed_sizes: "{{ pool_sizes }}"
-      deployed_calculated: "{{ pg_sized_parameters }}"
+      deployed_calculated: "{{ pg_calculated_parameters }}"
 
   # Patroni names its members by host name, and the inventory by address.
 
@@ -273,7 +288,7 @@
   - name: Note the pools the added database needs
     set_fact:
       grown_sizes: "{{ pool_sizes }}"
-      grown_calculated: "{{ pg_sized_parameters }}"
+      grown_calculated: "{{ pg_calculated_parameters }}"
     vars:
       db_names: "{{ grown_db_names }}"
 
@@ -287,21 +302,18 @@
       name: setup_patroni
     when: is_ha_cluster | bool
 
-  - name: Assert the floor counts the added database and its subscriptions
+  - name: Assert the floor holds what the added database was given
     assert:
       that:
-      - added_db in pg_sizing_floor.databases
-      - added_db in pg_sizing_floor.replicating or zone_list | length == 1
-      - pg_sizing_floor.subscriptions | int
-        >= grown_db_names | length * (zone_list | length - 1)
+      - floor_short | length == 0
       fail_msg: >-
-        The roles read {{ pg_sizing_floor }} from zone {{ zone }}'s primary,
-        which misses {{ added_db }} or its subscriptions.
+        The roles read {{ pg_sizing_floor }} back from zone {{ zone }}, which
+        is short of the {{ grown_calculated }} written for {{ added_db }}.
 
   - name: Assert the calculation still sizes for the added database
     assert:
       that:
-      - pg_sized_parameters == grown_calculated
+      - sized_short | length == 0
       fail_msg: >-
         Without {{ added_db }} in db_names, the roles calculated
         {{ pg_sized_parameters }} for {{ inventory_hostname }}, though the
@@ -385,7 +397,8 @@
       name: setup_pgbouncer
     when: pgbouncer_enabled | default(false) | bool
 
-  # With the database gone, nothing holds the pools up any more.
+  # The pools only ever ratchet up, so dropping the database leaves them where
+  # it put them.
 
   - name: Read the pool sizes each node runs with without it
     become: true
@@ -396,33 +409,36 @@
       login_unix_socket: /var/run/postgresql
       query: >-
         SELECT name, setting FROM pg_settings
-         WHERE name IN ('{{ deployed_sizes.keys() | join("', '") }}')
+         WHERE name IN ('{{ grown_sizes.keys() | join("', '") }}')
     register: restored_sizes
     changed_when: false
 
-  - name: Assert the pools went back to what the deployment needs
+  - name: Assert the pools kept what the added database was given
     assert:
       that:
       - configured == expected
       fail_msg: >-
         With {{ added_db }} dropped, {{ inventory_hostname }} runs with
-        {{ configured }}, not {{ expected }}.
+        {{ configured }}, not the {{ expected }} it was given before.
     vars:
       configured: >-
         {{ restored_sizes.query_result | default([], true)
            | items2dict(key_name='name', value_name='setting') }}
       expected: >-
-        {{ dict(deployed_sizes.keys()
-                | zip(deployed_sizes.values() | map('string'))) }}
+        {{ dict(grown_sizes.keys()
+                | zip(grown_sizes.values() | map('string'))) }}
 
-  - name: Assert the calculation went back to what the deployment needs
+  - name: Assert the calculation kept sizing for the added database
     assert:
       that:
-      - pg_sized_parameters == deployed_calculated
+      - sized_short | length == 0
+      - pg_calculated_parameters == deployed_calculated
       fail_msg: >-
-        With {{ added_db }} dropped, the roles calculated
-        {{ pg_sized_parameters }} for {{ inventory_hostname }}, not the
-        deployment's {{ deployed_calculated }}.
+        With {{ added_db }} dropped, the roles sized
+        {{ pg_sized_parameters }} for {{ inventory_hostname }} from a formula
+        of {{ pg_calculated_parameters }}, where the pools were given
+        {{ grown_calculated }} and the deployment's formula is
+        {{ deployed_calculated }}.
 
   - name: Return each zone's leader to its first node
     become: true

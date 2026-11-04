@@ -88,12 +88,13 @@ the formulas in
   inputs.
 - `pg_worker_processes` and `pg_replication_slots` contain the calculated
   totals.
-- `pg_sized_parameters` maps each calculated Postgres parameter to its value.
-  `pg_default_parameters` includes it, and `init_server` compares
-  `pg_parameters` against it.
+- `pg_calculated_parameters` maps each calculated Postgres parameter to the
+  formula's value, which `init_server` compares `pg_parameters` against.
+- `pg_sized_parameters` maps each calculated Postgres parameter to the larger
+  of the formula's value and the [sizing floor](#sizing-floor).
+  `pg_default_parameters` includes it.
 - `pg_undersized_parameters` lists each calculated parameter `pg_parameters`
-  sets below its calculated value, which `init_server` and the `sizing_floor`
-  task file both refuse.
+  sets below the formula's value, which `init_server` refuses.
 
 OS-specific shortcut variables include the following computed values:
 
@@ -173,47 +174,34 @@ something else is changing it.
 
 The task file also stops the run when the zone's primary is not one of the
 play's hosts, whether `--limit` left it out or it failed earlier in the run.
-Every write to the zone runs there, and the [sizing floor](#sizing-floor) is
-read there, so a run without it would skip both and size the zone from the
-inventory alone.
+Every write to the zone runs there, so a run without it would skip them.
 
 The `setup_postgres`, `setup_pgedge` and `finalize_backrest` roles include
 it.
 
 ### Sizing Floor
 
-The worker and slot formulas count the databases in `db_names`, but removing a
-database from `db_names` leaves its Spock node, subscriptions and replication
-slots in place. Sized from the inventory alone, the pools would shrink beneath
-what the cluster still uses at the next restart. Spock would then fail to start
-the workers it needs, and Postgres refuses to start at all when it finds more
-replication slots than `max_replication_slots` allows.
+The worker and slot formulas count the zones and the databases in `db_names`,
+so their values go down when either does. Postgres refuses to start when it
+finds more replication slots on disk than `max_replication_slots` allows, and
+Spock cannot start the workers it needs in a smaller pool, so a database whose
+name is removed before it is retired would leave a restarted node in one state
+or the other.
 
-The role provides a `sizing_floor` task file that reads what the zone's primary
-uses and records it as the `pg_sizing_floor` fact:
+The role provides a `sizing_floor` task file that reads back the values the
+zone was last configured with and records them as the `pg_sizing_floor` fact,
+which maps each calculated parameter to its value. It reads the file the
+collection last wrote: `patroni.yml` on an Ultra-HA node, whose bootstrap
+section carries the same parameters `setup_patroni` writes into the zone's
+store, and `postgresql.conf` otherwise. Every node of the zone in the play is
+read and the largest value kept. A file answers whether or not Postgres or
+Patroni is running, and a zone that has not been built has no file and no
+floor.
 
-- `databases` lists the databases that accept connections, including any
-  created outside `db_names`.
-- `replicating` lists the databases other zones already subscribe to, which
-  hold a logical replication slot for each subscriber.
-- `subscriptions` counts replication origins. Spock creates one for each
-  subscription and drops it with the subscription.
-- `slots` counts replication slots, logical and physical.
-
-`pg_connectable_dbs` counts every database in `db_names` or in `databases`.
-`pg_spock_subscriptions` and `pg_replication_slots` each take the larger of the
-inventory's value and the floor, where the floor adds what each database in
-`db_names` but not yet in `replicating` is about to need. A run that removes
-one name and adds another therefore sizes for both: the removed database
-still holds its subscriptions and slots, and the added one is about to create
-its own. The pools grow with `db_names` but shrink only once a database is
-actually gone. A zone
-that has not been built yet has no floor: on a simple cluster, the node has no
-initialized data directory, and on an HA cluster, the zone's primary has no
-Patroni configuration file. A zone that has been built but whose Postgres does
-not answer stops the run, because the role cannot tell what it needs. The task
-file also refuses a `pg_parameters` value below the floor, which `init_server`
-cannot check before the cluster is running.
+`pg_sized_parameters` takes the larger of each formula's value and the floor,
+so the calculated values go up with the cluster and never come down on their
+own. A value in `pg_parameters` replaces both, which is how an operator lowers
+a pool, and `init_server` measures it against the formula alone.
 
 `setup_postgres` includes it before writing `postgresql.conf` on a simple
 cluster, and `setup_patroni` includes it before writing `patroni.yml` and the

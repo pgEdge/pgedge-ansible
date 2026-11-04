@@ -9,7 +9,7 @@ Changes to `db_names` now reach a running cluster. A database added to the list
 is created on every node and joins Spock the next time the deployment playbook
 runs, including on an Ultra-HA cluster whose leaders Patroni has moved off each
 zone's first node. Removing a database from the list no longer shrinks the
-worker and slot pools the cluster still needs.
+worker and slot pools the cluster may still need.
 
 ## Upgrading from v2.1.0
 
@@ -36,14 +36,13 @@ the limit.
   choose where to write, and `finalize_backrest` uses it in place of the
   lookup it kept to itself. See
   [Zone Primary](../roles/role_config.md#zone-primary). (EE-44)
-- New `sizing_floor` task file in `role_config` reads, on each zone's primary,
-  the databases that accept connections, the databases other zones subscribe
-  to, the replication origins Spock keeps for its subscriptions, and the
-  replication slots, into the `pg_sizing_floor` fact that the worker and slot
-  calculation never goes below. A built zone whose Postgres does not answer
-  stops `setup_postgres` or `setup_patroni` rather than being sized blind, and
-  a `pg_parameters` value below what the cluster uses is refused. See
-  [Sizing Floor](../roles/role_config.md#sizing-floor). (EE-44)
+- New `sizing_floor` task file in `role_config` reads back the
+  `max_worker_processes`, `max_replication_slots`, `max_wal_senders` and
+  `max_active_replication_origins` each zone was last configured with, from
+  `patroni.yml` on Ultra-HA and `postgresql.conf` otherwise, into the
+  `pg_sizing_floor` fact that the calculated sizes never go below. It reads
+  files rather than the running server, so it works whether or not Postgres
+  is up. See [Sizing Floor](../roles/role_config.md#sizing-floor). (EE-44)
 
 ### Fixed
 
@@ -67,10 +66,9 @@ the limit.
   so sizing from `db_names` alone left the pools too small after the next
   restart: Spock could not start the workers it needed, and Postgres refused to
   start when it held more slots than `max_replication_slots` allowed. Each run
-  now sizes the pools no smaller than what each zone's primary holds, plus
-  what any database in `db_names` that nothing subscribes to yet is about to
-  need, so a run that swaps one name for another sizes for both. The pools
-  come down once the database itself is dropped. See
+  now sizes the pools no smaller than each zone was last configured with, so
+  the calculated sizes only ever go up. Setting them in `pg_parameters` still
+  replaces the calculation, which is how to lower them. See
   [Sizing Floor](../roles/role_config.md#sizing-floor). (EE-44)
 - The configuration reference now says what removing a name from `db_names`
   means: the collection stops managing the database but does not drop it. It

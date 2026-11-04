@@ -177,9 +177,8 @@ the database:
   with `recover_postgres`.
 
 The collection still backs the database up, since pgBackRest backs up the
-whole cluster, and it still sizes the worker and replication slot pools for
-everything the database holds, so that removing the name cannot keep Postgres
-or Spock from starting. See
+whole cluster. It also never shrinks the worker and replication slot pools on
+its own, so removing the name cannot keep Postgres or Spock from starting. See
 [Worker and Replication Sizing](postgres.md#worker-and-replication-sizing).
 
 #### Retiring a database
@@ -198,7 +197,10 @@ Take the database apart in this order, while its name is still in `db_names`:
 5. Drop the database on every zone's primary. Replicas in an Ultra-HA zone
    follow their primary.
 6. Run the deployment playbook. It removes the database's `pg_hba.conf` and
-   pgBouncer rules and brings the pools back down.
+   pgBouncer rules. The worker and replication slot pools stay at their
+   current size; to bring them down, set them in `pg_parameters`, as
+   [Worker and Replication Sizing](postgres.md#worker-and-replication-sizing)
+   describes.
 
 Do not run the playbook between dropping the database and removing its name:
 while the name is in `db_names`, a run creates the database again, empty, and

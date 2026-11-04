@@ -18,9 +18,9 @@ in full.
   zone whose Patroni is stopped everywhere has Patroni started so its members
   elect a leader, rather than taking the first node as primary.
   `finalize_backrest` uses it in place of its own lookup. (EE-44)
-- New `sizing_floor` task file in `role_config` reads the databases,
-  replication origins and slots on each zone's primary, and the worker and
-  slot calculation never goes below them. (EE-44)
+- New `sizing_floor` task file in `role_config` reads back the worker and
+  slot pool sizes each zone was last configured with, and the calculated
+  sizes never go below them. (EE-44)
 
 ### Fixed
 
@@ -33,9 +33,8 @@ in full.
   first node, and `setup_postgres` no longer rewrites the `pg_hba.conf` and
   `postgresql.conf` of a node Patroni manages. (EE-44)
 - Removing a database from `db_names` no longer shrinks the calculated worker,
-  walsender, slot and origin pools beneath what the running cluster still
-  uses, and a run that swaps one name for another sizes for both databases.
-  The documentation now lists what a database removed from `db_names` stops
+  walsender, slot and origin pools, which now only ever grow unless
+  `pg_parameters` sets them. The documentation now lists what a database removed from `db_names` stops
   getting from the collection, and says to retire the database before
   removing its name, since Spock cannot drop a subscription's slot once
   `pg_hba.conf` no longer admits it. (EE-44)
