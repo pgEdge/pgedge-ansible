@@ -535,6 +535,32 @@
          | sort }}
   when: inventory_hostname in (groups.pgedge | default([]))
 
+# unmanaged_db_names tells the sizing about databases the collection does not
+# manage. A name in db_names, or one the collection creates for a component such
+# as ColdFront, would be both managed and not, and a list of anything but names
+# would be counted wrongly or fail mid-run.
+
+- name: Ensure unmanaged_db_names names no database the collection manages
+  assert:
+    that:
+    - is_list | bool
+    - unmanaged_db_names | reject('string') | list | length == 0
+    - in_both | length == 0
+    fail_msg: >-
+      unmanaged_db_names must be a list of database names, none of them in
+      db_names or created by the collection for a component it sets up: a
+      database is either managed by the collection or not.
+      {{ 'Already managed: ' ~ in_both | join(', ') ~ '.' if in_both else '' }}
+  vars:
+    is_list: >-
+      {{ unmanaged_db_names is sequence and unmanaged_db_names is not string
+         and unmanaged_db_names is not mapping }}
+    in_both: >-
+      {{ unmanaged_db_names | select('string')
+         | intersect(db_names + pg_internal_dbs) | list
+         if is_list | bool else [] }}
+  when: inventory_hostname in (groups.pgedge | default([]))
+
 # The collection sizes Spock's worker, walsender, slot and origin pools from the
 # inventory (pg_sized_parameters in role_config). pg_parameters may raise them,
 # but a value below the calculation, or a null that falls back to Postgres's own
@@ -550,8 +576,9 @@
     fail_msg: >-
       pg_parameters on {{ inventory_hostname }} sets
       {{ undersized | join('; ') }}. The collection calculates these from the
-      zones, db_names, the zone's standbys and max_parallel_workers, and a
-      smaller pool keeps Spock from starting the workers it needs. Raise them,
+      zones, db_names, unmanaged_db_names, the zone's standbys and
+      max_parallel_workers, and a smaller pool keeps Spock from starting the
+      workers it needs. Raise them,
       or remove them from pg_parameters to use the calculated values. See
       "Worker and Replication Sizing" in the Postgres configuration docs.
   vars:

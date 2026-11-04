@@ -31,6 +31,11 @@ tls_validity_days: 3560
 
 db_names:
 - demo
+# Databases the collection does not manage but that the worker and slot pools
+# must still be sized for: one taken over from db_names and kept replicating,
+# or one created by hand. A sizing hint only; the collection creates, admits
+# and replicates none of them.
+unmanaged_db_names: []
 db_user: admin
 db_password: secret
 

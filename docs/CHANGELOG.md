@@ -21,9 +21,15 @@ in full.
 - New `sizing_floor` task file in `role_config` reads back the worker and
   slot pool sizes each zone was last configured with, and the calculated
   sizes never go below them. (EE-44)
+- New `unmanaged_db_names` parameter lists databases the collection does not
+  manage, such as one removed from `db_names` and kept replicating, so that
+  the worker and slot pools are sized for them as well. `init_server` refuses
+  a name listed there and in `db_names` both. (EE-44)
 
 ### Fixed
 
+- The worker pool counts the Spock manager in `coldfront_db` where ColdFront
+  is enabled outside mesh mode, which it previously missed. (EE-44)
 - A database added to `db_names` reaches a running cluster. On Ultra-HA,
   `setup_postgres` and `setup_pgedge` write to each zone's current leader
   rather than its first node, and `setup_patroni` reloads Patroni so the new

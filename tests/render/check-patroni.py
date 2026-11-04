@@ -123,7 +123,8 @@ PARAMETER_LAYERS = ("pg_coldfront_parameters",
                     "pg_coldfront_preload_libraries",
                     "pg_user_parameters",
                     "zone_list", "nodes_in_zone", "pg_spock_nodes",
-                    "pg_connectable_dbs", "pg_spock_subscriptions",
+                    "pg_sized_dbs", "pg_internal_dbs", "pg_connectable_dbs",
+                    "pg_spock_subscriptions",
                     "pg_physical_standbys", "pg_parallel_workers",
                     "pg_worker_processes", "pg_replication_slots",
                     "pg_calculated_parameters", "pg_sized_parameters",
@@ -157,16 +158,19 @@ def ansible_filters(e):
     return e
 
 
-def cluster(zones, members=1, db_names=("demo",), pg_version=17):
+def cluster(zones, members=1, db_names=("demo",), pg_version=17,
+            unmanaged_db_names=()):
     """An inventory's shape: zones of a number of pgEdge members each, HA where
-    there is more than one, replicating db_names."""
+    there is more than one, replicating db_names and holding
+    unmanaged_db_names besides."""
     hosts = {f"n{z}-{m}": z for z in range(1, zones + 1)
              for m in range(members)}
     return dict(groups={"pgedge": list(hosts)},
                 hostvars={h: {"inventory_hostname": h, "zone": z}
                           for h, z in hosts.items()},
-                db_names=list(db_names), pg_version=pg_version,
-                is_ha_cluster=members > 1)
+                db_names=list(db_names),
+                unmanaged_db_names=list(unmanaged_db_names),
+                pg_version=pg_version, is_ha_cluster=members > 1)
 
 
 # The ultra-ha inventory's shape, which the template is rendered against.
@@ -196,7 +200,7 @@ def parameters(pg_parameters, backups, zone=1, shape=ULTRA_HA,
                coldfront_duckdb_role="coldfront_duckdb",
                coldfront_db="coldfront", lakekeeper_host="10.0.0.30",
                lakekeeper_port=8181, lakekeeper_warehouse="wh",
-               **shape)
+               **{"unmanaged_db_names": [], **shape})
     for name in PARAMETER_LAYERS:
         ctx[name] = e.from_string(role_vars[name]).render(**ctx)
     return ctx
@@ -467,7 +471,8 @@ def check_parameters(e, template):
     # coldfront_mesh adds the DSN that arms the bakery, and the settings that
     # keep an idle peer from looking dead to it, which are defaults an
     # inventory may tune. Its database is then one of db_names, so the sizing
-    # counts its Spock manager and subscriptions.
+    # counts its subscriptions as well as the Spock manager it gets either
+    # way. Without ColdFront there is no such database to count.
     meshed = dict(ULTRA_HA, db_names=["demo", "coldfront"])
     layers = parameters({}, True, shape=meshed, coldfront=True, mesh=True)
     dcs = layers["pg_effective_parameters"]
@@ -483,8 +488,13 @@ def check_parameters(e, template):
             for name in ("wal_receiver_status_interval",
                          "coldfront.peer_alive_window_ms",
                          "coldfront.iceberg_async_parquet")),
-        "database counted": int(layers["pg_connectable_dbs"])
-            == int(plain["pg_connectable_dbs"]) + 1,
+        "database counted once": int(layers["pg_connectable_dbs"])
+            == int(plain["pg_connectable_dbs"]),
+        "database counted without mesh": int(plain["pg_connectable_dbs"])
+            == int(parameters({}, True)["pg_connectable_dbs"]) + 1,
+        "no subscriptions without mesh": int(
+            plain["pg_spock_subscriptions"]) == int(
+                parameters({}, True)["pg_spock_subscriptions"]),
         "subscriptions counted": int(layers["pg_spock_subscriptions"])
             == 2 * int(plain["pg_spock_subscriptions"]),
     }
@@ -503,9 +513,12 @@ def check_parameters(e, template):
     # parameter the floor does not mention follows the formula. An explicit
     # pg_parameters value replaces the floor as it does the formula, so an
     # operator can bring a pool down, and init_server measures it against the
-    # formula alone.
-    def sizing(db_names, pg_sizing_floor=None, pg_parameters=None):
-        shape = dict(ULTRA_HA, db_names=db_names)
+    # formula alone. The floor holds a removed database's share only until a
+    # new one takes it; unmanaged_db_names keeps it counted alongside.
+    def sizing(db_names, pg_sizing_floor=None, pg_parameters=None,
+               unmanaged=()):
+        shape = dict(ULTRA_HA, db_names=db_names,
+                     unmanaged_db_names=list(unmanaged))
         if pg_sizing_floor is not None:
             shape["pg_sizing_floor"] = pg_sizing_floor
         layers = parameters(pg_parameters or {}, True, shape=shape)
@@ -528,6 +541,10 @@ def check_parameters(e, template):
         "floor matching the inventory": pools(sizing(["demo"], one)) == one,
         "removed name still sized for": pools(sizing(["demo"], two)) == two,
         "grows past the floor": pools(sizing(["demo", "old"], one)) == two,
+        "a replacement alone fits within the floor": pools(sizing(["new"], one))
+            == one,
+        "unmanaged database kept beside its replacement": pools(sizing(
+            ["new"], one, unmanaged=["demo"])) == two,
         "each parameter its own": pools(sizing(
             ["demo"], {"max_worker_processes": 40})) == dict(
                 one, max_worker_processes=40),
@@ -578,6 +595,15 @@ SIZING = [
      cluster(3, db_names=("app", "ledger", "postgres")), {},
      {"max_worker_processes": 28, "max_replication_slots": 16,
       "max_wal_senders": 16}),
+    ("an unmanaged database is sized as one that replicates",
+     cluster(3, db_names=("app",), unmanaged_db_names=("legacy",)), {},
+     {"max_worker_processes": 24, "max_replication_slots": 16,
+      "max_wal_senders": 16}),
+    ("ten unmanaged databases size as ten in db_names",
+     cluster(3, db_names=("db0",),
+             unmanaged_db_names=[f"db{i}" for i in range(1, 10)]), {},
+     {"max_worker_processes": 64, "max_replication_slots": 42,
+      "max_wal_senders": 42}),
     ("more parallel workers grow the worker pool",
      cluster(3), {"Max_Parallel_Workers": 16},
      {"max_worker_processes": 28, "max_replication_slots": 16,

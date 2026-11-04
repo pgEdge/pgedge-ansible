@@ -43,8 +43,26 @@ the limit.
   `pg_sizing_floor` fact that the calculated sizes never go below. It reads
   files rather than the running server, so it works whether or not Postgres
   is up. See [Sizing Floor](../roles/role_config.md#sizing-floor). (EE-44)
+- New `unmanaged_db_names` parameter lists databases that run on the cluster
+  but that the collection does not manage: one removed from `db_names` and
+  kept replicating, or one created by hand. The worker and slot formulas count
+  each as a database that replicates, but the collection does nothing else
+  with them. Without it, the sizing floor kept a removed database's share of
+  the pools only until another database was added to `db_names`, which the
+  formula then counted in its place, leaving too few workers and slots for
+  both. `init_server` refuses a name listed in `unmanaged_db_names` and
+  `db_names` both, or `coldfront_db` where ColdFront is enabled, which the
+  sizing already counts. See
+  [unmanaged_db_names](../configuration/cluster.md#unmanaged_db_names).
+  (EE-44)
 
 ### Fixed
+
+- `max_worker_processes` counts the Spock manager worker in `coldfront_db`
+  where ColdFront is enabled outside mesh mode. Spock starts one in every
+  database that accepts connections, but the formula counted only the
+  databases in `db_names`, which outside mesh mode do not include
+  `coldfront_db`, leaving one worker fewer than the cluster needs. (EE-44)
 
 - A database added to `db_names` now reaches a running cluster when the
   deployment playbook runs again. Each node gets the database and the Spock and

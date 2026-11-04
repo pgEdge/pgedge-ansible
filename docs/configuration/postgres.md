@@ -196,10 +196,13 @@ following values:
 - `N` is the number of zones. Every zone holds one Spock node, however many
   members it has.
 - `D` is the number of databases that accept connections: the databases in
-  `db_names`, plus `postgres` and `template1`. Spock starts a manager worker in
+  `db_names` and `unmanaged_db_names`, `coldfront_db` where ColdFront is
+  enabled, plus `postgres` and `template1`. Spock starts a manager worker in
   each, whether it replicates or not.
 - `S` is the number of subscriptions on each node: the number of databases in
-  `db_names` multiplied by `N - 1`.
+  `db_names` and `unmanaged_db_names` multiplied by `N - 1`. A database in
+  `unmanaged_db_names` is counted as though it replicates, since the
+  collection cannot tell whether it does.
 - `P` is the number of physical standbys in the node's zone: one less than the
   zone's members in an Ultra-HA cluster, and zero otherwise.
 - `W` is `max_parallel_workers` from `pg_parameters`, or `8`, its Postgres
@@ -247,8 +250,13 @@ zone was last configured with and uses whichever is larger, the formula's or
 the configured one, so removing a database from `db_names` leaves the
 pools as they were. This covers a database whose name was removed before it was
 retired, which keeps its subscriptions and replication slots until someone
-drops them. To lower the pools, set the values in `pg_parameters`, which
-replaces the calculation and what the zone was configured with alike. See
+drops them, but only until another database is added: the formula does not
+count the removed database, and the new one takes the room it still uses. List
+any database you keep after removing its name in
+[unmanaged_db_names](cluster.md#unmanaged_db_names), so that the formula
+counts it alongside the new one. To lower the pools, set the values in
+`pg_parameters`, which replaces the calculation and what the zone was
+configured with alike. See
 [Removing a database from
 db_names](cluster.md#removing-a-database-from-db_names) for what else changes,
 and [Sizing Floor](../roles/role_config.md#sizing-floor).
@@ -262,10 +270,10 @@ and [Sizing Floor](../roles/role_config.md#sizing-floor).
     value also replaces the size the zone was last configured with, which is
     how you lower a pool, so check `pg_replication_slots` on each zone's
     primary before setting `max_replication_slots` below its current value.
-    The formulas do not count a database created outside `db_names`, and
-    cannot account for extensions that start their own background workers,
-    such as `pg_cron`. If your nodes have these, add them to the totals
-    yourself.
+    The formulas count a database created outside `db_names` only when
+    `unmanaged_db_names` lists it, and cannot account for extensions that
+    start their own background workers, such as `pg_cron`. If your nodes have
+    these, add them to the totals yourself.
 
     `init_server` refuses an inventory where `pg_parameters` sets one of these
     parameters below the calculated value, or sets it to `null`, which falls

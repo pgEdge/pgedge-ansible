@@ -170,10 +170,13 @@ pg_config_dir: >-
 #
 #   - N, every zone is one Spock node however many members it has.
 #   - D, Spock starts a manager for every database that accepts connections,
-#     whether or not it replicates: db_names, postgres and template1. A
-#     database created outside the collection is not counted.
+#     whether or not it replicates: db_names, unmanaged_db_names, the
+#     databases the collection creates for its own components, postgres and
+#     template1. A database created outside the collection is counted only
+#     when unmanaged_db_names names it.
 #   - S, each database in db_names subscribes to the same database on every
-#     other node.
+#     other node. So may each in unmanaged_db_names, which the collection
+#     cannot see into, so each is sized as though it does.
 #   - Each other member of an HA zone holds a physical slot on the leader.
 #
 # max_parallel_workers draws from the worker pool too, so an inventory that
@@ -190,11 +193,22 @@ pg_config_dir: >-
 
 pg_spock_nodes: "{{ zone_list | length }}"
 
+# Every database the pools are sized for, whether the collection manages it or
+# unmanaged_db_names only tells it the database is there.
+pg_sized_dbs: "{{ (db_names + unmanaged_db_names) | unique }}"
+
+# The databases the collection creates for components it sets up, outside
+# db_names: ColdFront's, where it is enabled. Each gets a Spock manager like any
+# other database but replicates only when db_names lists it too, as ColdFront's
+# mesh mode does.
+pg_internal_dbs: "{{ [coldfront_db] if coldfront_enabled | bool else [] }}"
+
 pg_connectable_dbs: >-
-  {{ (db_names + ['postgres', 'template1']) | unique | length }}
+  {{ (pg_sized_dbs + pg_internal_dbs + ['postgres', 'template1'])
+     | unique | length }}
 
 pg_spock_subscriptions: >-
-  {{ db_names | length * (pg_spock_nodes | int - 1) }}
+  {{ pg_sized_dbs | length * (pg_spock_nodes | int - 1) }}
 
 pg_physical_standbys: "{{ nodes_in_zone | length - 1 if is_ha_cluster | bool else 0 }}"
 

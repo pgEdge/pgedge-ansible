@@ -83,6 +83,11 @@ Postgres sizing variables include the following computed values, which follow
 the formulas in
 [Worker and Replication Sizing](../configuration/postgres.md#worker-and-replication-sizing):
 
+- `pg_sized_dbs` lists the databases the formulas count as replicating:
+  those in `db_names` and `unmanaged_db_names`.
+- `pg_internal_dbs` lists the databases the collection creates for
+  components it sets up, outside `db_names`: `coldfront_db` where ColdFront is
+  enabled. The worker formula counts the Spock manager in each.
 - `pg_spock_nodes`, `pg_connectable_dbs`, `pg_spock_subscriptions`,
   `pg_physical_standbys` and `pg_parallel_workers` contain the formulas'
   inputs.
@@ -202,6 +207,11 @@ floor.
 so the calculated values go up with the cluster and never come down on their
 own. A value in `pg_parameters` replaces both, which is how an operator lowers
 a pool, and `init_server` measures it against the formula alone.
+
+The floor keeps a size, not the databases behind it. A database removed from
+`db_names` but still in use keeps its share of the pools only until another
+database is added, which the formula then counts in its place. The formula
+counts both only when `unmanaged_db_names` lists the removed one.
 
 `setup_postgres` includes it before writing `postgresql.conf` on a simple
 cluster, and `setup_patroni` includes it before writing `patroni.yml` and the
