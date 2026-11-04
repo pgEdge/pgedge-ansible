@@ -158,8 +158,10 @@ if [ -n "$REPO_LAYOUT" ]; then
   PROJECT_NAME="${PROJECT_NAME}-repo-${REPO_LAYOUT}"
 fi
 
-# Set by Step 8b when it stages the etcd authority for the reconfigure run.
+# Set by Step 8b when it stages the etcd authority for the reconfigure run,
+# and passed on to Step 10, which re-runs setup_patroni too.
 CA_VARS=""
+RECONFIGURE_VARS=()
 
 cleanup() {
   if [ -n "$CA_VARS" ]; then
@@ -349,7 +351,6 @@ fi
 # does.
 if [ "$SCENARIO" = "simple-cluster" ] || [ "$SCENARIO" = "ultra-ha" ]; then
   echo "==> Step 8b: Checking changed Postgres parameters are applied..."
-  RECONFIGURE_VARS=()
   CA_DIR="$(dirname "$PLAYBOOK")/tls/etcd"
   if [ "$SCENARIO" = "ultra-ha" ] && [ "$DCS" = "etcd3" ] && \
      [ -f "$CA_DIR/ca.crt" ]; then
@@ -397,9 +398,10 @@ if [ "$SCENARIO" = "ultra-ha" ] && [ "$DCS" = "etcd3" ]; then
     -v
 fi
 
-# Step 10: A database added to db_names reaches a running cluster, on Ultra-HA
-# with each zone's leader moved off its first node. Not with ColdFront: mesh
-# mode sets db_names as an extra variable, which no role variable can extend.
+# Step 10: A database added to db_names reaches a running cluster; on Ultra-HA,
+# with each zone's leader first moved off its first node. Not with ColdFront:
+# mesh mode sets db_names as an extra variable, which no role variable can
+# extend.
 # Like Step 8b, setup_patroni signs against the authority staged by the
 # deployment.
 if [ "$COLDFRONT" = false ]; then
