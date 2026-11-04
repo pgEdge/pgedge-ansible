@@ -164,9 +164,9 @@ as the primary. A built zone whose Patroni is stopped on every node is not
 assumed to be led by its first node, which after a failover may be a standby:
 the task file starts Patroni on each member that has a configuration file and a
 data directory, stopping any Postgres running outside Patroni first, and lets
-the members elect a leader. A built zone with no member Patroni can start stops
-the run. Once Patroni runs, the task file waits briefly for an election to
-settle, then stops unless
+the members elect a leader. If no member can start Patroni in a built zone,
+the task stops the run. Once Patroni runs, the task file waits briefly for an 
+election to settle, then stops unless
 Patroni reports exactly one leader among the zone's nodes, and unless every
 node reports the same one. Nodes that disagree mean a switchover or failover
 is under way outside the run, and the collection does not manage a zone while
