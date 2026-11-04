@@ -131,7 +131,9 @@ repo_gpg_key: https://keys.example.com/pgedge-rsa.pub
 - Description: This parameter specifies the database names for the Spock
   cluster. At least one name is required. The roles create any missing
   databases automatically and install the Spock and Snowflake extensions in
-  each.
+  each. Every pgEdge node must list the same databases, in any order, since
+  Spock replicates each one between all of them; set it on the `pgedge`
+  group. `init_server` refuses an inventory whose nodes disagree.
 
 In the following example, the inventory specifies multiple database names:
 
@@ -250,7 +252,9 @@ Once the database is dropped, remove the rule and run the playbook again.
   [Worker and Replication Sizing](postgres.md#worker-and-replication-sizing).
   A name may not appear in both `unmanaged_db_names` and `db_names`, or name
   a database the collection creates for a component it sets up, such as
-  `coldfront_db`, which the sizing already counts.
+  `coldfront_db`, which the sizing already counts. Like `db_names`, it must
+  be the same on every pgEdge node, since every node's pools are sized for
+  every database; set it on the `pgedge` group.
 
 The collection cannot see what a database it does not manage holds, so it
 counts each one listed as though it replicates to every other zone, the same as

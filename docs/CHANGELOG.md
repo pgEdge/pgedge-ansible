@@ -25,6 +25,8 @@ in full.
   manage, such as one removed from `db_names` and kept replicating, so that
   the worker and slot pools are sized for them as well. `init_server` refuses
   a name listed there and in `db_names` both. (EE-44)
+- `init_server` refuses an inventory whose pgEdge nodes list different
+  databases in `db_names` or `unmanaged_db_names`. (EE-44)
 
 ### Fixed
 

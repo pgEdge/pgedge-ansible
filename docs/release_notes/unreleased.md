@@ -13,7 +13,9 @@ worker and slot pools the cluster may still need.
 
 ## Upgrading from v2.1.0
 
-Playbooks and inventories written for v2.1.0 need no changes.
+Playbooks and inventories written for v2.1.0 need no changes, unless they set
+`db_names` to different lists on different pgEdge nodes. `init_server` now
+refuses that; set `db_names` once, on the `pgedge` group.
 
 A run whose `--limit` leaves out the node running a zone's primary now stops
 rather than skipping the writes to that zone. Include each zone's primary in
@@ -55,6 +57,16 @@ the limit.
   sizing already counts. See
   [unmanaged_db_names](../configuration/cluster.md#unmanaged_db_names).
   (EE-44)
+
+- `init_server` refuses an inventory whose pgEdge nodes do not all list the
+  same databases in `db_names`, and likewise in `unmanaged_db_names`. Spock
+  subscribes each database in `db_names` to the same database on every other
+  node, so a node with a different list either subscribes to databases its
+  peers never create or leaves out ones they replicate, and every node's
+  worker and slot pools are sized for every database. The order of the names
+  does not matter, and a node that leaves `db_names` unset counts as having
+  its default. The refusal names each differing list and the nodes that hold
+  it. (EE-44)
 
 ### Fixed
 
