@@ -157,9 +157,15 @@ as the `zone_primary` fact on every node of the zone:
 
 On an HA cluster, every node whose Patroni service is running asks
 `patronictl list` for the zone's leader, and the answers are pooled, so a node
-new to the zone still finds the leader. Until Patroni runs anywhere in the
-zone, the zone is being built and its first node is the primary. Once Patroni
-runs, the task file waits briefly for an election to settle, then stops unless
+new to the zone still finds the leader. Only a zone that has never been
+built, where no node has a Patroni configuration file yet, takes its first node
+as the primary. A built zone whose Patroni is stopped on every node is not
+assumed to be led by its first node, which after a failover may be a standby:
+the task file starts Patroni on each member that has a configuration file and a
+data directory, stopping any Postgres running outside Patroni first, and lets
+the members elect a leader. A built zone with no member Patroni can start stops
+the run. Once Patroni runs, the task file waits briefly for an election to
+settle, then stops unless
 Patroni reports exactly one leader among the zone's nodes, and unless every
 node reports the same one. Nodes that disagree mean a switchover or failover
 is under way outside the run, and the collection does not manage a zone while

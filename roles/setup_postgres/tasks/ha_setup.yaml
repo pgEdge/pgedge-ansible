@@ -11,6 +11,18 @@
     enabled: false
   become: true
 
+# Find the zone's primary before anything else. On a new zone it is the first
+# node, which Patroni later bootstraps from. On a built zone it is wherever
+# Patroni put it, and only there can the users, databases and extensions below
+# be created. A built zone whose Patroni is stopped everywhere has it started
+# here so its members can elect that leader, which is why whether Patroni
+# manages this node is only asked afterwards.
+
+- name: Find the node that runs this zone's primary
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
+
 - name: Populate service facts to check for required services
   ansible.builtin.service_facts:
 
@@ -33,14 +45,7 @@
   - not patroni_manages_postgres | bool
 
 # Primary and replicas diverge at this point and have different bootstrap
-# procedures. On a new zone the primary is the first node, which Patroni later
-# bootstraps from. On a running zone it is wherever Patroni put it, and only
-# there can the users, databases and extensions below be created.
-
-- name: Find the node that runs this zone's primary
-  include_role:
-    name: role_config
-    tasks_from: zone_primary
+# procedures.
 
 - include_tasks: primary_setup.yaml
   when:

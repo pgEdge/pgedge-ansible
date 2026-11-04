@@ -25,9 +25,11 @@ the limit.
 
 - New `zone_primary` task file in `role_config` records, as the `zone_primary`
   fact, the node running each zone's primary: the zone's only node on a simple
-  cluster, and the node Patroni reports as leader on an HA one. Until Patroni
-  runs anywhere in a zone, the zone is being built and its first node is the
-  primary. Once Patroni runs, it stops the run unless Patroni reports exactly
+  cluster, and the node Patroni reports as leader on an HA one. Only a zone
+  never built takes its first node as the primary; a built zone whose Patroni
+  is stopped everywhere has Patroni started on its members so they elect a
+  leader, and stops the run if no member can start. Once Patroni runs, it
+  stops the run unless Patroni reports exactly
   one leader among the zone's nodes and every node agrees which. It also stops
   the run when the primary is not among the play's hosts, as when `--limit`
   leaves it out. `setup_postgres` and `setup_pgedge` use it to

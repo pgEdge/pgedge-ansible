@@ -14,7 +14,9 @@ in full.
 
 - New `zone_primary` task file in `role_config` finds the node running each
   zone's primary, for any role that writes to the zone, and stops the run if
-  that node is not in the play or the zone's nodes disagree on it.
+  that node is not in the play or the zone's nodes disagree on it. A built
+  zone whose Patroni is stopped everywhere has Patroni started so its members
+  elect a leader, rather than taking the first node as primary.
   `finalize_backrest` uses it in place of its own lookup. (EE-44)
 - New `sizing_floor` task file in `role_config` reads the databases,
   replication origins and slots on each zone's primary, and the worker and
