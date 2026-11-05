@@ -13,6 +13,16 @@
     name: role_config
     tasks_from: zone_primary
 
+# Asked again here even though setup_postgres asks it before initializing a data
+# directory, because that earlier check is allowed to skip a repository it
+# cannot reach and this one is not. This is where the decision to write is made.
+
+- name: Ensure this cluster is the one the repository describes
+  include_role:
+    name: role_config
+    tasks_from: repo_identity
+  when: inventory_hostname == zone_primary
+
 - name: Ensure the backup user exists and can reach this cluster
   include_tasks: add_backup_user.yaml
 

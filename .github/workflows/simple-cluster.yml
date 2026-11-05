@@ -155,7 +155,7 @@ jobs:
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} $REPO_ARGS
 
-      - name: Check the pooler roles are idempotent
+      - name: Check a second deployment run changes nothing
         run: |
           tests/check-idempotence.sh \
             tests/inventories/simple-cluster.yml \

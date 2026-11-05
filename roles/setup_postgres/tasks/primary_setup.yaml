@@ -85,22 +85,6 @@
   become: true
   become_user: postgres
 
-# Make sure that the pgedge node communication user has an appropriate .pgpass
-# entry so the nodes can communicate with each other. This is technically
-# redundant to the file Patroni uses, but it's a good safeguard for one-off
-# operations such as pg_basebackup.
-
-- name: Ensure pgedge communication user can connect to cluster
-  lineinfile:
-    path: ~/.pgpass
-    line: "*:*:*:{{ replication_user }}:{{ replication_password }}"
-    create: true
-    mode: "0600"
-  become: true
-  become_user: postgres
-  # The line is a password, and --diff would print it.
-  diff: false
-
 # Include all other common steps for a standard Postgres node
 
 - name: Include common Postgres setup steps

@@ -4,12 +4,10 @@
 # entry so the nodes can communicate with each other.
 
 - name: Ensure pgedge communication user can connect to cluster
-  lineinfile:
-    path: ~/.pgpass
-    line: "*:*:*:{{ pgedge_user }}:{{ pgedge_password }}"
-    create: true
-    mode: "0600"
-  become: true
-  become_user: postgres
-  # The line is a password, and --diff would print it.
-  diff: false
+  include_role:
+    name: role_config
+    tasks_from: pgpass_entry
+  vars:
+    pgpass_os_user: postgres
+    pgpass_role: "{{ pgedge_user }}"
+    pgpass_password: "{{ pgedge_password }}"

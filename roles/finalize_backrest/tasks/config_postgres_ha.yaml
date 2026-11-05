@@ -26,7 +26,7 @@
   changed_when: false
   become: true
   become_user: postgres
-  when: inventory_hostname == first_node_in_zone
+  when: inventory_hostname == zone_primary
 
 - name: Point the Patroni configuration store at the repository
   command:
@@ -47,7 +47,7 @@
       {{ ((dcs_config.stdout | from_yaml | default({}, true)).postgresql
           | default({}, true)).parameters | default({}, true) }}
   when:
-  - inventory_hostname == first_node_in_zone
+  - inventory_hostname == zone_primary
   - stored | combine(archive_params) != stored
 
 # The first backup cannot finish until archiving works, and Patroni applies a

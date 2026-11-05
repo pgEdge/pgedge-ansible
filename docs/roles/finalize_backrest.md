@@ -19,8 +19,9 @@ The role performs the following tasks on inventory hosts:
   has described, and stop if none matches.
 - On an HA cluster, find each zone's Patroni leader, and stop if there is not
   exactly one among the zone's nodes.
-- Create the `backup_user` PostgreSQL role with `pg_checkpoint` privileges, and
-  for non-HA clusters add the matching `pg_hba.conf` entries.
+- Create the `backup_user` PostgreSQL role with `pg_checkpoint` privileges.
+  On non-HA clusters, `setup_postgres` writes the matching `pg_hba.conf`
+  entries; on HA clusters, Patroni does.
 - Create the repository stanza when the repository does not already have one.
 - For non-HA clusters, check that Postgres is using the PgBackRest
   `archive_command` that `setup_postgres` writes, and stop if it is not. HA

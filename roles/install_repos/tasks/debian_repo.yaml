@@ -74,7 +74,11 @@
   become: true
   when: repo_url | length > 0
 
+# Refreshing the cache changes nothing on the host that later tasks or a rerun
+# would see, and apt reports every refresh as a change, so it reports none.
+
 - name: Update APT cache to include pgEdge packages
   apt:
     update_cache: true
+  changed_when: false
   become: true

@@ -62,11 +62,17 @@
   #
   # Do this with one line per rule for easier editing later.
   #
-  # The first rule starts the file over, so every task reports a change on
+  # The first rule starts the file over, so every task would report a change on
   # every run whether or not the file ends up any different. What it held
   # before is compared with what it holds after instead, which is what decides
   # whether a running server has to reload: a database added to db_names is
-  # otherwise closed to its own subscriptions until something else does.
+  # otherwise closed to its own subscriptions until something else does. The
+  # rule tasks themselves report nothing, and the comparison reports the change.
+  #
+  # Because the file starts over, every rule the node needs has to be written
+  # here. A rule added later in the run, by another role, would be removed by
+  # the next run and put back after it, reloading the server twice and leaving
+  # a moment between without it.
 
   - name: Read the client authentication rules Postgres was last given
     stat:
@@ -84,6 +90,7 @@
       method: peer
       create: true
       overwrite: true
+    changed_when: false
     become: true
     become_user: postgres
 
@@ -95,6 +102,7 @@
       databases: all
       method: scram-sha-256
       source: 127.0.0.1/32
+    changed_when: false
     become: true
     become_user: postgres
 
@@ -107,6 +115,7 @@
       method: scram-sha-256
       source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
     loop: "{{ groups['pgedge'] }}"
+    changed_when: false
     become: true
     become_user: postgres
 
@@ -119,10 +128,45 @@
       method: "{{ item.method | default('scram-sha-256') }}"
       source: "{{ item.source | default('127.0.0.1/32') }}"
     loop: "{{ custom_hba_rules }}"
+    changed_when: false
     become: true
     become_user: postgres
     when: 
     - custom_hba_rules | length > 0
+
+  # A non-HA node's backup server connects to it directly. Under HA these rules
+  # come from patroni.yml instead.
+
+  - name: Allow backup user connections from user-specified backup host
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: host
+      users: "{{ backup_user }}"
+      databases: replication,postgres
+      method: scram-sha-256
+      source: "{{ backup_ip }}/32"
+    vars:
+      backup_ip: "{{ backup_host | ipaddr('address') or lookup('dig', backup_host) }}"
+    changed_when: false
+    become: true
+    become_user: postgres
+    when:
+    - not is_ha_cluster | bool
+    - backup_host > ''
+
+  - name: Allow backup user connections from backup hosts
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: host
+      users: "{{ backup_user }}"
+      databases: replication,postgres
+      method: scram-sha-256
+      source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
+    loop: "{{ backups_in_zone }}"
+    changed_when: false
+    become: true
+    become_user: postgres
+    when: not is_ha_cluster | bool
 
   - name: Read the client authentication rules as they now stand
     stat:
@@ -133,8 +177,11 @@
 
   - name: Note whether the client authentication rules changed
     set_fact:
-      pg_hba_changed: >-
+      pg_hba_changed: "{{ hba_differs }}"
+    vars:
+      hba_differs: >-
         {{ pg_hba_before.stat.checksum | default('')
            != pg_hba_after.stat.checksum | default('') }}
+    changed_when: hba_differs | bool
 
   when: not patroni_manages_postgres | default(false) | bool

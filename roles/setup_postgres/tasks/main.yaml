@@ -20,9 +20,23 @@
 # builds every zone's cluster this way, restores one of them, and upgrades
 # each stanza to describe what it built.
 #
-# In an HA zone only the first node is asked. Replicas are never initialized
-# here; Patroni clones them from the leader, so a new or wiped replica has an
-# empty data directory beside a full repository by design.
+# In an HA zone only the primary is asked. Replicas are never initialized here;
+# Patroni clones them from the leader, so a new or wiped replica has an empty
+# data directory beside a full repository by design. After a failover the
+# primary is not the zone's first node, and the first node, wiped to be
+# re-cloned, is just such a replica.
+#
+# On a new zone the primary is the first node, which Patroni later bootstraps
+# from. On a built zone it is wherever Patroni put it, and only there can the
+# users, databases and extensions ha_setup creates be written. A built zone
+# whose Patroni is stopped everywhere has it started here so its members can
+# elect that leader.
+
+- name: Find the node that runs this zone's primary
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
+  when: is_ha_cluster | bool
 
 - name: Ensure the backup repository does not already hold this cluster
   include_role:
@@ -33,7 +47,7 @@
   when:
   - backup_repo_configured | bool
   - not backup_repo_reuse | bool
-  - not is_ha_cluster or inventory_hostname == first_node_in_zone
+  - not is_ha_cluster or inventory_hostname == zone_primary
 
 - name: Ensure RHEL pgedge Postgres service is set up
   include_tasks: rhel_prep.yaml
@@ -51,12 +65,16 @@
     mode: "0700"
   become: true
 
+# The configuration directory is given no mode. On RHEL it is the data
+# directory, whose mode the task above sets. On Debian pg_createcluster sets
+# it, both here and when Patroni clones a replica, and a mode set here would
+# be undone by every clone and set again by the next run.
+
 - name: Ensure Postgres configuration path exists and is owned by postgres user
   file:
     path: "{{ pg_config_dir }}"
     state: directory
     owner: postgres
-    mode: "0700"
   become: true
 
 # This code branches to either normal setup or HA setup. In the case of HA

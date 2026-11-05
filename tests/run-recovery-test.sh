@@ -272,8 +272,9 @@ fi
 # resolves against the playbook's own location, and recover_postgres applies
 # that role to every node. Without the deployment's
 # staging directory it would mint a fresh self-signed certificate for those
-# zones, leaving the cluster with two. Reuse the one the deployment made, the
-# same way check-idempotence.sh reuses it for the pooler.
+# zones, leaving the cluster with two. Reuse the one the deployment made,
+# which check-idempotence.sh finds by running the deployment again from its own
+# directory.
 #
 # All but the etcd certificate authority. That is handed to the recovery the
 # way a production inventory would hand it over -- etcd_ca_cert and etcd_ca_key

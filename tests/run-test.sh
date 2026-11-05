@@ -297,14 +297,37 @@ ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
   "${EXTRA_VARS[@]}" \
   -v
 
-# Step 7b: A second consecutive run of the pooler roles must change nothing.
-echo "==> Step 7b: Checking the pooler roles are idempotent..."
+# Step 7b: A second consecutive run of the deployment must change nothing.
+echo "==> Step 7b: Checking a second deployment run changes nothing..."
 "$SCRIPT_DIR/check-idempotence.sh" \
   "$INVENTORY" \
   "$PLAYBOOK" \
   "${INVENTORY_ARGS[@]:2}" \
   --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
   "${EXTRA_VARS[@]}"
+
+# Step 7b2: Nor must one after a switchover, which leaves each zone's leader
+# somewhere other than its first node. The leaders go back afterwards, so the
+# steps below see the cluster as deployed.
+if [ "$SCENARIO" = "ultra-ha" ]; then
+  echo "==> Step 7b2: Checking a deployment run after a switchover changes nothing..."
+  move_leaders() {
+    ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+      "$SCRIPT_DIR/playbooks/move-leaders.yml" \
+      "${INVENTORY_ARGS[@]}" \
+      --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+      "${EXTRA_VARS[@]}" \
+      -e leaders_to="$1"
+  }
+  move_leaders second
+  "$SCRIPT_DIR/check-idempotence.sh" \
+    "$INVENTORY" \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]:2}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}"
+  move_leaders first
+fi
 
 # Step 7c: Everything was installed from the site's repository, nothing still
 # points at pgEdge's own servers, and re-applying install_repos changes nothing.
