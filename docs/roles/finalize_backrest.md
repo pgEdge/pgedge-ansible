@@ -97,9 +97,12 @@ after a point-in-time recovery, the newest backups can lie on the timeline the
 recovery abandoned, past the point where the cluster branched away from it;
 PgBackRest restores the newest backup by default, and Postgres cannot follow
 the cluster's timeline from there. The role reads the cluster's timeline
-history from the zone's primary (a backup server asks the zone's first pgEdge
-node, since any member holds the same history), and takes a full backup when the
-newest backup ended after the cluster left its timeline. A failover never
+history from the zone's primary; a backup server, which has no Postgres of its
+own, queries that same primary. A replica will not do: its checkpoint moves to a
+new timeline only at its next restartpoint, so just after a failover it can
+still report the old timeline, and a backup already taken on the new one would
+look unrestorable. The role takes a full backup when the newest backup ended
+after the cluster left its timeline. A failover never
 causes one, because it branches after every existing backup.
 
 This is what makes the role the step that commits a recovery: see
