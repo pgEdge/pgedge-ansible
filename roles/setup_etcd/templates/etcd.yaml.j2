@@ -1,3 +1,6 @@
+{#- A node joining a running zone is handed the zone's membership as etcd
+    reports it, by join.yaml, and has to start with it as existing. Every other
+    rendering bootstraps the whole zone. #}
 {%- set endpoints = [] %}
 {%- for host in nodes_in_zone %}
 {%-   set host_name = hostvars[host].ansible_hostname %}
@@ -8,8 +11,8 @@ name: {{ ansible_hostname }}
 advertise-client-urls: https://{{ inventory_hostname }}:2379
 data-dir: {{ etcd_data_dir }}/postgresql
 initial-advertise-peer-urls: https://{{ inventory_hostname }}:2380
-initial-cluster: {{ endpoints | join(',') }}
-initial-cluster-state: new
+initial-cluster: {{ etcd_join_cluster | default(endpoints | join(',')) }}
+initial-cluster-state: {{ 'existing' if etcd_join_cluster is defined else 'new' }}
 initial-cluster-token: pgedge_cluster
 listen-client-urls: https://{{ ansible_default_ipv4.address }}:2379,https://127.0.0.1:2379
 listen-peer-urls: https://{{ ansible_default_ipv4.address }}:2380

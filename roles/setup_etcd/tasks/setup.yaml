@@ -15,11 +15,17 @@
 - include_tasks: tls.yaml
   when: not etcd_data.stat.exists
 
+- include_tasks: membership.yaml
+
 # The configuration is rendered on every run, so a change to the inventory
 # reaches members that are already running. The bootstrap keys in it --
 # initial-cluster and its state and token -- are read only when the data
 # directory is empty, so re-rendering them against an existing member changes
-# nothing.
+# nothing to etcd, though a changed file still has the member restarted below.
+#
+# A node joining a running zone is the exception: it has no data, so it reads
+# them, and it needs the ones join.yaml writes. It is given the zone's own
+# afterwards, below.
 
 - name: Create configuration file for etcd node
   template:
@@ -28,13 +34,15 @@
     owner: "{{ etcd_user }}"
     group: "{{ etcd_group }}"
   become: true
+  when: not etcd_joining
 
 # Start a member that is not running before restarting any that are. Starting
 # one reads the new file, so it needs no restart of its own, and it must be up
 # before the restarts below: they each refuse to go ahead while any member of the
 # zone is down. The members are started together rather than in turn, because
 # etcd reports itself started only once it has a quorum, so a zone with all
-# its members down could never start the first.
+# its members down could never start the first. A node joining the zone is
+# started by join.yaml instead, once the zone knows it.
 
 - name: Enable the etcd service
   service:
@@ -48,6 +56,51 @@
     state: started
   become: true
   register: etcd_started
+  when: not etcd_joining
+
+# Join the nodes that are new to a running zone, and promote any member a
+# stopped run left as a learner, one node at a time across the play. This comes
+# after the members already in the zone are started, so a zone with one stopped
+# is whole again before its membership changes, and before the restarts below,
+# whose health checks a learner would fail. Every host includes the file once
+# per node and acts only on its own turn, as with the restarts.
+#
+# Learners go first. etcd allows a zone only one, so a node new to the zone
+# cannot be added while a stopped run's learner is still waiting for promotion.
+# That learner may also be joining, if it never started and so has no data, and
+# unique keeps it in the place its first appearance gives it.
+
+- include_tasks: join.yaml
+  loop: "{{ etcd_join_hosts }}"
+  loop_control:
+    loop_var: etcd_join_host
+  vars:
+    etcd_learner_hosts: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('etcd_learner', 'defined')
+         | selectattr('etcd_learner')
+         | map(attribute='inventory_hostname') | list }}
+    etcd_joining_hosts: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('etcd_joining', 'defined')
+         | selectattr('etcd_joining')
+         | map(attribute='inventory_hostname') | list }}
+    etcd_join_hosts: "{{ (etcd_learner_hosts + etcd_joining_hosts) | unique }}"
+
+# A joined member started with the configuration it joined with. It now gets the
+# zone's own, the same as every other member's, and the comparison below finds
+# it newer than the process and restarts the member to read it. Its bootstrap
+# keys change nothing to etcd by then, but the file is what the next run renders
+# and would otherwise rewrite.
+
+- name: Give each joined member the zone's own configuration
+  template:
+    src: templates/etcd.yaml.j2
+    dest: "{{ etcd_config_dir }}/etcd.yaml"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+  become: true
+  when: etcd_joining
 
 # Whether a running member has to be restarted is decided by when etcd last
 # started, not by whether this run changed the file. A run that writes the file
@@ -75,11 +128,11 @@
     return_content: true
   register: etcd_metrics
   become: true
-  # Only reads, so it runs in check mode too. A member check mode found stopped
-  # was not started, so there is nothing to read, and asking would fail the
-  # run.
+  # Only reads, so it runs in check mode too. A member check mode found stopped,
+  # or would have joined, was not started, so there is nothing to read, and
+  # asking would fail the run.
   check_mode: false
-  when: not (ansible_check_mode and etcd_started.changed)
+  when: not (ansible_check_mode and (etcd_started.changed or etcd_joining))
 
 - name: Read when the configuration was written
   stat:

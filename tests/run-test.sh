@@ -438,6 +438,49 @@ if [ "$COLDFRONT" = false ]; then
     -v
 fi
 
+# Step 11: Nodes added to a running zone join it: listed in the inventory,
+# with the deployment run again. Their containers were started with the rest and
+# left out of the inventory until now. Where the collection runs etcd, one of
+# them is first left as a learner an interrupted join would leave, which the
+# deployment has to promote before it can add the other. Last, because the
+# cluster it leaves has two more nodes in zone 1 than the steps above expect.
+# Not with ColdFront, whose layer this has not been tried with.
+if [ "$SCENARIO" = "ultra-ha" ] && [ "$COLDFRONT" = false ]; then
+  echo "==> Step 11: Checking nodes added to a zone join it..."
+  NODE_ADD_ARGS=(-i "$SCRIPT_DIR/inventories/${SCENARIO}-node-add.yml")
+  if [ "$DCS" = "etcd3" ]; then
+    ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+      "$SCRIPT_DIR/playbooks/interrupt-node-add.yml" \
+      "${INVENTORY_ARGS[@]}" \
+      "${NODE_ADD_ARGS[@]}" \
+      --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+      "${EXTRA_VARS[@]}" \
+      -v
+  fi
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/verify/verify-node-add.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+  echo "==> Step 11b: Checking a deployment run after adding the nodes changes nothing..."
+  "$SCRIPT_DIR/check-idempotence.sh" \
+    "$INVENTORY" \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]:2}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}"
+fi
+
 echo ""
 echo "========================================="
 echo "  TEST PASSED: ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP}${REPO_LAYOUT:+, repo=$REPO_LAYOUT})"
