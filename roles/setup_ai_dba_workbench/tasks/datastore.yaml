@@ -1,0 +1,139 @@
+---
+
+# The Workbench keeps its datastore in a Postgres instance of its own on this
+# host, built the way setup_lakekeeper builds the Lakekeeper catalog's. The
+# instance is this role's alone: initialized with initdb into
+# ai_dba_workbench_pg_data and run by a service unit the role writes, the same
+# way on every platform, so it shares nothing with the instances setup_postgres
+# builds for pgEdge Distributed Postgres nodes. It listens on pg_port at the
+# loopback address only, where the Workbench's services reach it with a
+# password.
+#
+# On Debian, installing the server package creates and starts a "main"
+# cluster on 5432. Where that is pg_port, it is stopped and marked manual, so
+# that it does not take the port back when the host boots.
+
+- name: Check for the package's own Postgres cluster
+  stat:
+    path: "/etc/postgresql/{{ pg_version }}/main/start.conf"
+  register: ai_dba_workbench_debian_main
+  when:
+  - ansible_os_family == 'Debian'
+  - pg_port | int == 5432
+
+- block:
+  - name: Stop the package's own Postgres cluster
+    service:
+      name: "postgresql@{{ pg_version }}-main"
+      state: stopped
+      enabled: false
+
+  - name: Keep the package's own Postgres cluster from starting at boot
+    copy:
+      dest: "/etc/postgresql/{{ pg_version }}/main/start.conf"
+      content: "manual\n"
+      owner: postgres
+      group: postgres
+      mode: "0644"
+
+  become: true
+  when:
+  - ai_dba_workbench_debian_main is not skipped
+  - ai_dba_workbench_debian_main.stat.exists
+
+- name: Create the datastore's data directory
+  file:
+    path: "{{ ai_dba_workbench_pg_data }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+  become: true
+
+- name: Initialize the datastore's Postgres instance
+  command:
+    argv:
+    - "{{ pg_path }}/bin/initdb"
+    - -D
+    - "{{ ai_dba_workbench_pg_data }}"
+    - --encoding=UTF8
+    - --locale=C
+    - --auth-local=peer
+    - --auth-host=scram-sha-256
+  args:
+    creates: "{{ ai_dba_workbench_pg_data }}/PG_VERSION"
+  become: true
+  become_user: postgres
+
+# The packaged units of the collector and the server order themselves after
+# postgresql.service, which is not this instance, so this unit orders itself
+# before all three of the Workbench's services, as setup_lakekeeper's does
+# before Lakekeeper.
+
+- name: Write the datastore's Postgres service unit
+  template:
+    src: ai-dba-workbench-postgres.service.j2
+    dest: "/etc/systemd/system/{{ ai_dba_workbench_pg_service_name }}.service"
+    mode: "0644"
+  register: ai_dba_workbench_pg_unit
+  become: true
+
+# A changed unit is a changed command line, such as a new pg_port, which only
+# a restart applies.
+
+- name: Start the datastore's Postgres instance
+  systemd:
+    name: "{{ ai_dba_workbench_pg_service_name }}"
+    daemon_reload: "{{ ai_dba_workbench_pg_unit is changed }}"
+    enabled: true
+    state: >-
+      {{ 'restarted' if ai_dba_workbench_pg_unit is changed else 'started' }}
+  become: true
+
+- name: Wait for the datastore's Postgres instance to accept connections
+  community.postgresql.postgresql_ping:
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  register: ai_dba_workbench_pg_ping
+  until: ai_dba_workbench_pg_ping.is_available
+  retries: 30
+  delay: 1
+  become: true
+  become_user: postgres
+
+- name: Create the Workbench's datastore role
+  community.postgresql.postgresql_user:
+    name: "{{ ai_dba_workbench_db_user }}"
+    password: "{{ ai_dba_workbench_db_password }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+# Owned by that role, because the collector builds the schema when it starts:
+# tables in public, which on Postgres 15 and later only the database's owner
+# may create in by default, and a schema of its own for the metrics.
+
+- name: Create the Workbench's datastore
+  community.postgresql.postgresql_db:
+    name: "{{ ai_dba_workbench_db }}"
+    owner: "{{ ai_dba_workbench_db_user }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+# The collector creates pgvector's extension itself, but only in its first
+# migration, and only if it may, which takes a superuser. Otherwise it carries
+# on without it and never tries again, and the alerter's second tier and the
+# conversation memory go without. Creating it here, as the superuser, before
+# the collector first starts, keeps the datastore role unprivileged.
+
+- name: Create the pgvector extension in the datastore
+  community.postgresql.postgresql_ext:
+    name: vector
+    login_db: "{{ ai_dba_workbench_db }}"
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres

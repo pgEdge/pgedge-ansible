@@ -1,0 +1,131 @@
+---
+
+# The certificate nginx serves the web client with. Where the inventory names
+# none, a self-signed one is generated on the Ansible controller, as
+# setup_postgres generates the nodes', so the cryptography Python package is
+# only needed there. It names every address a browser may use for this host.
+
+- name: Create the local staging directory for the web client's certificate
+  file:
+    path: "{{ ai_dba_workbench_tls_staging_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  when: ai_dba_workbench_tls_generated | bool
+
+- name: Create a private key for the web client
+  community.crypto.openssl_privatekey:
+    path: "{{ ai_dba_workbench_tls_staging_dir }}/server.key"
+    type: RSA
+    size: 4096
+    mode: "0600"
+  delegate_to: localhost
+  when: ai_dba_workbench_tls_generated | bool
+
+- name: Create a certificate signing request for the web client
+  community.crypto.openssl_csr:
+    path: "{{ ai_dba_workbench_tls_staging_dir }}/server.csr"
+    privatekey_path: "{{ ai_dba_workbench_tls_staging_dir }}/server.key"
+    common_name: "{{ inventory_hostname }}"
+    subject_alt_name: "{{ ai_dba_workbench_tls_names }}"
+    key_usage:
+    - digitalSignature
+    - keyEncipherment
+    extended_key_usage:
+    - serverAuth
+    mode: "0600"
+  delegate_to: localhost
+  when: ai_dba_workbench_tls_generated | bool
+
+- name: Create a self-signed certificate for the web client
+  community.crypto.x509_certificate:
+    path: "{{ ai_dba_workbench_tls_staging_dir }}/server.crt"
+    privatekey_path: "{{ ai_dba_workbench_tls_staging_dir }}/server.key"
+    csr_path: "{{ ai_dba_workbench_tls_staging_dir }}/server.csr"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ tls_validity_days }}d"
+    mode: "0600"
+  delegate_to: localhost
+  when: ai_dba_workbench_tls_generated | bool
+
+# nginx's master process reads both as root before it gives up its privileges,
+# so neither has to be readable by anyone else, and the key is not.
+
+- name: Copy the web client's certificate and key to the Workbench host
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+  - src: "{{ ai_dba_workbench_tls_cert }}"
+    dest: "{{ ai_dba_workbench_tls_cert_file }}"
+    mode: "0644"
+  - src: "{{ ai_dba_workbench_tls_key }}"
+    dest: "{{ ai_dba_workbench_tls_key_file }}"
+    mode: "0600"
+  loop_control:
+    label: "{{ item.dest }}"
+  # The key is a secret, and --diff would print it.
+  diff: false
+  become: true
+
+- name: Write the web client's nginx site
+  template:
+    src: pgedge-ai-dba-client.nginx.j2
+    dest: "{{ ai_dba_workbench_nginx_site }}"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+
+# The Debian package links its site into sites-enabled when it is installed,
+# and removes the link when it is removed; this keeps the link there in
+# between. The RHEL package's site sits in conf.d, which nginx reads whole.
+
+- name: Enable the web client's nginx site on Debian
+  file:
+    src: "{{ ai_dba_workbench_nginx_site }}"
+    dest: /etc/nginx/sites-enabled/pgedge-ai-dba-client
+    state: link
+  become: true
+  when: ansible_facts['os_family'] == 'Debian'
+
+# Checked before nginx is started or restarted on it, because nginx refuses to
+# start on a configuration it cannot parse, and says why only in its own log.
+
+- name: Check that nginx accepts its configuration
+  command: nginx -t
+  changed_when: false
+  become: true
+
+- name: Enable and start nginx
+  systemd:
+    name: nginx
+    enabled: true
+    state: started
+  become: true
+
+- name: Apply nginx's new site and certificate
+  include_tasks: restart_stale.yaml
+  vars:
+    ai_dba_workbench_unit: nginx
+    ai_dba_workbench_unit_files:
+    - "{{ ai_dba_workbench_nginx_site }}"
+    - "{{ ai_dba_workbench_tls_cert_file }}"
+    - "{{ ai_dba_workbench_tls_key_file }}"
+
+# The certificate is not verified here: a self-signed one cannot be, and an
+# inventory's names this host, not the loopback address asked for.
+
+- name: Wait for nginx to serve the web client
+  uri:
+    url: "https://127.0.0.1:{{ ai_dba_workbench_port }}/"
+    method: GET
+    validate_certs: false
+    status_code: 200
+  register: ai_dba_workbench_client
+  retries: 15
+  delay: 2
+  until: ai_dba_workbench_client is success

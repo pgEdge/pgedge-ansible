@@ -1,0 +1,203 @@
+---
+
+# The files this role writes for the Workbench's services, which cannot write
+# to /etc themselves. Each one holding a secret belongs to the service user,
+# and nobody else can read it: the Workbench warns about a secret others can.
+
+ai_dba_workbench_secret_file: /etc/pgedge/ai-dba.secret
+ai_dba_workbench_db_password_file: /etc/pgedge/ai-dba-db.password
+ai_dba_workbench_llm_key_file: /etc/pgedge/ai-dba-llm.key
+ai_dba_workbench_embedding_key_file: /etc/pgedge/ai-dba-embedding.key
+
+# The packages' own paths, which their systemd units name.
+
+ai_dba_workbench_server_config: /etc/pgedge/ai-dba-server.yaml
+ai_dba_workbench_collector_config: /etc/pgedge/ai-dba-collector.yaml
+ai_dba_workbench_alerter_config: /etc/pgedge/ai-dba-alerter.yaml
+ai_dba_workbench_server_data_dir: /var/lib/pgedge/ai-dba-server
+
+# The client's nginx site, where its package installs it on each platform. This
+# role writes over the packaged file rather than beside it: the Debian package
+# enables its own site again whenever it is upgraded, and a second site would
+# listen beside this one.
+
+ai_dba_workbench_nginx_site: >-
+  {{ '/etc/nginx/conf.d/pgedge-ai-dba-client.conf'
+     if ansible_facts['os_family'] == 'RedHat'
+     else '/etc/nginx/sites-available/pgedge-ai-dba-client' }}
+
+# The certificate nginx serves the web client with: the inventory's, or else
+# the self-signed pair this role generates on the controller, in a directory
+# Ansible resolves against the playbook's own, the way setup_postgres stages
+# the nodes' certificates.
+
+ai_dba_workbench_tls_staging_dir: tls/ai-dba-workbench
+ai_dba_workbench_tls_generated: >-
+  {{ ai_dba_workbench_tls_cert_source | length == 0 }}
+ai_dba_workbench_tls_cert: >-
+  {{ ai_dba_workbench_tls_cert_source
+     or ai_dba_workbench_tls_staging_dir ~ '/server.crt' }}
+ai_dba_workbench_tls_key: >-
+  {{ ai_dba_workbench_tls_key_source
+     or ai_dba_workbench_tls_staging_dir ~ '/server.key' }}
+ai_dba_workbench_tls_cert_file: /etc/pgedge/ai-dba-client.crt
+ai_dba_workbench_tls_key_file: /etc/pgedge/ai-dba-client.key
+
+# The names a browser may reach this host by, for the self-signed certificate.
+ai_dba_workbench_tls_names: >-
+  {{ (['DNS:' ~ ansible_hostname, 'DNS:' ~ ansible_fqdn,
+       'IP:' ~ ansible_default_ipv4.address,
+       ('IP:' if inventory_hostname
+                 is match('^([0-9]+\.){3}[0-9]+$') else 'DNS:')
+       ~ inventory_hostname]) | unique }}
+
+# The Workbench server's REST API, which this role calls on the loopback
+# interface, where the server listens, rather than through nginx.
+ai_dba_workbench_api: >-
+  http://127.0.0.1:{{ ai_dba_workbench_server_port }}/api/v1
+
+# A key file is written, and named in the configuration, only for a provider
+# that is set: the Workbench server refuses to start with any key file it
+# cannot read, even one for a provider it does not use.
+ai_dba_workbench_llm_key_needed: >-
+  {{ ai_dba_workbench_llm_provider in ['anthropic', 'openai', 'gemini'] }}
+ai_dba_workbench_embedding_key_needed: >-
+  {{ ai_dba_workbench_embedding_provider in ['openai', 'gemini', 'voyage'] }}
+
+# The alerter's settings for each provider it uses, by the provider's own name.
+# Its reasoning tier takes the language model and its similarity tier the
+# embedding model, and where both are the same provider they share a section.
+ai_dba_workbench_alerter_providers: >-
+  {% set providers = {} %}
+  {%- for kind, provider, model_key, model, key_needed, key_file, base_url in [
+        ('llm', ai_dba_workbench_llm_provider, 'reasoning_model',
+         ai_dba_workbench_llm_model,
+         ai_dba_workbench_llm_key_needed | bool,
+         ai_dba_workbench_llm_key_file,
+         ai_dba_workbench_llm_base_url),
+        ('embedding', ai_dba_workbench_embedding_provider, 'embedding_model',
+         ai_dba_workbench_embedding_model,
+         ai_dba_workbench_embedding_key_needed | bool,
+         ai_dba_workbench_embedding_key_file,
+         ai_dba_workbench_embedding_base_url)] %}
+  {%-   if provider | length > 0 %}
+  {%-     set settings = providers.get(provider, {}) %}
+  {%-     set _ = settings.update({model_key: model}) %}
+  {%-     if key_needed %}
+  {%-       set _ = settings.update({'api_key_file': key_file}) %}
+  {%-     endif %}
+  {%-     if base_url | length > 0 %}
+  {%-       set _ = settings.update({'base_url': base_url}) %}
+  {%-     endif %}
+  {%-     set _ = providers.update({provider: settings}) %}
+  {%-   endif %}
+  {%- endfor %}{{ providers }}
+
+# Every pgEdge node as the Workbench records it, under the node's inventory
+# name. A node's own settings come from its hostvars, falling back to this
+# host's where the inventory set none for it, since the pgEdge nodes' group
+# variables do not reach this host.
+ai_dba_workbench_connections: >-
+  {% set found = [] %}
+  {%- for node in groups['pgedge'] %}
+  {%-   set hv = hostvars[node] %}
+  {%-   set _ = found.append({
+          'name': node,
+          'description': 'pgEdge Distributed Postgres node in zone '
+                         ~ hv.zone | default(zone) ~ ' of cluster '
+                         ~ hv.cluster_name | default(cluster_name),
+          'host': hv.ansible_default_ipv4.address,
+          'port': hv.pg_port | default(pg_port) | int,
+          'database_name': ai_dba_workbench_monitor_db
+                           or hv.db_names | default(db_names) | first,
+          'username': hv.ai_dba_workbench_monitor_user
+                      | default(ai_dba_workbench_monitor_user),
+          'ssl_mode': ai_dba_workbench_monitor_sslmode,
+          'is_monitored': true,
+          'is_shared': true,
+        }) %}
+  {%- endfor %}{{ found }}
+
+# The monitoring role's password for each node, kept apart from the rest of the
+# record because the Workbench never returns it.
+ai_dba_workbench_connection_passwords: >-
+  {{ dict(groups['pgedge']
+          | zip(groups['pgedge'] | map('extract', hostvars)
+                | map(attribute='ai_dba_workbench_monitor_password',
+                      default=ai_dba_workbench_monitor_password))) }}
+
+# The addresses the Workbench server may register although they are private:
+# every pgEdge node's, and whatever ai_dba_workbench_allowed_hosts adds.
+ai_dba_workbench_server_allowed_hosts: >-
+  {{ (ai_dba_workbench_connections | map(attribute='host') | list
+      + ai_dba_workbench_allowed_hosts) | unique }}
+
+# The key files the server and the alerter read, which are only those of the
+# providers that are set.
+ai_dba_workbench_key_files: >-
+  {{ ([ai_dba_workbench_llm_key_file]
+      if ai_dba_workbench_llm_key_needed | bool else [])
+     + ([ai_dba_workbench_embedding_key_file]
+        if ai_dba_workbench_embedding_key_needed | bool else []) }}
+
+# The Workbench server's command-line tool, which manages its users in the
+# server's own user store. It is given the store's directory, since without it
+# it would open a new, empty store beside its binary.
+ai_dba_workbench_cli:
+- /usr/bin/ai-dba-server
+- -config
+- "{{ ai_dba_workbench_server_config }}"
+- -data-dir
+- "{{ ai_dba_workbench_server_data_dir }}"
+
+# Where the administrator's password is put for the command-line tool, which
+# reads it from a file, while the tool runs and no longer.
+ai_dba_workbench_admin_password_file: >-
+  {{ ai_dba_workbench_server_data_dir }}/.admin-password
+
+# A digest of the monitoring passwords the Workbench was last given. The
+# Workbench never returns a stored password, so this is how a run learns that
+# the inventory's has changed since. It is kept on the host that already holds
+# the secret the Workbench encrypts the passwords themselves with.
+ai_dba_workbench_passwords_record: /etc/pgedge/ai-dba-monitor.sha256
+ai_dba_workbench_passwords_digest: >-
+  {{ ai_dba_workbench_connection_passwords | to_json | hash('sha256') }}
+
+# Whether the monitoring passwords have changed since the Workbench was last
+# given them, by the record tasks/connections.yaml keeps. Without a record, a
+# node already registered is given its password again. So is every node when
+# this run generated a new secret, where one had been lost: the Workbench can
+# no longer read the passwords it holds, and the server, restarted on the new
+# secret, encrypts each one again with it. Referenced only after
+# tasks/connections.yaml has read the record.
+ai_dba_workbench_passwords_changed: >-
+  {{ (ai_dba_workbench_passwords_slurp.content | default('')
+      | b64decode | trim)
+     != ai_dba_workbench_passwords_digest
+     or ai_dba_workbench_secret_generated is changed }}
+
+# The registered nodes whose records differ from the inventory's, each with the
+# fields that differ, and with its password where the passwords have changed.
+# The Workbench keeps every field an update leaves out. Referenced only after
+# tasks/connections.yaml has read each registered node in full.
+ai_dba_workbench_updates: >-
+  {% set found = [] %}
+  {%- for current in ai_dba_workbench_registered.results | default([])
+                     | map(attribute='json') %}
+  {%-   set wanted = ai_dba_workbench_connections
+                     | selectattr('name', 'eq', current.name) | first %}
+  {%-   set changes = {} %}
+  {%-   for key, value in wanted.items() %}
+  {%-     if current[key] | default(none) != value %}
+  {%-       set _ = changes.update({key: value}) %}
+  {%-     endif %}
+  {%-   endfor %}
+  {%-   if ai_dba_workbench_passwords_changed | bool %}
+  {%-     set _ = changes.update({'password':
+            ai_dba_workbench_connection_passwords[current.name]}) %}
+  {%-   endif %}
+  {%-   if changes | length > 0 %}
+  {%-     set _ = found.append({'id': current.id, 'name': current.name,
+                                'changes': changes}) %}
+  {%-   endif %}
+  {%- endfor %}{{ found }}

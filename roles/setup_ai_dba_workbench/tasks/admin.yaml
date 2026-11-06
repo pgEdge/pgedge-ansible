@@ -1,0 +1,169 @@
+---
+
+# The administrator this role registers the nodes as, which is also the account
+# to sign in to the web client with. The server's command-line tool manages it
+# in the server's user store, a SQLite database the running server shares
+# safely, and runs as the service user so that every file of the store stays
+# that user's. The tool runs one command at a time.
+
+- name: List the Workbench's users
+  command:
+    argv: "{{ ai_dba_workbench_cli + ['-list-users'] }}"
+  register: ai_dba_workbench_users
+  changed_when: false
+  become: true
+  become_user: pgedge
+
+# The tool reads a password only from a file or a terminal, so the
+# administrator's is put in a file of the service user's own for as long as
+# the tool needs it.
+
+- name: Create the Workbench administrator
+  when: >-
+    ai_dba_workbench_users.stdout_lines
+    | select('match', (ai_dba_workbench_admin_user | regex_escape) ~ '\s')
+    | list | length == 0
+  block:
+  - name: Stage the administrator's password for the command-line tool
+    copy:
+      content: "{{ ai_dba_workbench_admin_password }}"
+      dest: "{{ ai_dba_workbench_admin_password_file }}"
+      owner: pgedge
+      group: pgedge
+      mode: "0600"
+    diff: false
+    become: true
+
+  # The tool asks for any detail it was not given, and reads the answer from
+  # stdin: the empty line given here answers that there is no email address.
+
+  - name: Add the administrator to the Workbench
+    command:
+      argv: >-
+        {{ ai_dba_workbench_cli
+           + ['-add-user', '-username', ai_dba_workbench_admin_user,
+              '-password-file', ai_dba_workbench_admin_password_file,
+              '-full-name', 'AI DBA Workbench administrator',
+              '-user-note', 'Created by setup_ai_dba_workbench'] }}
+      stdin: "\n"
+    become: true
+    become_user: pgedge
+
+  always:
+  - name: Remove the staged password
+    file:
+      path: "{{ ai_dba_workbench_admin_password_file }}"
+      state: absent
+    become: true
+
+# Registering a server takes a superuser. The tool cannot report whether a
+# user is one, so this is asked for on every run, and changes nothing where the
+# administrator already is.
+
+- name: Make the administrator a Workbench superuser
+  command:
+    argv: >-
+      {{ ai_dba_workbench_cli
+         + ['-set-superuser', '-username', ai_dba_workbench_admin_user] }}
+  changed_when: false
+  become: true
+  become_user: pgedge
+
+# Signing in is also how a run learns that the inventory's password is not the
+# one the Workbench has, which it then takes from the inventory. The Workbench
+# keeps no other way of telling. A refused sign-in counts towards the
+# Workbench's lockout, after ten in a row, so a run whose password was stale is
+# refused once, and signs in after the change. An account the Workbench has
+# already disabled is refused after the change too, and the run stops there.
+
+- name: Sign in to the Workbench as its administrator
+  uri:
+    url: "{{ ai_dba_workbench_api }}/auth/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ ai_dba_workbench_admin_user }}"
+      password: "{{ ai_dba_workbench_admin_password }}"
+    status_code: [200, 401]
+  register: ai_dba_workbench_login
+  # The request carries the password, which no_log keeps out of the output at
+  # every verbosity. That would hide why a sign-in failed as well, so this task
+  # records the outcome rather than failing, and a task below reports it.
+  no_log: true
+  failed_when: false
+
+- name: Note whether the Workbench refused the inventory's password
+  set_fact:
+    ai_dba_workbench_admin_password_stale: >-
+      {{ ai_dba_workbench_login.status == 401 }}
+
+- name: Give the administrator the inventory's password
+  when: ai_dba_workbench_admin_password_stale | bool
+  block:
+  - name: Stage the administrator's password for the command-line tool
+    copy:
+      content: "{{ ai_dba_workbench_admin_password }}"
+      dest: "{{ ai_dba_workbench_admin_password_file }}"
+      owner: pgedge
+      group: pgedge
+      mode: "0600"
+    diff: false
+    become: true
+
+  - name: Change the administrator's password
+    command:
+      argv: >-
+        {{ ai_dba_workbench_cli
+           + ['-update-user', '-username', ai_dba_workbench_admin_user,
+              '-password-file', ai_dba_workbench_admin_password_file] }}
+    become: true
+    become_user: pgedge
+
+  - name: Sign in to the Workbench with the new password
+    uri:
+      url: "{{ ai_dba_workbench_api }}/auth/login"
+      method: POST
+      body_format: json
+      body:
+        username: "{{ ai_dba_workbench_admin_user }}"
+        password: "{{ ai_dba_workbench_admin_password }}"
+      status_code: 200
+    register: ai_dba_workbench_relogin
+    no_log: true
+    failed_when: false
+
+  always:
+  - name: Remove the staged password
+    file:
+      path: "{{ ai_dba_workbench_admin_password_file }}"
+      state: absent
+    become: true
+
+- name: Report why the Workbench refused its administrator
+  fail:
+    msg: >-
+      Signing in to the AI DBA Workbench as {{ ai_dba_workbench_admin_user }}
+      got HTTP {{ signed_in.status | default(-1) }}: {{ signed_in.json.error
+      | default(signed_in.msg | default('')) }}. The Workbench disables an
+      account after ten refused sign-ins in a row; as root on
+      {{ inventory_hostname }},
+      "sudo -u pgedge {{ ai_dba_workbench_cli | join(' ') }}
+      -enable-user -username {{ ai_dba_workbench_admin_user }}" enables it
+      again.
+  vars:
+    signed_in: >-
+      {{ ai_dba_workbench_relogin
+         if ai_dba_workbench_admin_password_stale | bool
+         else ai_dba_workbench_login }}
+  when: signed_in.status | default(-1) != 200
+
+# The session lives only as long as the server process, and this role signs out
+# when it is done with it.
+
+- name: Keep the administrator's session
+  set_fact:
+    ai_dba_workbench_session: >-
+      {{ (ai_dba_workbench_relogin
+          if ai_dba_workbench_admin_password_stale | bool
+          else ai_dba_workbench_login).cookies.session_token }}
+  no_log: true

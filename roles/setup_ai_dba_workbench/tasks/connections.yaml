@@ -1,0 +1,159 @@
+---
+
+# Register every pgEdge node with the Workbench, through its REST API, as the
+# administrator. A node is registered under its inventory name, directly on its
+# own Postgres port rather than through a proxy or pooler, so the Workbench
+# sees each member of an HA zone apart and works out the cluster's replication
+# topology for itself. The collector then reads every database on each node.
+#
+# Nodes the inventory no longer lists are left registered: the Workbench cannot
+# tell which servers this role registered from those registered in its web
+# client, so it does not remove any.
+
+- name: Register the pgEdge nodes with the Workbench
+  block:
+  - name: List the servers the Workbench has registered
+    uri:
+      url: "{{ ai_dba_workbench_api }}/connections"
+      method: GET
+      headers:
+        Authorization: "Bearer {{ ai_dba_workbench_session }}"
+      status_code: 200
+    register: ai_dba_workbench_listed
+
+  # The list leaves out each server's user name and SSL mode, so the nodes
+  # already registered are read in full.
+
+  - name: Read each registered node in full
+    uri:
+      url: "{{ ai_dba_workbench_api }}/connections/{{ item.id }}"
+      method: GET
+      headers:
+        Authorization: "Bearer {{ ai_dba_workbench_session }}"
+      status_code: 200
+    loop: >-
+      {{ ai_dba_workbench_listed.json
+         | selectattr('name', 'in',
+                      ai_dba_workbench_connections
+                      | map(attribute='name') | list)
+         | list }}
+    loop_control:
+      label: "{{ item.name }}"
+    register: ai_dba_workbench_registered
+
+  # Whether the monitoring passwords have changed since the Workbench was last
+  # given them, which the record written at the end of this file tells. A node
+  # registered here before that record existed is given its password again.
+
+  - name: Check for a record of the monitoring passwords
+    stat:
+      path: "{{ ai_dba_workbench_passwords_record }}"
+      get_checksum: false
+    register: ai_dba_workbench_passwords_stat
+    become: true
+
+  - name: Read the record of the monitoring passwords
+    slurp:
+      src: "{{ ai_dba_workbench_passwords_record }}"
+    register: ai_dba_workbench_passwords_slurp
+    become: true
+    when: ai_dba_workbench_passwords_stat.stat.exists
+
+  # The request carries the node's password, which no_log keeps out of the
+  # output at every verbosity. That would hide the Workbench's explanation of a
+  # refusal as well, so this task records the outcome rather than failing, and
+  # the next one reports it.
+
+  - name: Register the pgEdge nodes the Workbench does not have
+    uri:
+      url: "{{ ai_dba_workbench_api }}/connections"
+      method: POST
+      headers:
+        Authorization: "Bearer {{ ai_dba_workbench_session }}"
+      body_format: json
+      body: >-
+        {{ item | combine({
+             'password': ai_dba_workbench_connection_passwords[item.name]}) }}
+      status_code: 201
+    loop: >-
+      {{ ai_dba_workbench_connections
+         | rejectattr('name', 'in',
+                      ai_dba_workbench_listed.json
+                      | map(attribute='name') | list)
+         | list }}
+    loop_control:
+      label: "{{ item.name }}"
+    register: ai_dba_workbench_created
+    no_log: true
+    failed_when: false
+    changed_when: ai_dba_workbench_created.status | default(-1) == 201
+
+  - name: Report why the Workbench refused to register a node
+    fail:
+      msg: >-
+        Registering {{ item.item.name }} with the AI DBA Workbench got HTTP
+        {{ item.status | default(-1) }}: {{ item.json.error
+        | default(item.msg | default('')) }}
+    loop: >-
+      {{ ai_dba_workbench_created.results | default([])
+         | rejectattr('skipped', 'defined')
+         | rejectattr('status', 'eq', 201) | list }}
+    loop_control:
+      label: "{{ item.item.name }}"
+
+  # A registered node whose record differs from the inventory is brought up to
+  # date with the fields that differ, and with its password where the
+  # passwords have changed. The Workbench keeps every field an update leaves
+  # out.
+
+  - name: Bring the registered nodes up to date
+    uri:
+      url: "{{ ai_dba_workbench_api }}/connections/{{ item.id }}"
+      method: PUT
+      headers:
+        Authorization: "Bearer {{ ai_dba_workbench_session }}"
+      body_format: json
+      body: "{{ item.changes }}"
+      status_code: 200
+    loop: "{{ ai_dba_workbench_updates }}"
+    loop_control:
+      label: "{{ item.name }}"
+    register: ai_dba_workbench_updated
+    # The request may carry the node's password, as the create does.
+    no_log: true
+    failed_when: false
+    changed_when: ai_dba_workbench_updated.status | default(-1) == 200
+
+  - name: Report why the Workbench refused to update a node
+    fail:
+      msg: >-
+        Updating {{ item.item.name }} in the AI DBA Workbench got HTTP
+        {{ item.status | default(-1) }}: {{ item.json.error
+        | default(item.msg | default('')) }}
+    loop: >-
+      {{ ai_dba_workbench_updated.results | default([])
+         | rejectattr('status', 'eq', 200) | list }}
+    loop_control:
+      label: "{{ item.item.name }}"
+
+  # Written only once every node has its password, so a run that failed part
+  # of the way through leaves the next run to give them again.
+
+  - name: Record the monitoring passwords the Workbench now has
+    copy:
+      content: "{{ ai_dba_workbench_passwords_digest }}"
+      dest: "{{ ai_dba_workbench_passwords_record }}"
+      owner: root
+      group: root
+      mode: "0600"
+    become: true
+
+  always:
+  - name: Sign out of the Workbench
+    uri:
+      url: "{{ ai_dba_workbench_api }}/auth/logout"
+      method: POST
+      headers:
+        Cookie: "session_token={{ ai_dba_workbench_session }}"
+      status_code: 200
+    changed_when: false

@@ -1,0 +1,47 @@
+---
+
+# Restart one of the Workbench's services when a file it reads is newer than
+# its running process, the way setup_lakekeeper decides for Lakekeeper, rather
+# than when this run changed one of them. A run that wrote a file and then
+# failed before the restart would otherwise leave the next run finding nothing
+# changed, and the service on its old settings for good. The templates write a
+# file only when its contents change, so a file newer than the process is one
+# the service has not read, and a service this run just started has read them
+# all.
+#
+# The start time is the current time less the process's age, both in whole
+# seconds, so it can be off by up to a second, and that second is allowed for.
+# A service that has already exited has no process, reads as never started, and
+# is restarted.
+#
+# Included once per service, with ai_dba_workbench_unit naming its systemd unit
+# and ai_dba_workbench_unit_files the files it reads.
+
+- name: Read when {{ ai_dba_workbench_unit }} started
+  shell: >-
+    pid=$(systemctl show --property=MainPID
+    --value {{ ai_dba_workbench_unit }});
+    if [ "${pid:-0}" -gt 0 ]; then
+    echo $(( $(date +%s) - $(ps -o etimes= -p "${pid}") ));
+    else echo 0; fi
+  register: ai_dba_workbench_unit_start
+  changed_when: false
+  become: true
+
+- name: Read when the files {{ ai_dba_workbench_unit }} reads were written
+  stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop: "{{ ai_dba_workbench_unit_files }}"
+  register: ai_dba_workbench_unit_file_stats
+  become: true
+
+- name: Restart {{ ai_dba_workbench_unit }} to apply its new settings
+  systemd:
+    name: "{{ ai_dba_workbench_unit }}"
+    state: restarted
+  become: true
+  when: >-
+    ai_dba_workbench_unit_file_stats.results
+    | map(attribute='stat.mtime') | max
+    > ai_dba_workbench_unit_start.stdout | float + 1

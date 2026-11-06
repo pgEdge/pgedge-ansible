@@ -1,0 +1,22 @@
+---
+
+# The databases this role prepares for the pgEdge AI DBA Workbench's collector
+# on a node: db_names, the maintenance database, and ColdFront's database where
+# ColdFront keeps one apart from db_names. The collector also visits any other
+# database that accepts connections and is not a template, such as one created
+# outside the collection, finds no pg_stat_statements there and skips that
+# probe; the view in these databases reports that database's statements too.
+
+ai_dba_workbench_monitored_dbs: >-
+  {{ (db_names + ['postgres']
+      + ([coldfront_db] if coldfront_enabled | bool else []))
+     | unique }}
+
+# libpq options for a session whose DDL Spock must not replicate. Each node
+# creates the Workbench's objects itself, so a replicated copy of the statement
+# would reach nodes that already hold the object and fail there as a Spock
+# apply exception. spock.enable_ddl_replication is settable by any session, and
+# defined in every database, since Spock is always preloaded.
+
+ai_dba_workbench_ddl_params:
+  options: "-c spock.enable_ddl_replication=off"
