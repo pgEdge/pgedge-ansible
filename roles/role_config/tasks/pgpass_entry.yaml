@@ -1,0 +1,52 @@
+---
+
+# Give an OS user's ~/.pgpass one entry for a Postgres role, with its current
+# password:
+#
+#   pgpass_os_user   the OS user whose ~/.pgpass this is
+#   pgpass_role      the Postgres role the entry is for
+#   pgpass_password  that role's password
+#
+# libpq uses the first entry that matches, so a changed password has to
+# replace the old entry rather than join it. Any entry for the role with a
+# different password is removed first, which also clears the duplicates an
+# earlier version of the collection left behind each time a password changed.
+# A colon or backslash inside a field is escaped with a backslash, as .pgpass
+# requires. The backslash comes from a single-quoted YAML string, which holds
+# it as written, because Ansible releases disagree on what a backslash inside
+# a Jinja string literal means.
+#
+# Both tasks name the password, and --diff would print it.
+
+- name: Remove outdated .pgpass entries for {{ pgpass_role }}
+  lineinfile:
+    path: ~/.pgpass
+    regexp: >-
+      ^\*:\*:\*:{{ pgpass_entry_role | regex_escape }}:(?!{{
+      pgpass_entry_password | regex_escape }}$)
+    state: absent
+  vars:
+    pgpass_entry_role: >-
+      {{ pgpass_role | replace(bs, bs ~ bs) | replace(':', bs ~ ':') }}
+    pgpass_entry_password: >-
+      {{ pgpass_password | replace(bs, bs ~ bs) | replace(':', bs ~ ':') }}
+    bs: '\'
+  become: true
+  become_user: "{{ pgpass_os_user }}"
+  diff: false
+
+- name: Ensure {{ pgpass_os_user }} can connect to Postgres as {{ pgpass_role }}
+  lineinfile:
+    path: ~/.pgpass
+    line: "*:*:*:{{ pgpass_entry_role }}:{{ pgpass_entry_password }}"
+    create: true
+    mode: "0600"
+  vars:
+    pgpass_entry_role: >-
+      {{ pgpass_role | replace(bs, bs ~ bs) | replace(':', bs ~ ':') }}
+    pgpass_entry_password: >-
+      {{ pgpass_password | replace(bs, bs ~ bs) | replace(':', bs ~ ':') }}
+    bs: '\'
+  become: true
+  become_user: "{{ pgpass_os_user }}"
+  diff: false

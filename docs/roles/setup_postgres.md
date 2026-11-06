@@ -85,7 +85,9 @@ When `is_ha_cluster` is `false`, the role performs the following steps:
    is already running, the worker and slot pools never shrink beneath what it
    uses; see [Sizing Floor](role_config.md#sizing-floor).
 4. Configure `pg_hba.conf` with least-privilege rules for all known users
-   and databases. Apply any additional rules from `custom_hba_rules`.
+   and databases. On a non-HA cluster with a backup repository, allow the
+   `backup_user` from the zone's backup hosts. Apply any additional rules from
+   `custom_hba_rules`.
 5. Start and enable the Postgres service. If the service was already running
    and the configuration or `pg_hba.conf` changed, reload it. If Postgres then reports
    parameters waiting on a restart, restart it, or report them when

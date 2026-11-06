@@ -30,10 +30,3 @@
   when:
   - inventory_hostname == zone_primary
   - pg_version | int > 14
-
-# We need to patch the pg_hba.conf file to include the backup user and host as
-# an allowed connection target. We only need to do this for a regular cluster,
-# as the Patroni config will handle it otherwise.
-
-- include_tasks: add_hba_rules.yaml
-  when: not is_ha_cluster

@@ -222,7 +222,7 @@ jobs:
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS $REPO_ARGS
 
-      - name: Check the pooler roles are idempotent
+      - name: Check a second deployment run changes nothing
         run: |
           tests/check-idempotence.sh \
             tests/inventories/ultra-ha.yml \
@@ -231,6 +231,29 @@ jobs:
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS $REPO_ARGS
+
+      # A switchover leaves each zone's leader somewhere other than its first
+      # node, and a deployment run after one must change nothing either. The
+      # leaders go back afterwards, so the steps below see the cluster as
+      # deployed.
+      - name: Check a deployment run after a switchover changes nothing
+        run: |
+          move_leaders() {
+            ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+              tests/playbooks/move-leaders.yml \
+              -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+              --private-key tests/.ssh/id_ed25519 \
+              $DCS_VARS -e leaders_to="$1"
+          }
+          move_leaders second
+          tests/check-idempotence.sh \
+            tests/inventories/ultra-ha.yml \
+            tests/playbooks/ultra-ha.yml \
+            $BACKUP_ARGS $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }} \
+            $DCS_VARS $REPO_ARGS
+          move_leaders first
 
       - name: Check packages came from the site's repository
         if: inputs.repo != 'pgedge'

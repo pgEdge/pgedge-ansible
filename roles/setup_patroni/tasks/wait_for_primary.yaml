@@ -21,5 +21,6 @@
   retries: 30
   delay: 10
   until: patroni_status.stdout  == 'running'
+  changed_when: false
   become: true
   become_user: postgres

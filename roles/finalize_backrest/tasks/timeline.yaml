@@ -2,9 +2,11 @@
 
 # Read the cluster's timeline and the history that led to it. On a pgEdge node
 # that is the node this runs on, the zone's primary. A backup server has no
-# Postgres of its own and asks the zone's first pgEdge node; any member will do
-# there, since a replica follows its leader's timeline and holds the same
-# history files.
+# Postgres of its own and asks the zone's primary too, which the zone's nodes
+# found earlier in the play. Not any member will do: a replica's checkpoint
+# moves to a new timeline only at its next restartpoint, so just after a
+# failover it can still report the old one, and a backup already taken on the
+# new timeline would look unrestorable and be replaced by a full one.
 
 - name: Read this cluster's timeline and its history
   community.postgresql.postgresql_query:
@@ -23,7 +25,7 @@
   check_mode: false
   delegate_to: >-
     {{ inventory_hostname if inventory_hostname in groups.pgedge
-       else first_node_in_zone }}
+       else hostvars[first_node_in_zone].zone_primary }}
   become: true
   become_user: postgres
 

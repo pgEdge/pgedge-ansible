@@ -46,6 +46,28 @@ in full.
   getting from the collection, and says to retire the database before
   removing its name, since Spock cannot drop a subscription's slot once
   `pg_hba.conf` no longer admits it. (EE-44)
+- Running the deployment playbook again on a deployed cluster reports no
+  changes, including after Patroni has moved a zone's leader off its first
+  node. Tasks that reported a change they did not make now report none, and
+  the end-to-end tests run every deployment a second time, once with the
+  leaders moved, and fail on any change. In SSH mode, `known_hosts` entries
+  come from the gathered host keys rather than an `ssh-keyscan` whose order
+  varied between runs. (EE-49)
+- A changed `pgedge_password`, `replication_password` or `backup_password`
+  replaces the old `.pgpass` entry rather than being added after it, where
+  the old entry kept being used. Colons and backslashes in passwords are now
+  escaped there. (EE-49)
+- On a simple cluster with a backup repository, a second deployment run no
+  longer removes the backup server's `pg_hba.conf` rules and adds them back,
+  reloading Postgres twice and refusing the backup server in between. (EE-49)
+- After a failover, the backup server reads the timeline from the zone's
+  primary rather than its first node, so a rerun can no longer take an
+  unneeded full backup. The repository checks run on the zone's primary, so a
+  replica rebuilt from scratch is no longer mistaken for a new cluster beside
+  an existing repository, and Patroni forces a restart only on a zone it is
+  bootstrapping. (EE-49)
+- `recover_postgres` no longer pauses or aborts replay at WAL written after
+  the pools grew past the size the restored node started with. (EE-49)
 
 ## v2.1.0
 

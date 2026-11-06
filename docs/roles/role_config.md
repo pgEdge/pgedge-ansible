@@ -217,6 +217,25 @@ counts both only when `unmanaged_db_names` lists the removed one.
 cluster, and `setup_patroni` includes it before writing `patroni.yml` and the
 zone's store.
 
+### Password File Entries
+
+The role provides a `pgpass_entry` task file that gives an OS user's
+`~/.pgpass` one entry for a Postgres role. It takes three variables:
+
+- `pgpass_os_user` is the OS user whose `~/.pgpass` the entry belongs to.
+- `pgpass_role` is the Postgres role the entry is for.
+- `pgpass_password` is that role's password.
+
+libpq uses the first entry that matches a connection, so a changed password
+has to replace the old entry rather than follow it. The task file first
+removes any entry for the role with a different password, and then writes the
+current one, escaping colons and backslashes as `.pgpass` requires. A run
+whose password has not changed changes nothing.
+
+`setup_postgres` uses it for `replication_user` on every HA node,
+`setup_pgedge` for `pgedge_user`, and `setup_backrest` for `backup_user` on a
+backup server.
+
 ### ColdFront and Lakekeeper Settings
 
 ColdFront's settings are defined here because `setup_postgres` writes them

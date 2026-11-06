@@ -1,0 +1,86 @@
+---
+# Move each Ultra-HA zone's Patroni leader between its first and second node.
+#
+#   -e leaders_to=second   off the first node, as a failover would leave it
+#   -e leaders_to=first    back where the deployment put it
+#
+# A deployment puts every zone's leader on its first node, and nothing moves it
+# until a failover or a switchover does. Running the deployment playbook again
+# afterwards is an ordinary thing to do, and anything in the collection that
+# still takes the first node for the primary only shows itself then. The caller
+# moves the leaders off, runs tests/check-idempotence.sh, and moves them back
+# so the steps after it see the cluster as deployed.
+#
+# Ultra-HA only: a simple cluster's zones have one node each, and the caller
+# skips this for one.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    ctl: >-
+      patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}
+    second_node_in_zone: "{{ nodes_in_zone[1] | default('') }}"
+    leader_from: >-
+      {{ first_node_in_zone if leaders_to == 'second' else second_node_in_zone }}
+    leader_to: >-
+      {{ second_node_in_zone if leaders_to == 'second' else first_node_in_zone }}
+
+  tasks:
+  - name: Ensure leaders_to names the first or the second node
+    assert:
+      that:
+      - leaders_to | default('') in ['first', 'second']
+      fail_msg: Set leaders_to to 'first' or 'second'.
+    run_once: true
+
+  # role_config's variables, nodes_in_zone among them, are visible here only
+  # once one of its task files has been included.
+
+  - name: Find each zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+
+  - name: Ensure each zone's leader is where this expects to move it from
+    assert:
+      that:
+      - zone_primary == leader_from
+      fail_msg: >-
+        Zone {{ zone }} is led by {{ zone_primary }}, not {{ leader_from }},
+        so there is nothing for this to move.
+
+  # Patroni names its members by host name, and the inventory by address.
+
+  - name: Move each zone's leader
+    become: true
+    become_user: postgres
+    command: >-
+      {{ ctl }} switchover {{ patroni_scope }}
+      --leader {{ hostvars[leader_from].ansible_hostname }}
+      --candidate {{ hostvars[leader_to].ansible_hostname }}
+      --force
+    when: inventory_hostname == first_node_in_zone
+
+  - name: Wait for the new leader to run and every member to follow it
+    become: true
+    become_user: postgres
+    shell: |-
+      set -o pipefail
+      {{ ctl }} list {{ patroni_scope }} -f json \
+          | jq -c 'map({(.Host | sub(":[0-9]+$"; "")): [.Role, .State]}) | add'
+    args:
+      executable: /bin/bash
+    register: moved_members
+    until: >-
+      moved_members.rc == 0 and
+      (moved_members.stdout | from_json)[leader_to] == ['Leader', 'running'] and
+      (moved_members.stdout | from_json).values() | map('last')
+        | reject('in', ['running', 'streaming']) | list | length == 0
+    retries: 30
+    delay: 2
+    changed_when: false
