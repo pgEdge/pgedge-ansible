@@ -87,9 +87,10 @@ services:
       pgedge-test:
         ipv4_address: 192.168.6.19
 
-  # A node for zone 1 that the deployment leaves out. It is added to the zone
-  # afterwards, with tests/inventories/ultra-ha-node-add.yml layered on, to
-  # check that a node joins a running zone. Its address is clear of the
+  # Two nodes for zone 1 that the deployment leaves out. They are added to the
+  # zone afterwards, with tests/inventories/ultra-ha-node-add.yml layered on,
+  # to check that nodes join a running zone: pgedge7 as a learner an earlier
+  # run left unpromoted, pgedge8 fresh. Their addresses are clear of the
   # overlays', which take .20 and .21.
   pgedge7:
     <<: *common
@@ -97,6 +98,13 @@ services:
     networks:
       pgedge-test:
         ipv4_address: 192.168.6.22
+
+  pgedge8:
+    <<: *common
+    hostname: pgedge8
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.23
 
   # A host in no deployment group, named by no pg_hba rule: the only vantage
   # point from which the access gates are observable. Its address is well clear

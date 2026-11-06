@@ -50,11 +50,14 @@ the limit.
   a started member of its zone. See
   [Joining a Running Zone](../roles/setup_etcd.md#joining-a-running-zone).
   (#67)
-- The Ultra-HA end-to-end tests add a seventh node to zone 1 once everything
-  else has run, and check that it joins: every member of the zone's etcd votes
-  and is healthy, Patroni sees the whole zone with one leader and the new node
-  streaming from it, a row written on the leader reaches it, and a second
-  deployment run changes nothing. (#67)
+- The Ultra-HA end-to-end tests add two nodes to zone 1 once everything else
+  has run, and check that they join: every member of the zone's etcd votes and
+  is healthy, Patroni sees the whole zone with one leader and the new nodes
+  streaming from it, a row written on the leader reaches them, and a second
+  deployment run changes nothing. With etcd, one of the two is first left as
+  the unpromoted learner an interrupted join leaves, ahead of which the other
+  is listed, so the run has to finish the learner before it adds the fresh
+  node. (#67)
 - New `zone_primary` task file in `role_config` records, as the `zone_primary`
   fact, the node running each zone's primary: the zone's only node on a simple
   cluster, and the node Patroni reports as leader on an HA one. Only a zone

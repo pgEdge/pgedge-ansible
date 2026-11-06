@@ -64,21 +64,28 @@
 # is whole again before its membership changes, and before the restarts below,
 # whose health checks a learner would fail. Every host includes the file once
 # per node and acts only on its own turn, as with the restarts.
+#
+# Learners go first. etcd allows a zone only one, so a node new to the zone
+# cannot be added while a stopped run's learner is still waiting for promotion.
+# That learner may also be joining, if it never started and so has no data, and
+# unique keeps it in the place its first appearance gives it.
 
 - include_tasks: join.yaml
   loop: "{{ etcd_join_hosts }}"
   loop_control:
     loop_var: etcd_join_host
   vars:
-    etcd_join_hosts: >-
+    etcd_learner_hosts: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('etcd_learner', 'defined')
+         | selectattr('etcd_learner')
+         | map(attribute='inventory_hostname') | list }}
+    etcd_joining_hosts: >-
       {{ ansible_play_hosts | map('extract', hostvars)
          | selectattr('etcd_joining', 'defined')
          | selectattr('etcd_joining')
-         | map(attribute='inventory_hostname')
-         | union(ansible_play_hosts | map('extract', hostvars)
-                 | selectattr('etcd_learner', 'defined')
-                 | selectattr('etcd_learner')
-                 | map(attribute='inventory_hostname')) | list }}
+         | map(attribute='inventory_hostname') | list }}
+    etcd_join_hosts: "{{ (etcd_learner_hosts + etcd_joining_hosts) | unique }}"
 
 # A joined member started with the configuration it joined with. It now gets the
 # zone's own, the same as every other member's, and the comparison below finds

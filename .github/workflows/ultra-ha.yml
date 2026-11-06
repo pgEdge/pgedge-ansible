@@ -171,7 +171,7 @@ jobs:
 
       - name: Wait for SSH
         run: |
-          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.22 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }}; do
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.22 192.168.6.23 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }}; do
             ready=0
             for i in $(seq 1 30); do
               ssh -i tests/.ssh/id_ed25519 \
@@ -350,14 +350,24 @@ jobs:
 
       # After the recovery, which wipes and rebuilds the cluster from the base
       # inventory: a node joined before it would be left out of the wipe,
-      # still a member of an etcd its zone had erased. The node's container
-      # was started with the rest and left out of the inventory until now. Not
-      # with ColdFront, whose layer this has not been tried with.
-      - name: Check a node added to a zone joins it
+      # still a member of an etcd its zone had erased. The nodes' containers
+      # were started with the rest and left out of the inventory until now.
+      # Where the collection runs etcd, one of them is first left as a learner
+      # an interrupted join would leave, which the deployment has to promote
+      # before it can add the other. Not with ColdFront, whose layer this has
+      # not been tried with.
+      - name: Check nodes added to a zone join it
         if: ${{ !inputs.coldfront }}
         env:
           NODE_ADD_ARGS: -i tests/inventories/ultra-ha-node-add.yml
         run: |
+          if [ "${{ matrix.dcs }}" = etcd3 ]; then
+            ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+              tests/playbooks/interrupt-node-add.yml \
+              -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \
+              --private-key tests/.ssh/id_ed25519 \
+              $DCS_VARS
+          fi
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/playbooks/ultra-ha.yml \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \

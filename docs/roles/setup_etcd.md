@@ -137,7 +137,8 @@ members would refuse it. The role adds it to the running cluster instead.
 Nodes join one at a time, because etcd takes one membership change at a time.
 Every step is safe to repeat, so a run stopped partway through a join is
 finished by the next: a node already added is not added again, and a learner
-left unpromoted is promoted.
+left unpromoted is promoted. Such a learner is finished before any other node
+joins, because etcd allows a zone only one learner.
 
 The role decides whether a node has data from its write-ahead log, as etcd
 does, rather than from its data directory alone. It stops the run rather than

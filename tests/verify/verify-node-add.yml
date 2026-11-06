@@ -1,5 +1,5 @@
 ---
-# Verify a node added to a running zone, after the deployment playbook has run
+# Verify nodes added to a running zone, after the deployment playbook has run
 # with tests/inventories/ultra-ha-node-add.yml layered onto the inventory.
 #
 # This checks what adding a node to a zone promises:

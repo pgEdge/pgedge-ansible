@@ -1,15 +1,26 @@
-# Layered onto ultra-ha.yml, after the cluster is deployed, to add a fourth
-# node to zone 1 the way an operator would: by listing it in the inventory and
+# Layered onto ultra-ha.yml, after the cluster is deployed, to add two nodes to
+# zone 1 the way an operator would: by listing them in the inventory and
 # running the deployment again. Pass both:
 #
 #   ansible-playbook -i tests/inventories/ultra-ha.yml \
 #                    -i tests/inventories/ultra-ha-node-add.yml ...
 #
-# The node's container is in every Ultra-HA compose file, so it is already
-# running when the cluster is first deployed without it.
+# The nodes' containers are in every Ultra-HA compose file, so they are already
+# running when the cluster is first deployed without them.
+#
+# Where the collection runs etcd, tests/playbooks/interrupt-node-add.yml first
+# adds the node marked interrupted_join to its zone as a learner and goes no
+# further, as a deployment stopped partway through its join would. The fresh
+# node is listed ahead of it, so the deployment has to promote the learner
+# before it adds the fresh node, whatever order the play takes them in: etcd
+# allows a zone only one learner.
 
 pgedge:
   hosts:
+    192.168.6.23:
+      zone: 1
+      added_node: true
     192.168.6.22:
       zone: 1
       added_node: true
+      interrupted_join: true
