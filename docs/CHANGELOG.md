@@ -12,6 +12,11 @@ in full.
 
 ### Added
 
+- A node added to the inventory of an Ultra-HA zone that already runs joins
+  the zone when the deployment playbook runs again. Where the collection runs
+  etcd, `setup_etcd` adds the node to the zone's etcd cluster as a learner,
+  starts it, and promotes it once it has caught up, one node at a time.
+  (#67)
 - New `zone_primary` task file in `role_config` finds the node running each
   zone's primary, for any role that writes to the zone, and stops the run if
   that node is not in the play or the zone's nodes disagree on it. A built

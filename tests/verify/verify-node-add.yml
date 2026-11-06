@@ -1,0 +1,190 @@
+---
+# Verify a node added to a running zone, after the deployment playbook has run
+# with tests/inventories/ultra-ha-node-add.yml layered onto the inventory.
+#
+# This checks what adding a node to a zone promises:
+#
+#   - where the collection runs etcd, the zone's etcd counts the new node as a
+#     voting member, every member is healthy, and every member's configuration
+#     names the whole zone as it would for a fresh bootstrap,
+#   - Patroni in each zone sees every node in the zone, with one leader,
+#   - the new node streams from its zone's leader as a replica,
+#   - and a row written on the zone's leader arrives on the new node.
+#
+# Run it against the layered inventory, before the second deployment run that
+# checks the addition left nothing more to do.
+
+- hosts: pgedge
+  any_errors_fatal: true
+  become: true
+
+  vars:
+    pg_version: 17
+    cluster_name: demo
+    dcs_type: "{{ patroni_dcs.type | default('etcd3') }}"
+    nodes_in_zone: >-
+      {{ groups['pgedge'] |
+      map('extract', hostvars) |
+      selectattr('zone', 'eq', zone) |
+      map(attribute='inventory_hostname') | list }}
+    added_nodes: >-
+      {{ groups['pgedge'] | map('extract', hostvars)
+         | selectattr('added_node', 'defined') | selectattr('added_node')
+         | map(attribute='inventory_hostname') | list }}
+    etcdctl: >-
+      /usr/local/etcd/etcdctl
+      --endpoints=https://127.0.0.1:2379
+      --cacert=/etc/etcd/tls/ca.crt
+      --cert=/etc/etcd/tls/server.crt
+      --key=/etc/etcd/tls/server.key
+
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version }}/bin:/usr/lib/postgresql/{{ pg_version }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  - name: Ensure the inventory adds a node to test
+    assert:
+      that: added_nodes | length > 0
+      fail_msg: >-
+        No pgEdge node is marked added_node. Layer
+        tests/inventories/ultra-ha-node-add.yml onto the inventory.
+    run_once: true
+
+  # etcd, where the collection runs it.
+
+  - when: dcs_type in ('etcd', 'etcd3')
+    block:
+    - name: Read the zone's etcd membership
+      command: "{{ etcdctl }} member list -w json"
+      register: etcd_members_raw
+      changed_when: false
+
+    - name: Assert every node in the zone is a started, voting etcd member
+      vars:
+        members: "{{ (etcd_members_raw.stdout | from_json).members }}"
+        peer_urls: "{{ members | map(attribute='peerURLs') | flatten | sort }}"
+        expected_urls: >-
+          {{ nodes_in_zone | map('regex_replace', '^(.*)$', 'https://\1:2380')
+             | sort }}
+      assert:
+        that:
+        - peer_urls == expected_urls
+        - members | selectattr('isLearner', 'defined')
+                  | selectattr('isLearner') | list | length == 0
+        - members | rejectattr('name', 'defined') | list | length == 0
+        fail_msg: >-
+          The etcd cluster in zone {{ zone }} has members {{ members }}, but
+          the zone's nodes are {{ nodes_in_zone }}. Each should be a started,
+          voting member: named, and not a learner.
+
+    - name: Check every etcd member in the zone is healthy
+      command: "{{ etcdctl }} endpoint health --cluster"
+      changed_when: false
+
+    # Once joined, a member keeps the same bootstrap settings as the rest of
+    # its zone: the whole zone, as a new cluster. A member left with the ones
+    # it joined with would be rewritten, and restarted, by the next deployment.
+
+    - name: Read the etcd configuration
+      slurp:
+        src: /etc/etcd/etcd.yaml
+      register: etcd_config_raw
+
+    - name: Assert the configuration bootstraps the whole zone
+      vars:
+        config: "{{ etcd_config_raw.content | b64decode | from_yaml }}"
+        cluster_urls: >-
+          {{ config['initial-cluster'].split(',')
+             | map('regex_replace', '^[^=]*=', '') | sort }}
+        expected_urls: >-
+          {{ nodes_in_zone | map('regex_replace', '^(.*)$', 'https://\1:2380')
+             | sort }}
+      assert:
+        that:
+        - config['initial-cluster-state'] == 'new'
+        - cluster_urls == expected_urls
+        fail_msg: >-
+          etcd on {{ inventory_hostname }} has initial-cluster
+          {{ config['initial-cluster'] }} as
+          {{ config['initial-cluster-state'] }}, rather than the whole zone
+          as new.
+
+  # Patroni, whatever its store.
+
+  - name: Read Patroni's view of the zone
+    uri:
+      url: "http://127.0.0.1:8008/cluster"
+      return_content: true
+    register: patroni_cluster
+    retries: 30
+    delay: 2
+    until: >-
+      patroni_cluster.json is defined and
+      patroni_cluster.json.members | length == nodes_in_zone | length and
+      patroni_cluster.json.members
+        | selectattr('role', 'ne', 'leader')
+        | rejectattr('state', 'eq', 'streaming') | list | length == 0
+
+  - name: Assert Patroni sees the whole zone, with one leader
+    vars:
+      members: "{{ patroni_cluster.json.members }}"
+    assert:
+      that:
+      - members | length == nodes_in_zone | length
+      - members | selectattr('role', 'eq', 'leader') | list | length == 1
+      - members | selectattr('role', 'ne', 'leader')
+                | rejectattr('state', 'eq', 'streaming') | list | length == 0
+      fail_msg: >-
+        Patroni on {{ inventory_hostname }} reports {{ members }} for a zone of
+        {{ nodes_in_zone }}. Every node should be there, one the leader and the
+        rest streaming from it.
+
+  - name: Note the zone's leader
+    set_fact:
+      zone_leader: >-
+        {{ patroni_cluster.json.members | selectattr('role', 'eq', 'leader')
+           | map(attribute='host') | first }}
+
+  - name: Assert the added node is a replica
+    assert:
+      that: zone_leader != inventory_hostname
+      fail_msg: >-
+        The node added to zone {{ zone }} became its leader. It should have
+        joined as a replica, leaving the leader where it was.
+    when: inventory_hostname in added_nodes
+
+  # A row written on the leader, read back on the new node. Physical
+  # replication carries it, so this proves the replica is a copy of its zone and
+  # not a fresh cluster of its own that Patroni happens to list.
+
+  - name: Write a marker row on the zone's leader
+    become_user: postgres
+    command: >-
+      psql -d postgres -v ON_ERROR_STOP=1 -c
+      "CREATE TABLE IF NOT EXISTS node_add_marker (host text PRIMARY KEY);
+       INSERT INTO node_add_marker VALUES ('{{ added }}')
+       ON CONFLICT DO NOTHING"
+    loop: "{{ added_nodes | select('in', nodes_in_zone) | list }}"
+    loop_control:
+      loop_var: added
+    when: inventory_hostname == zone_leader
+
+  - name: Read the marker row on the added node
+    become_user: postgres
+    command: >-
+      psql -d postgres -t -A -c
+      "SELECT count(*) FROM node_add_marker
+       WHERE host = '{{ inventory_hostname }}'"
+    register: marker
+    changed_when: false
+    retries: 15
+    delay: 2
+    until: marker.rc == 0 and marker.stdout == '1'
+    when: inventory_hostname in added_nodes
+
+  - name: Drop the marker table
+    become_user: postgres
+    command: psql -d postgres -c "DROP TABLE IF EXISTS node_add_marker"
+    when:
+    - inventory_hostname == zone_leader
+    - added_nodes | select('in', nodes_in_zone) | list | length > 0

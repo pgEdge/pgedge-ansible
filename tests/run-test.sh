@@ -438,6 +438,38 @@ if [ "$COLDFRONT" = false ]; then
     -v
 fi
 
+# Step 11: A node added to a running zone joins it: listed in the inventory,
+# with the deployment run again. Its container was started with the rest and
+# left out of the inventory until now. Last, because the cluster it leaves has
+# a fourth node in zone 1 that the steps above do not expect. Not with
+# ColdFront, whose layer this has not been tried with.
+if [ "$SCENARIO" = "ultra-ha" ] && [ "$COLDFRONT" = false ]; then
+  echo "==> Step 11: Checking a node added to a zone joins it..."
+  NODE_ADD_ARGS=(-i "$SCRIPT_DIR/inventories/${SCENARIO}-node-add.yml")
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/verify/verify-node-add.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+  echo "==> Step 11b: Checking a deployment run after adding the node changes nothing..."
+  "$SCRIPT_DIR/check-idempotence.sh" \
+    "$INVENTORY" \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]:2}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}"
+fi
+
 echo ""
 echo "========================================="
 echo "  TEST PASSED: ${SCENARIO} on ${OS} (dcs=${DCS}, backup=${BACKUP}${REPO_LAYOUT:+, repo=$REPO_LAYOUT})"

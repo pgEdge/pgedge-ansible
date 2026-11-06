@@ -129,6 +129,26 @@ functionality.
 2. Run the playbook again to reconfigure the full cluster.
 3. Verify Spock replication to the new node using the commands above.
 
+### Adding a Node to an Ultra-HA Zone
+
+A zone in an Ultra-HA cluster can grow while it runs. The new node joins the
+zone as another Patroni replica, without moving the zone's leader.
+
+1. Add the new node to the inventory with the zone number of the zone it
+   joins.
+2. Run the deployment playbook again against the whole inventory.
+
+Where the collection runs etcd, `setup_etcd` adds the new node to its zone's
+etcd cluster before starting it, first as a learner that does not count toward
+the zone's quorum, and then promotes it to a voting member once it has caught
+up. The zone's other members are then restarted one at a time, so their
+configuration lists the new node too. See
+[setup_etcd](roles/setup_etcd.md#joining-a-running-zone).
+
+Prefer an odd number of nodes in each zone. etcd needs a majority of a zone's
+members to keep running, so a zone of four survives the loss of one member, no
+more than a zone of three does, and a zone of two survives the loss of none.
+
 ### Disaster Recovery
 
 When a node fails in a Spock cluster, restore it on a provisioned recovery

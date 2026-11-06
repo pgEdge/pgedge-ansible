@@ -1,0 +1,130 @@
+---
+
+# Decide, for each zone, whether its etcd is already running and which of its
+# nodes have to join it rather than bootstrap it.
+#
+# A zone's members bootstrap together, each with initial-cluster-state: new and
+# the whole zone in initial-cluster, which is what the template renders. That
+# only works while no member holds any data. Once the zone runs, a node with an
+# empty data directory -- one just added to the inventory -- cannot bootstrap:
+# its cluster ID would be derived from a membership the running members never
+# had, and they refuse it. It has to be added to the running cluster with
+# etcdctl first, and then started with initial-cluster-state: existing and the
+# membership the cluster reports. join.yaml does that, one node at a time.
+#
+# Whether a member holds data is decided by its write-ahead log rather than by
+# its data directory, because that is what etcd itself decides by. A node whose
+# first start failed partway can be left with the directory and no log, and etcd
+# then reads the bootstrap settings again exactly as for an empty one.
+
+- name: Check for an etcd write-ahead log on this node
+  stat:
+    path: "{{ etcd_data_dir }}/postgresql/member/wal"
+  register: etcd_wal
+  become: true
+
+# Whether the zone runs is asked of the zone itself, through each member that
+# holds data, rather than inferred from the data alone: a zone whose first
+# bootstrap failed may have data on some members and no cluster to join. A
+# member that does not answer is not an error here. It may simply be stopped,
+# which setup.yaml starts; the facts below decide what its silence means.
+#
+# member list is linearizable, so an answer also says the zone has a quorum to
+# add a member with. It runs in check mode too, since it only reads.
+
+- name: Ask this member which members its zone's etcd has
+  command: >-
+    {{ etcd_install_dir }}/etcdctl
+    --endpoints=https://127.0.0.1:2379
+    --cacert={{ etcd_tls_dir }}/ca.crt
+    --cert={{ etcd_tls_dir }}/server.crt
+    --key={{ etcd_tls_dir }}/server.key
+    --command-timeout=10s
+    member list -w json
+  register: etcd_member_query
+  become: true
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: etcd_wal.stat.exists
+
+# etcd_zone_answering lists the zone's members that answered, and the
+# membership is taken from the first of them. etcd_joining marks a node with no
+# data in a zone that runs. etcd_member is this node's own entry in the
+# membership, matched by peer URL rather than by name: a member added but never
+# started has no name yet. etcd_learner marks one that was added as a learner
+# and never promoted, which a run stopped partway through a join leaves behind.
+
+- name: Note whether this node's zone runs and whether this node joins it
+  set_fact:
+    etcd_zone_answering: "{{ zone_answering }}"
+    etcd_zone_members: "{{ zone_members }}"
+    etcd_joining: "{{ zone_answering | length > 0 and not etcd_wal.stat.exists }}"
+    etcd_member: "{{ own_member }}"
+    etcd_learner: "{{ own_member.isLearner | default(false) | bool }}"
+  vars:
+    zone_answering: >-
+      {{ nodes_in_zone | map('extract', hostvars)
+         | selectattr('etcd_member_query.rc', 'defined')
+         | selectattr('etcd_member_query.rc', 'eq', 0)
+         | map(attribute='inventory_hostname') | list }}
+    zone_members: >-
+      {{ (hostvars[zone_answering | first].etcd_member_query.stdout
+          | from_json).members
+         if zone_answering | length > 0 else [] }}
+    own_member: >-
+      {{ zone_members
+         | selectattr('peerURLs', 'contains',
+                      'https://' ~ inventory_hostname ~ ':2380')
+         | first | default({}) }}
+
+# A zone with data on some of its members, none of which answer, and no data on
+# the rest is one whose state cannot be told from here. It may be a running zone
+# whose members are all stopped, which the new nodes cannot join until it is
+# back; or a first bootstrap that failed partway, which the members with data
+# cannot finish without the others. Bootstrapping the empty ones with the rest
+# risks the members with data refusing them, or panicking on a log they expected
+# them to hold. A zone whose members all hold data, all stopped, is left to
+# setup.yaml, which starts them together as it always has.
+
+- name: Refuse to guess at the state of a zone with partial etcd data
+  fail:
+    msg: >-
+      Some etcd members in zone {{ zone }} have data and others have none, but
+      none of those with data answered, so there is no telling whether the zone
+      has a running cluster for the others to join. Members with data:
+      {{ with_data | join(', ') }}. Without: {{ without_data | join(', ') }}.
+      If the zone's etcd was running, start it on the members with data and run
+      the deployment again. If its first deployment failed partway, wipe the
+      zone's etcd data and deploy it again.
+  vars:
+    with_data: >-
+      {{ nodes_in_zone | map('extract', hostvars)
+         | selectattr('etcd_wal.stat.exists')
+         | map(attribute='inventory_hostname') | list }}
+    without_data: "{{ nodes_in_zone | difference(with_data) }}"
+  when:
+  - etcd_zone_answering | length == 0
+  - with_data | length > 0
+  - without_data | length > 0
+
+# A node with no data whose address the membership already names as a started
+# member -- one with a name -- was a member and has lost its data since: a
+# rebuilt server, or a data directory erased by hand. The cluster still counts
+# the old member toward its quorum, and etcd does not let a new member take an
+# existing one's place. Removing it is not something to do on a guess, so the
+# run stops and says how. A member that was added but never started, which a
+# run stopped partway through a join leaves, has no name and is joined below.
+
+- name: Refuse to join a node its zone still counts as a member
+  fail:
+    msg: >-
+      {{ inventory_hostname }} has no etcd data, but the etcd cluster in zone
+      {{ zone }} still has it as member {{ etcd_member.name }}
+      ({{ '%x' | format(etcd_member.ID) }}). This node must have lost its etcd
+      data since it last ran. Remove the old member from the zone with
+      'etcdctl member remove {{ '%x' | format(etcd_member.ID) }}' on a
+      healthy member, then run the deployment again to add this node back.
+  when:
+  - etcd_joining
+  - etcd_member.name | default('') | length > 0

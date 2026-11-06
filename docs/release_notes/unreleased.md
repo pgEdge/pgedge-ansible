@@ -11,6 +11,10 @@ runs, including on an Ultra-HA cluster whose leaders Patroni has moved off each
 zone's first node. Removing a database from the list no longer shrinks the
 worker and slot pools the cluster may still need.
 
+A zone in an Ultra-HA cluster can now grow while it runs. A node added to the
+inventory with an existing zone's number joins that zone as another replica the
+next time the deployment playbook runs.
+
 Running the deployment playbook again against a deployed cluster now changes
 nothing and reports nothing changed, whether or not Patroni has since moved a
 zone's leader, and the end-to-end tests hold every deployment to that.
@@ -29,6 +33,28 @@ the limit.
 
 ### Added
 
+- A node added to the inventory of an Ultra-HA zone that already runs joins
+  the zone when the deployment playbook runs again. Previously `setup_etcd`
+  started the new node's etcd as though bootstrapping the zone from nothing,
+  and the running members refused it, so Patroni on the new node had no store
+  to use. The role now asks each zone's etcd which members it has. A node with
+  no data in a zone that answers is added with `etcdctl member add --learner`,
+  started with the membership etcd reports, and promoted to a voting member
+  once etcd judges it caught up. A learner does not count toward the zone's
+  quorum, so a node that fails to start costs the zone nothing. Nodes join one
+  at a time, and a run stopped partway through a join is finished by the next.
+  The new member is then given the same configuration as the rest of its zone,
+  and the zone's members are restarted one at a time to list it. The role
+  stops the run rather than guess when a zone has data on some members, none
+  of which answer, and none on the rest, or when a node with no data is still
+  a started member of its zone. See
+  [Joining a Running Zone](../roles/setup_etcd.md#joining-a-running-zone).
+  (#67)
+- The Ultra-HA end-to-end tests add a seventh node to zone 1 once everything
+  else has run, and check that it joins: every member of the zone's etcd votes
+  and is healthy, Patroni sees the whole zone with one leader and the new node
+  streaming from it, a row written on the leader reaches it, and a second
+  deployment run changes nothing. (#67)
 - New `zone_primary` task file in `role_config` records, as the `zone_primary`
   fact, the node running each zone's primary: the zone's only node on a simple
   cluster, and the node Patroni reports as leader on an HA one. Only a zone

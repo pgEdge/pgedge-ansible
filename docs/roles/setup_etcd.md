@@ -11,6 +11,8 @@ The role performs the following tasks on inventory hosts:
   that do not yet have etcd data.
 - Generate the etcd configuration file listing all zone nodes as cluster peers.
 - Start the etcd systemd service on any node where it is not running.
+- Add a node new to a running zone to the zone's etcd cluster, as a learner
+  first, and promote it to a voting member once it has caught up.
 - Restart running members one at a time when their configuration changes.
 
 ## Role Dependencies
@@ -59,17 +61,22 @@ See the [Configuration Reference](../configuration.md) for defaults.
 The role configures etcd for distributed consensus within each zone.
 
 1. Check for an existing etcd data directory.
-2. On a node without one, generate TLS certificates: a certificate authority
-   (`ca.crt`), a peer key and certificate (`peer.key`, `peer.crt`), and a
-   server key and certificate (`server.key`, `server.crt`). A node with etcd
-   data keeps the certificates it has.
-3. Generate the etcd configuration file at `{{ etcd_config_dir }}/etcd.yaml`
+2. Ask each member with data which members its zone has, to find out whether
+   the zone's etcd already runs and which of its nodes are new to it.
+3. On a node without an etcd data directory, generate TLS certificates: a
+   certificate authority (`ca.crt`), a peer key and certificate (`peer.key`,
+   `peer.crt`), and a server key and certificate (`server.key`,
+   `server.crt`). A node with etcd data keeps the certificates it has.
+4. Generate the etcd configuration file at `{{ etcd_config_dir }}/etcd.yaml`
    with node identity, cluster membership for all nodes in the same zone, and
    network endpoints for client (port 2379) and peer (port 2380) communication.
-4. Enable the etcd service and start it on every node where it is not
-   running. A member started here reads the new configuration, and the role
+5. Enable the etcd service and start it on every node where it is not
+   running, other than one new to a running zone. A member started here reads the new configuration, and the role
    records it as the configuration that member runs.
-5. Restart each running member whose configuration differs from the one it
+6. Join each node new to a running zone, one at a time, as described in
+   [Joining a Running Zone](#joining-a-running-zone), and then give it the
+   same configuration as the rest of its zone.
+7. Restart each running member whose configuration differs from the one it
    was last started with, one at a time. Before each restart the role checks
    that every member of the zone is healthy, and after it waits until they are
    again, then records the configuration the member now runs.
@@ -89,7 +96,9 @@ The generated configuration file includes the following settings.
 
 Cluster identification uses these values:
 
-- `initial-cluster-state` uses `new` for initial bootstrap.
+- `initial-cluster` lists every node in the zone.
+- `initial-cluster-state` uses `new` for initial bootstrap. Only a node
+  joining a running zone starts with `existing`, and only until it has joined.
 - `initial-cluster-token` identifies the cluster as `pgedge_cluster`.
 
 Network configuration uses these values:
@@ -106,6 +115,40 @@ Keyspace maintenance uses these values:
   older than one hour by default.
 - `quota-backend-bytes` sets the database size at which etcd stops accepting
   writes, 2 GiB by default.
+
+### Joining a Running Zone
+
+A zone's members bootstrap together, each with the whole zone in
+`initial-cluster`, which only works while none of them hold any data. A node
+added to the inventory of a zone that already runs cannot do that: the running
+members would refuse it. The role adds it to the running cluster instead.
+
+1. Add the node to the zone's cluster with `etcdctl member add --learner`. A
+   learner receives the cluster's data but does not vote, so the zone's quorum
+   does not change, and a node that fails to start costs the zone nothing.
+2. Write a configuration for the node with the membership that etcd reports
+   and `initial-cluster-state: existing`, and start etcd on it.
+3. Promote the node to a voting member with `etcdctl member promote`, retrying
+   until etcd judges it caught up with the leader.
+4. Wait for every member of the zone to report healthy.
+5. Write the node the same configuration as the rest of its zone, and restart
+   the zone's members one at a time to read it.
+
+Nodes join one at a time, because etcd takes one membership change at a time.
+Every step is safe to repeat, so a run stopped partway through a join is
+finished by the next: a node already added is not added again, and a learner
+left unpromoted is promoted.
+
+The role decides whether a node has data from its write-ahead log, as etcd
+does, rather than from its data directory alone. It stops the run rather than
+guess in two cases:
+
+- Some members of a zone have data and the rest have none, but none of those
+  with data answer. The zone may be running with every member stopped, or its
+  first deployment may have failed partway, and the two need different fixes.
+- A node with no data is still a started member of its zone's cluster. It
+  has lost its data since it last ran, and its old membership has to be
+  removed with `etcdctl member remove` before it can join again.
 
 ## Usage Examples
 
@@ -174,10 +217,10 @@ keeps the certificates it was built with.
     again. A member that is stopped does not count against its zone here: the
     role starts it into the new configuration before restarting the others.
 
-!!! warning "Configuration Changes"
-    Changing etcd cluster membership after initial setup requires special
-    procedures. Use `etcdctl` to add or remove nodes rather than re-running
-    this role.
+!!! warning "Removing Members"
+    The role adds members to a zone but never removes them. A node taken out
+    of the inventory stays a member of its zone's etcd cluster, and counts
+    toward its quorum, until it is removed with `etcdctl member remove`.
 
 !!! warning "Data Directory"
     The etcd data directory contains critical cluster state. Back up this

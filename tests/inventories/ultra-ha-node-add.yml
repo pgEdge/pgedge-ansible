@@ -1,0 +1,15 @@
+# Layered onto ultra-ha.yml, after the cluster is deployed, to add a fourth
+# node to zone 1 the way an operator would: by listing it in the inventory and
+# running the deployment again. Pass both:
+#
+#   ansible-playbook -i tests/inventories/ultra-ha.yml \
+#                    -i tests/inventories/ultra-ha-node-add.yml ...
+#
+# The node's container is in every Ultra-HA compose file, so it is already
+# running when the cluster is first deployed without it.
+
+pgedge:
+  hosts:
+    192.168.6.22:
+      zone: 1
+      added_node: true

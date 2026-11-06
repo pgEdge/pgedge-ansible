@@ -13,6 +13,11 @@ quota-backend-bytes is rendered bare and left unfiltered: YAML reads a number as
 an integer however Ansible passed it, and anything else should stop etcd rather
 than be coerced by '| int' into 0, which etcd reads as its default quota.
 
+The bootstrap keys are checked too. Every member renders the whole zone as a
+new cluster, which is what rebuilds it should its etcd ever be erased, except a
+node joining a running zone: join.yaml hands it the membership etcd reports, and
+it has to start as existing with exactly that, or the running members refuse it.
+
 The renders use Ansible's Jinja settings rather than bare Jinja2's: the template
 module turns trim_blocks on, and this template opens with '{%- %}' tags whose
 whitespace handling depends on it.
@@ -38,7 +43,18 @@ CASES = {
         {},
         {"auto-compaction-mode": "periodic",
          "auto-compaction-retention": "1h",
-         "quota-backend-bytes": 2147483648},
+         "quota-backend-bytes": 2147483648,
+         "initial-cluster": ",".join(
+             "node%d=https://%s:2380" % (i, node)
+             for i, node in enumerate(NODES)),
+         "initial-cluster-state": "new"},
+    ),
+    "joining a running zone": (
+        {"etcd_join_cluster": "node0=https://192.168.6.10:2380,"
+                              "old=https://192.168.6.99:2380"},
+        {"initial-cluster": "node0=https://192.168.6.10:2380,"
+                            "old=https://192.168.6.99:2380",
+         "initial-cluster-state": "existing"},
     ),
     "retention in bare hours": (
         {"etcd_auto_compaction_retention": 1},
