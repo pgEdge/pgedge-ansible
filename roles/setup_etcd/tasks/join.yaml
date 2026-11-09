@@ -1,0 +1,167 @@
+---
+
+# Join one node to its zone's running etcd. Included once per node to join by
+# setup.yaml, on every host, and run only by the node whose turn it is, so the
+# nodes join one at a time: etcd takes one membership change at a time, and
+# allows only one learner.
+#
+# The node joins as a learner, which receives the cluster's data but does not
+# count toward its quorum, and is promoted to a voting member only once it has
+# caught up. Added as a voting member straight away, it would raise the quorum
+# before it could vote. A zone of one would then have no quorum at all until
+# the new member started, and a zone of any size would be one failure closer to
+# losing it if the new member never did -- either way, Patroni loses its leader
+# lock. A learner that never starts costs the zone nothing.
+#
+# The membership is changed through the members that answered in
+# membership.yaml, other than this node -- a learner refuses most requests --
+# from this node, with its own server certificate, which etcd also accepts as a
+# client one. Every step is safe to repeat, so a run stopped
+# anywhere in here is finished by the next one: a member already added is not
+# added again, and one already promoted is not promoted again.
+
+- when: inventory_hostname == etcd_join_host
+  become: true
+  vars:
+    etcd_peer_url: "https://{{ inventory_hostname }}:2380"
+    etcdctl_command: >-
+      {{ etcd_install_dir }}/etcdctl
+      --endpoints={{ etcd_zone_answering
+                     | difference([inventory_hostname])
+                     | map('regex_replace', '^(.*)$', 'https://\1:2379')
+                     | join(',') }}
+      --cacert={{ etcd_tls_dir }}/ca.crt
+      --cert={{ etcd_tls_dir }}/server.crt
+      --key={{ etcd_tls_dir }}/server.key
+      --command-timeout=10s
+    etcd_health_command: >-
+      {{ etcd_install_dir }}/etcdctl
+      --endpoints=https://127.0.0.1:2379
+      --cacert={{ etcd_tls_dir }}/ca.crt
+      --cert={{ etcd_tls_dir }}/server.crt
+      --key={{ etcd_tls_dir }}/server.key
+      endpoint health --cluster
+  block:
+
+  # etcd refuses a membership change, as an unhealthy cluster, until the member
+  # taking it has been connected to every voting member for five seconds. The
+  # node joined just before this one has usually been running for less than
+  # that, which a health check does not catch, so the add is retried on that
+  # refusal alone.
+
+  - name: Add {{ etcd_join_host }} to its zone's etcd as a learner
+    command: >-
+      {{ etcdctl_command }}
+      member add {{ ansible_hostname }}
+      --peer-urls={{ etcd_peer_url }}
+      --learner
+    register: etcd_member_add
+    retries: 15
+    delay: 2
+    until: >-
+      etcd_member_add.rc | default(0) == 0
+      or 'unhealthy cluster' not in etcd_member_add.stderr | default('')
+    when:
+    - etcd_joining
+    - etcd_member | length == 0
+
+  # The membership after the add, which is what the new member has to start
+  # with: etcd compares the peer URLs in its initial-cluster with the running
+  # cluster's, and refuses to start unless they are the same set. That is the
+  # cluster as it is now, which may not be the inventory -- another new node
+  # not joined yet, or a member the inventory no longer lists -- so it comes
+  # from etcd rather than from nodes_in_zone.
+
+  - name: Read the zone's etcd membership
+    command: "{{ etcdctl_command }} member list -w json"
+    register: etcd_join_members
+    changed_when: false
+    when: not ansible_check_mode
+
+  - name: Ensure every member of the zone has a name to join with
+    assert:
+      that: unnamed | length == 0
+      fail_msg: >-
+        The etcd cluster in zone {{ zone }} has members with no name that are
+        not this node: {{ unnamed | join(', ') }}. They were added but never
+        started, and no node in the inventory has their address. Remove them
+        with 'etcdctl member remove' on a healthy member, then run the
+        deployment again.
+    vars:
+      unnamed: >-
+        {{ (etcd_join_members.stdout | from_json).members
+           | rejectattr('name', 'defined')
+           | rejectattr('peerURLs', 'contains', etcd_peer_url)
+           | map(attribute='peerURLs') | flatten | list }}
+    when:
+    - etcd_joining
+    - not ansible_check_mode
+
+  # The configuration the new member starts with once, to join. It is replaced
+  # by the zone's own once the member is promoted, in setup.yaml, and the member
+  # restarted to read it, so every member of the zone ends up with the same
+  # bootstrap settings: the whole zone, as new, which is what rebuilds it should
+  # its etcd ever be erased.
+
+  - name: Write the configuration {{ etcd_join_host }} joins with
+    template:
+      src: templates/etcd.yaml.j2
+      dest: "{{ etcd_config_dir }}/etcd.yaml"
+      owner: "{{ etcd_user }}"
+      group: "{{ etcd_group }}"
+    vars:
+      etcd_join_cluster: >-
+        {%- set entries = [] -%}
+        {%- for member in (etcd_join_members.stdout | from_json).members -%}
+        {%-   set name = member.name | default(ansible_hostname, true) -%}
+        {%-   for url in member.peerURLs -%}
+        {%-     set _ = entries.append(name ~ '=' ~ url) -%}
+        {%-   endfor -%}
+        {%- endfor -%}
+        {{ entries | join(',') }}
+    when:
+    - etcd_joining
+    - not ansible_check_mode
+
+  # Type=notify: etcd reports itself started once it has joined and published
+  # its name to the cluster, which a learner does as well.
+
+  - name: Start etcd on {{ etcd_join_host }} to join its zone
+    service:
+      name: etcd
+      state: started
+    when: etcd_joining
+
+  # A learner is promoted only once etcd judges it caught up with the leader,
+  # and refuses until then, so the promotion is retried until it is accepted.
+  # The member's ID is read again rather than taken from the add: a run that
+  # stopped after the add has to find it the same way.
+
+  - name: Read the zone's etcd membership with {{ etcd_join_host }} in it
+    command: "{{ etcdctl_command }} member list -w json"
+    register: etcd_join_members
+    changed_when: false
+    when: not ansible_check_mode
+
+  - name: Promote {{ etcd_join_host }} to a voting member
+    command: "{{ etcdctl_command }} member promote {{ '%x' | format(learner.ID) }}"
+    vars:
+      learner: >-
+        {{ (etcd_join_members.stdout | from_json).members
+           | selectattr('peerURLs', 'contains', etcd_peer_url) | first }}
+    register: etcd_promote
+    retries: 60
+    delay: 2
+    until: etcd_promote.rc == 0
+    when:
+    - not ansible_check_mode
+    - learner.isLearner | default(false) | bool
+
+  - name: Wait for every etcd member in the zone to be healthy
+    command: "{{ etcd_health_command }}"
+    register: etcd_join_health
+    changed_when: false
+    retries: 30
+    delay: 2
+    until: etcd_join_health.rc == 0
+    when: not ansible_check_mode
