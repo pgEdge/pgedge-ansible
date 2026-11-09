@@ -43,12 +43,24 @@
       endpoint health --cluster
   block:
 
+  # etcd refuses a membership change, as an unhealthy cluster, until the member
+  # taking it has been connected to every voting member for five seconds. The
+  # node joined just before this one has usually been running for less than
+  # that, which a health check does not catch, so the add is retried on that
+  # refusal alone.
+
   - name: Add {{ etcd_join_host }} to its zone's etcd as a learner
     command: >-
       {{ etcdctl_command }}
       member add {{ ansible_hostname }}
       --peer-urls={{ etcd_peer_url }}
       --learner
+    register: etcd_member_add
+    retries: 15
+    delay: 2
+    until: >-
+      etcd_member_add.rc | default(0) == 0
+      or 'unhealthy cluster' not in etcd_member_add.stderr | default('')
     when:
     - etcd_joining
     - etcd_member | length == 0
