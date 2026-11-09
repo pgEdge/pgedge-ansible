@@ -71,8 +71,9 @@ The role configures etcd for distributed consensus within each zone.
    with node identity, cluster membership for all nodes in the same zone, and
    network endpoints for client (port 2379) and peer (port 2380) communication.
 5. Enable the etcd service and start it on every node where it is not
-   running, other than one new to a running zone. A member started here reads the new configuration, and the role
-   records it as the configuration that member runs.
+   running, other than one new to a running zone. A member started here
+   reads the new configuration, and the role records it as the configuration
+   that member runs.
 6. Join each node new to a running zone, one at a time, as described in
    [Joining a Running Zone](#joining-a-running-zone), and then give it the
    same configuration as the rest of its zone.
@@ -141,15 +142,24 @@ left unpromoted is promoted. Such a learner is finished before any other node
 joins, because etcd allows a zone only one learner.
 
 The role decides whether a node has data from its write-ahead log, as etcd
-does, rather than from its data directory alone. It stops the run rather than
-guess in two cases:
+does, rather than from its data directory alone. A node with no data that its
+zone's cluster lists as a voting member that has never started is not new to
+the zone: the zone's first deployment failed on it before etcd started there,
+and the rest of the zone went on without it. The role starts it with the
+zone's own configuration, and it takes the place the zone kept for it.
+
+The role stops the run rather than guess in two cases:
 
 - Some members of a zone have data and the rest have none, but none of those
   with data answer. The zone may be running with every member stopped, or its
   first deployment may have failed partway, and the two need different fixes.
-- A node with no data is still a started member of its zone's cluster. It
-  has lost its data since it last ran, and its old membership has to be
-  removed with `etcdctl member remove` before it can join again.
+  This includes a first deployment that started etcd on too few of a zone's
+  nodes for a quorum: the role cannot tell that the inventory is still the one
+  those nodes started with, so wipe the zone's etcd data and deploy it again.
+- A node with no data is still a member of its zone's cluster that has
+  started before. It has lost its data since it last ran, and its old
+  membership has to be removed with `etcdctl member remove` before it can
+  join again.
 
 ## Usage Examples
 

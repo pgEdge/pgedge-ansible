@@ -49,17 +49,29 @@
   when: etcd_wal.stat.exists
 
 # etcd_zone_answering lists the zone's members that answered, and the
-# membership is taken from the first of them. etcd_joining marks a node with no
-# data in a zone that runs. etcd_member is this node's own entry in the
-# membership, matched by peer URL rather than by name: a member added but never
-# started has no name yet. etcd_learner marks one that was added as a learner
-# and never promoted, which a run stopped partway through a join leaves behind.
+# membership is taken from the first of them. etcd_member is this node's own
+# entry in the membership, matched by peer URL rather than by name: a member
+# added but never started has no name yet. etcd_learner marks one that was added
+# as a learner and never promoted, which a run stopped partway through a join
+# leaves behind.
+#
+# etcd_joining marks a node with no data in a zone that runs, other than one the
+# zone bootstrapped without. A static bootstrap names every member of
+# initial-cluster up front, so a node whose first deployment failed before etcd
+# started on it -- while the rest of its zone went on to form a quorum -- is a
+# named voting member that has never published its client URLs, which a member
+# does only once it starts. Started with the zone's own configuration, as new
+# with the same initial-cluster and token, it takes the place the bootstrap left
+# for it, as any member of a static bootstrap does. A named member with client
+# URLs has started before, and has lost its data since; that is refused below.
 
 - name: Note whether this node's zone runs and whether this node joins it
   set_fact:
     etcd_zone_answering: "{{ zone_answering }}"
     etcd_zone_members: "{{ zone_members }}"
-    etcd_joining: "{{ zone_answering | length > 0 and not etcd_wal.stat.exists }}"
+    etcd_joining: >-
+      {{ zone_answering | length > 0 and not etcd_wal.stat.exists
+         and not own_unstarted }}
     etcd_member: "{{ own_member }}"
     etcd_learner: "{{ own_member.isLearner | default(false) | bool }}"
   vars:
@@ -77,14 +89,24 @@
          | selectattr('peerURLs', 'contains',
                       'https://' ~ inventory_hostname ~ ':2380')
          | first | default({}) }}
+    own_unstarted: >-
+      {{ own_member.name | default('') | length > 0
+         and own_member.clientURLs | default([]) | length == 0
+         and not own_member.isLearner | default(false) | bool }}
 
 # A zone with data on some of its members, none of which answer, and no data on
 # the rest is one whose state cannot be told from here. It may be a running zone
 # whose members are all stopped, which the new nodes cannot join until it is
 # back; or a first bootstrap that failed partway, which the members with data
-# cannot finish without the others. Bootstrapping the empty ones with the rest
-# risks the members with data refusing them, or panicking on a log they expected
-# them to hold. A zone whose members all hold data, all stopped, is left to
+# cannot finish without the others. Only the second is fixed by bootstrapping
+# the empty ones with the rest, and only if the inventory is the one the members
+# with data bootstrapped from: their cluster ID was derived from that
+# initial-cluster and token, and a node bootstrapped from any other derives
+# another, which they refuse. Bootstrapped into a zone that has run, an empty
+# node would instead be handed a log it never held, and panic. Neither the
+# history nor the old inventory can be read from here, so the run stops, even
+# though an unchanged inventory and a failed first bootstrap would have
+# finished. A zone whose members all hold data, all stopped, is left to
 # setup.yaml, which starts them together as it always has.
 
 - name: Refuse to guess at the state of a zone with partial etcd data
@@ -109,12 +131,13 @@
   - without_data | length > 0
 
 # A node with no data whose address the membership already names as a started
-# member -- one with a name -- was a member and has lost its data since: a
-# rebuilt server, or a data directory erased by hand. The cluster still counts
-# the old member toward its quorum, and etcd does not let a new member take an
-# existing one's place. Removing it is not something to do on a guess, so the
-# run stops and says how. A member that was added but never started, which a
-# run stopped partway through a join leaves, has no name and is joined below.
+# member -- one with a name and client URLs -- was a member and has lost its
+# data since: a rebuilt server, or a data directory erased by hand. The cluster
+# still counts the old member toward its quorum, and etcd does not let a new
+# member take an existing one's place. Removing it is not something to do on a
+# guess, so the run stops and says how. A member that was added but never
+# started, which a run stopped partway through a join leaves, has no name and is
+# joined below; one the zone bootstrapped without is not joining at all.
 
 - name: Refuse to join a node its zone still counts as a member
   fail:
