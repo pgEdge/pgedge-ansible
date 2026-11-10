@@ -12,6 +12,25 @@ in full.
 
 ### Added
 
+- A zone can be added to a cluster that already holds data, on simple and
+  Ultra-HA clusters, by listing its hosts in the inventory and running the
+  deployment playbook with `-e pgedge_join_zones=<zone>`. `setup_pgedge`
+  copies every database in `db_names` into the zone from an existing one
+  while the other zones keep taking writes, accounts for every write made
+  during the copy, and then completes the subscription mesh. A join that
+  stops partway resumes when the same command is run again; one that cannot
+  resume releases what it held on the other zones. New
+  `pgedge_join_wait_minutes` limits the join's waits for bookmarks. (EE-45)
+- New `remove_zone` role and `sample-playbooks/remove-zone` playbook detach
+  one zone from a running cluster: every other zone drops its subscriptions,
+  replication slots, node and progress for the zone, and the zone's own
+  subscriptions and databases are dropped when it can be reached. (EE-45)
+- The end-to-end tests can add zones to a deployed cluster that holds data,
+  under a steady trickle of writes on every existing zone, and verify that
+  every zone ends with the same rows and no replication conflicts. A new
+  `zone-join` job in the Simple Cluster and Ultra-HA workflows runs joins,
+  interrupted and resumed joins, refused joins, AutoDDL during a join, and
+  `remove_zone`. (EE-45)
 - A node added to the inventory of an Ultra-HA zone that already runs joins
   the zone when the deployment playbook runs again. Where the collection runs
   etcd, `setup_etcd` adds the node to the zone's etcd cluster as a learner,
@@ -32,6 +51,17 @@ in full.
   a name listed there and in `db_names` both. (EE-44)
 - `init_server` refuses an inventory whose pgEdge nodes list different
   databases in `db_names` or `unmanaged_db_names`. (EE-44)
+
+### Changed
+
+- `setup_pgedge` reads every zone's Spock state before it creates anything,
+  and stops a run that would subscribe a zone to a cluster that already holds
+  data without copying that data, naming `pgedge_join_zones`. It also stops a
+  run whose zones are not one fully subscribed cluster, and recognizes an
+  existing subscription by the zone it comes from as well as by its name.
+  (EE-45)
+- `pgedge_seed_zone` is documented as recovery-only, and a run refuses it
+  together with `pgedge_join_zones`. (EE-45)
 
 ### Fixed
 

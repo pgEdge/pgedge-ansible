@@ -59,6 +59,7 @@ nav:
       - Tutorial - Deploying an Ultra-HA Cluster: ultra_ha.md
       - Customizing a Playbook: configure_playbook.md
   - Using the pgEdge Ansible Collection: usage.md
+  - Adding a Zone to a Running Cluster: add_zone.md
   - Recovering a Cluster from Backup: recovery.md
   - Configuration Reference:
       - Configuration Overview: configuration.md

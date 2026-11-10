@@ -3,7 +3,7 @@
 The `remove_zone` role detaches one zone from a running pgEdge cluster. Every
 other zone forgets the zone in Spock, and, when the zone can be reached, the
 zone's own subscriptions are dropped and its databases are reset, so that it
-can [join the cluster](../usage.md) again from scratch or be retired.
+can [join the cluster](../add_zone.md) again from scratch or be retired.
 
 The role performs the following tasks on inventory hosts:
 
@@ -15,8 +15,8 @@ The role performs the following tasks on inventory hosts:
 - On the zone's primary, if it can be reached, drop every subscription in each
   database in `db_names`.
 - On every other zone's primary, for each database in `db_names`, drop the
-  subscriptions from the zone, the replication slots that served it, and its
-  Spock node.
+  subscriptions from the zone, the replication slots that served it, its
+  Spock node, and the replication progress kept for it.
 - On the zone's primary, if it can be reached, drop each database in
   `db_names` that holds a Spock node, a subscription or tables of its own.
 
@@ -37,7 +37,9 @@ This role requires the following roles for normal operation:
 
 Use this role to take a zone out of a cluster, or to start a join over after
 one that cannot be resumed. The join's failure message says when that is the
-case.
+case; see [When a Join Stops](../add_zone.md#when-a-join-stops). It also
+releases the replication slots a stopped join holds on the other zones, when
+you decide not to resume it.
 
 Apply it to the `pgedge` group with the inventory the cluster was deployed
 with, with the zone still in that inventory. Don't gather facts in the play:
@@ -101,8 +103,10 @@ it, for every database in `db_names`, in three steps.
    the zone's node. Spock's `sub_drop` also drops the replication origin that
    tracked each subscription, and the node row once no subscription names it.
    The role then drops the slot that served the zone's subscription, by the
-   name Spock's `spock_gen_slot_name` gives it, and finally the node row if
-   one is left.
+   name Spock's `spock_gen_slot_name` gives it, then the node row if one is
+   left. Last, it deletes the rows in `spock.progress` for the zone's node,
+   which Spock never removes, so that a zone joined again under the same
+   number does not start from its old position.
 3. On the zone, if it can be reached, the role drops each database that
    holds a Spock node, a subscription or tables of its own, with
    `DROP DATABASE ... WITH (FORCE)`. A database that is already empty in that

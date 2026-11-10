@@ -404,7 +404,7 @@ tls_validity_days: 365
 ## spock_version
 
 - Type: String
-- Default: `5.0.9`
+- Default: `5.0.4`
 - Description: This parameter specifies the minimum version of the Spock
   extension to install. The latest available version is always installed.
 

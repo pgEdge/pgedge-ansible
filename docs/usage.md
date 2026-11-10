@@ -118,16 +118,38 @@ that command reports the name to pass here.
 After the failover, connections through HAProxy continue automatically
 without application changes.
 
-### Adding a Node to a Simple Cluster
+### Adding a Zone to a Running Cluster
 
-Add new nodes to a cluster only when database activity is at a minimum.
-The collection does not currently use
-[Zero-Downtime Add Node](https://docs.pgedge.com/spock-v5/development/modify/zodan/zodan_readme/)
-functionality.
+A cluster that already holds data can grow by a zone while it keeps taking
+writes, on a simple cluster or an Ultra-HA one. The new zone copies every
+database in `db_names` from an existing zone and receives every write made
+during the copy, with nothing lost or applied twice.
 
-1. Add the new node to the inventory with a new zone number.
-2. Run the playbook again to reconfigure the full cluster.
-3. Verify Spock replication to the new node using the commands above.
+1. Add the new zone's hosts to the inventory with a new zone number.
+2. Run the deployment playbook again against the whole inventory, naming the
+   zone:
+
+    ```bash
+    ansible-playbook -i inventory.yaml playbook.yaml -e pgedge_join_zones=4
+    ```
+
+3. Wait for the run to finish before sending applications to the new zone.
+
+A join that stops partway resumes when you run the same command again. Without
+`pgedge_join_zones`, the run refuses a zone that isn't yet part of a cluster
+that holds data. See
+[Adding a Zone to a Running Cluster](add_zone.md) for what the join does, how
+long it takes, its effect on the existing zones, and what to do when it
+fails.
+
+!!! warning "One Major Change per Run"
+
+    Only modify one major aspect of the cluster at a time. New replicas, new
+    databases, new zones, and similar changes should not be mixed in a single
+    run.
+
+To take a zone back out of the cluster, use
+[`remove_zone`](roles/remove_zone.md).
 
 ### Adding a Node to an Ultra-HA Zone
 

@@ -26,7 +26,7 @@ repo_gpg_key: ""
 
 zone: 1
 pg_version: 17
-spock_version: "5.0.9"
+spock_version: "5.0.4"
 tls_validity_days: 3560
 
 db_names:
