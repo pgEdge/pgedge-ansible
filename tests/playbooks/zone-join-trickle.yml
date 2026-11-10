@@ -1,0 +1,271 @@
+---
+# Start or stop the trickle of writes a zone join test runs under.
+#
+#   ansible-playbook tests/playbooks/zone-join-trickle.yml \
+#     -i tests/inventories/simple-cluster.yml \
+#     -i tests/inventories/zone-join.yml [-i <join layer>] \
+#     -e zone_join_trickle=start      # or stop
+#
+# A join has to account for every write made on the existing zones while it
+# runs. So while it runs, each existing zone takes a row about once a second in
+# each database, through the endpoint an application would use: the zone's
+# proxy on proxy_port in an HA cluster, which follows the zone's leader, and
+# the zone's node on pg_port in a simple one. The writer is
+# zone-join-trickle.sh, one copy per zone and database, each a systemd unit on
+# the client. It rides out the restarts and switchovers a deployment run
+# makes, retrying until each row goes through, and records the last row each
+# zone acknowledged, for verify-zone-join.yml to compare every zone against.
+#
+# The zones written to are every zone of the inventory but those a join layer
+# marks zone_join_new, since nothing may write to a zone until its join
+# finishes. Pass zone_join_trickle_zones, as a list or as 1,2,3, to choose
+# them yourself, for instance to write to a zone once it has joined.
+#
+# Starting writers that are already running changes nothing, and neither does
+# stopping writers that are not. A writer started again carries on from the
+# last row it recorded. The cluster must already have the trickle's table and
+# role, which tests/playbooks/zone-join-seed.yml creates.
+#
+# Stopping waits for each writer to finish the insert it is on, so that what
+# it recorded is exactly what the zone holds, and then lists the last row each
+# wrote and how many times it had to retry.
+
+- hosts: clients
+  become: true
+  any_errors_fatal: true
+
+  vars:
+    zone_join_trickle: start
+    state_dir: /var/lib/zone-join-trickle
+    pgpass_file: "{{ state_dir }}/pgpass"
+    writer: /usr/local/bin/zone-join-trickle
+    unit_prefix: zone-join-trickle-
+    # The psql the writer runs, from PGDG, as the verify playbooks install it.
+    client_pg_version: 18
+    # The cluster's settings, from its nodes: a client host carries none of
+    # them itself.
+    nodes: "{{ groups['pgedge'] | map('extract', hostvars) | list }}"
+    cluster: "{{ nodes | first }}"
+    cluster_db_names: "{{ cluster.db_names | default(['demo']) }}"
+    cluster_is_ha: "{{ cluster.is_ha_cluster | default(false) | bool }}"
+    trickle_user: "{{ cluster.zone_join_trickle_user | default('') }}"
+    trickle_password: "{{ cluster.zone_join_trickle_password | default('') }}"
+    member_zones: >-
+      {% set zones = [] %}
+      {%- for host in nodes
+            if not host.zone_join_new | default(false) | bool
+               and host.zone | int not in zones %}
+      {%-   set _ = zones.append(host.zone | int) %}
+      {%- endfor %}{{ zones | sort }}
+    trickle_zones: >-
+      {{ (zone_join_trickle_zones
+          if zone_join_trickle_zones is sequence
+             and zone_join_trickle_zones is not string
+          else (zone_join_trickle_zones | string).split(','))
+         | map('string') | map('trim') | reject('eq', '') | map('int')
+         | unique | list
+         if zone_join_trickle_zones is defined else member_zones }}
+    # Where an application reaches each zone, as the subscriptions do: in an HA
+    # cluster the zone's proxy_node, else its first HAProxy, on proxy_port; in
+    # a simple cluster the zone's node itself, on pg_port.
+    endpoints: >-
+      {% set found = {} %}
+      {%- for z in trickle_zones %}
+      {%-   set first = nodes | selectattr('zone', 'eq', z) | first %}
+      {%-   set proxies = groups['haproxy'] | default([])
+                          | map('extract', hostvars)
+                          | selectattr('zone', 'eq', z)
+                          | map(attribute='inventory_hostname') | list %}
+      {%-   if cluster_is_ha | bool %}
+      {%-     set host = first.proxy_node | default('', true)
+                         or (proxies | first if proxies
+                             else first.inventory_hostname) %}
+      {%-     set port = first.proxy_port | default(5432) %}
+      {%-   else %}
+      {%-     set host = first.inventory_hostname %}
+      {%-     set port = first.pg_port | default(5432) %}
+      {%-   endif %}
+      {%-   set _ = found.update({z: {'host': host, 'port': port}}) %}
+      {%- endfor %}{{ found }}
+    writers: >-
+      {% set found = [] %}
+      {%- for db in cluster_db_names %}
+      {%-   for z in trickle_zones %}
+      {%-     set _ = found.append({'db': db, 'zone': z,
+                                    'unit': unit_prefix ~ db ~ '-zone' ~ z,
+                                    'host': endpoints[z].host,
+                                    'port': endpoints[z].port}) %}
+      {%-   endfor %}
+      {%- endfor %}{{ found }}
+
+  environment:
+    PGPASSFILE: "{{ pgpass_file }}"
+    PGCONNECT_TIMEOUT: "5"
+
+  tasks:
+  - name: Ensure the action is start or stop
+    assert:
+      that:
+      - zone_join_trickle in ['start', 'stop']
+      fail_msg: >-
+        zone_join_trickle is {{ zone_join_trickle }}. Pass
+        -e zone_join_trickle=start or -e zone_join_trickle=stop.
+
+  - name: Start the trickle
+    when: zone_join_trickle == 'start'
+    block:
+    - name: Ensure the inventory names the trickle writer's role
+      assert:
+        that:
+        - trickle_user | length > 0
+        - trickle_password | length > 0
+        - trickle_zones | length > 0
+        - trickle_zones | difference(endpoints.keys() | list) | length == 0
+        fail_msg: >-
+          The trickle needs zone_join_trickle_user and
+          zone_join_trickle_password, from tests/inventories/zone-join.yml,
+          and at least one zone of the inventory to write to; it has
+          {{ trickle_zones }}.
+
+    - name: Install a Postgres client
+      include_tasks: ../verify/install-pg-client.yml
+
+    - name: Create the trickle's state directory
+      file:
+        path: "{{ state_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Write the trickle writer's password file
+      copy:
+        dest: "{{ pgpass_file }}"
+        content: "*:*:*:{{ trickle_user }}:{{ trickle_password }}\n"
+        mode: "0600"
+      no_log: true
+
+    - name: Install the trickle writer
+      copy:
+        src: zone-join-trickle.sh
+        dest: "{{ writer }}"
+        mode: "0755"
+
+    # Before any writer starts, so that a cluster without the table or the
+    # role fails here with a reason, rather than as writers retrying forever.
+
+    - name: Check each endpoint admits the writer to its table
+      command: >-
+        psql "host={{ item.host }} port={{ item.port }} dbname={{ item.db }}
+        user={{ trickle_user }}" -X -t -A -v ON_ERROR_STOP=1
+        -c "SELECT count(*) FROM zone_join_trickle"
+      register: endpoint_check
+      changed_when: false
+      failed_when: false
+      loop: "{{ writers }}"
+      loop_control:
+        label: "zone {{ item.zone }} {{ item.db }} via {{ item.host }}:{{ item.port }}"
+
+    - name: Assert the writer can reach every zone's table
+      assert:
+        that:
+        - endpoint_check.results | rejectattr('rc', 'eq', 0) | list | length == 0
+        fail_msg: >-
+          The trickle cannot write through
+          {{ endpoint_check.results | rejectattr('rc', 'eq', 0)
+             | map(attribute='item.unit') | join(', ') }}:
+          {{ endpoint_check.results | rejectattr('rc', 'eq', 0)
+             | map(attribute='stderr') | map('trim') | join('; ') }}.
+          Run tests/playbooks/zone-join-seed.yml first, with
+          tests/inventories/zone-join.yml layered on from the deployment on.
+
+    - name: Check which writers are already running
+      command: systemctl is-active {{ item.unit }}
+      register: writer_state
+      changed_when: false
+      failed_when: false
+      loop: "{{ writers }}"
+      loop_control:
+        label: "{{ item.unit }}"
+
+    - name: Note how far each writer has got
+      command: cat {{ state_dir }}/{{ item.db }}-zone{{ item.zone }}.last
+      register: last_before
+      changed_when: false
+      failed_when: false
+      loop: "{{ writers }}"
+      loop_control:
+        label: "{{ item.unit }}"
+
+    # A writer that stopped by failing leaves its transient unit behind, and
+    # systemd-run will not reuse the name until it is cleared.
+
+    - name: Start each writer that is not running
+      shell: >-
+        systemctl reset-failed {{ item.item.unit }} 2>/dev/null;
+        systemd-run --unit={{ item.item.unit }}
+        --description="Zone join trickle into {{ item.item.db }} in zone {{ item.item.zone }}"
+        --property=KillMode=mixed
+        --property=TimeoutStopSec=60
+        --setenv=PGPASSFILE={{ pgpass_file }}
+        {{ writer }} {{ item.item.zone }} {{ item.item.db }}
+        {{ item.item.host }} {{ item.item.port }} {{ trickle_user }}
+        {{ state_dir }}
+      loop: "{{ writer_state.results }}"
+      loop_control:
+        label: "{{ item.item.unit }}"
+      when: item.stdout | trim != 'active'
+
+    # Every writer, started now or before, has to get a row through, or the
+    # join would run without the writes it is meant to be tested under.
+
+    - name: Wait for every writer to write
+      command: cat {{ state_dir }}/{{ item.item.db }}-zone{{ item.item.zone }}.last
+      register: last_after
+      until: >-
+        last_after.rc == 0 and
+        last_after.stdout | trim | int > item.stdout | default('0', true) | trim | int
+      retries: 30
+      delay: 2
+      changed_when: false
+      loop: "{{ last_before.results }}"
+      loop_control:
+        label: "{{ item.item.unit }}"
+
+  - name: Stop the trickle
+    when: zone_join_trickle == 'stop'
+    block:
+    # Every writer this client runs, whichever zones it was started for.
+
+    - name: List the running writers
+      shell: >-
+        systemctl list-units --plain --no-legend --state=active
+        '{{ unit_prefix }}*' | awk '{print $1}'
+      register: running
+      changed_when: false
+
+    - name: Stop each writer once its insert in flight is recorded
+      command: systemctl stop {{ item }}
+      loop: "{{ running.stdout_lines }}"
+
+    - name: Check no writer is left running
+      shell: >-
+        systemctl list-units --plain --no-legend --state=active
+        '{{ unit_prefix }}*' | awk '{print $1}'
+      register: still_running
+      changed_when: false
+      failed_when: still_running.stdout_lines | length > 0
+
+    - name: Read what each writer recorded
+      shell: |
+        for f in {{ state_dir }}/*.last; do
+          [ -e "$f" ] || continue
+          base=${f%.last}
+          retries=$(grep -c 'failed; retrying\|cannot read' "$base.log" 2>/dev/null)
+          printf '%s last=%s retries=%s\n' \
+            "$(basename "$base")" "$(cat "$f")" "${retries:-0}"
+        done
+      register: recorded
+      changed_when: false
+
+    - name: Show what each writer recorded
+      debug:
+        msg: "{{ recorded.stdout_lines }}"

@@ -106,6 +106,33 @@ services:
       pgedge-test:
         ipv4_address: 192.168.6.23
 
+  # A third zone the deployment leaves out: two nodes and their proxy. It joins
+  # the running cluster afterwards, with tests/inventories/ultra-ha-zone-join.yml
+  # layered on, to check that a zone added to a cluster holding data copies it
+  # and misses no write made while it joins. Started with the rest so that
+  # adding it to the inventory is all a join test has to do. Its addresses
+  # follow the added nodes' above.
+  pgedge9:
+    <<: *common
+    hostname: pgedge9
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.24
+
+  pgedge10:
+    <<: *common
+    hostname: pgedge10
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.25
+
+  haproxy3:
+    <<: *common
+    hostname: haproxy3
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.26
+
   # A host in no deployment group, named by no pg_hba rule: the only vantage
   # point from which the access gates are observable. Its address is well clear
   # of the node range, and of 192.168.6.20 where the Consul overlay sits.

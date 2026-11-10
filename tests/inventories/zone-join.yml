@@ -1,0 +1,53 @@
+# Layered onto simple-cluster.yml or ultra-ha.yml for every run of a zone-join
+# test, from the first deployment on. Pass both:
+#
+#   ansible-playbook -i tests/inventories/simple-cluster.yml \
+#                    -i tests/inventories/zone-join.yml ...
+#
+# It changes what the cluster is, not which hosts it has, so it has to be there
+# before the cluster is built: a join copies every database in db_names, and a
+# database added at the join would be refused by the join's own check that no
+# run adds a database and a zone together. The new zones' hosts come later,
+# from simple-zone-join.yml or ultra-ha-zone-join.yml.
+#
+# Kept out of the base inventories so the jobs that do not join a zone build
+# the same cluster they always have, at the same cost.
+
+all:
+  vars:
+    # The role the trickle writer logs in as (tests/playbooks/zone-join-trickle.yml).
+    # Its own role rather than the admin role, so that the rule admitting it
+    # below opens nothing the other tests rely on being shut: the client's
+    # refusals that verify-simple-cluster.yml checks are for the admin and
+    # pgedge roles. Set on 'all' because the client starts the writer and every
+    # zone's primary creates the role.
+    zone_join_trickle_user: trickle
+    zone_join_trickle_password: TestTrickle246
+
+pgedge:
+  vars:
+    # Two databases, so a join goes through its per-database loop more than
+    # once and has to keep each database's state apart.
+    db_names:
+    - demo
+    - zonejoin
+    # The base inventory's parameters, less max_worker_processes. Five Simple
+    # zones with two databases need 32 workers, more than the 24 it pins, and
+    # init_server would refuse the join run. Left to the calculation, the pool
+    # grows when a zone is added, as it would for an operator who never set it,
+    # so the join run restarts the existing zones into the larger pool while the
+    # trickle writes to them. That is the case the join's sizing check is for.
+    # verify-simple-cluster.yml and verify-ultra-ha.yml expect the pinned 24, so
+    # they do not hold under this layer; verify-zone-join.yml is its verifier.
+    pg_parameters:
+      work_mem: 8MB
+      TimeZone: Etc/UTC
+      shared_preload_libraries: auto_explain
+    # The trickle writer reaches a Simple zone straight on its Postgres port,
+    # from the client, and an HA zone through its proxy, which Postgres sees as
+    # the proxy's address. Either is somewhere on the test network, and only the
+    # writer's role is admitted from there.
+    custom_hba_rules:
+    - users: trickle
+      databases: demo,zonejoin
+      source: 192.168.6.0/24
