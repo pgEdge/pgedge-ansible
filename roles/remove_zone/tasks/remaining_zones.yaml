@@ -1,0 +1,291 @@
+---
+
+# Clear one zone out of one database on every other zone.
+#
+# Inputs, set by whoever includes this file:
+#
+#   remove_zone     The number of the zone being removed (R below).
+#   remove_zone_db  The database to clear it from.
+#
+# Every other zone's primary has to be known: in an HA cluster, each zone's
+# nodes must have run role_config's zone_primary tasks, which setup_pgedge and
+# this role both do first. The tasks here run once for the play and delegate to
+# each zone's primary, so the file can be included from any one host -- the
+# remove_zone role includes it once per database in db_names, and setup_pgedge
+# includes it from the rescue of a join that cannot be resumed, for the zone
+# that was joining and the database it failed in:
+#
+#   - include_role:
+#       name: remove_zone
+#       tasks_from: remaining_zones
+#     vars:
+#       remove_zone: "{{ joining_zone }}"
+#       remove_zone_db: "{{ database }}"
+#
+# Nothing here connects to R itself, so it does the same whether R is running,
+# stopped or gone. On each other zone Z it removes, in this order:
+#
+# 1. Every subscription on Z whose provider is R's node, edge<R>. Spock's
+#    sub_drop stops the subscription's apply worker, drops the subscription and
+#    the replication origin that tracked it, and, when R's node row was there
+#    only for that subscription, the node row as well. It also tries to drop
+#    the subscription's slot on R. That attempt connects to R, waiting up to
+#    Spock's 30-second connect timeout, and only warns when R cannot be
+#    reached: a slot left behind on R goes with R's databases when R is reset.
+#
+# 2. The slot on Z that served R's subscription from Z, sub_nR_nZ. Spock names
+#    it from the database, the provider's node name and the subscription name,
+#    hashing and shortening each part to fit, so the name is asked of Spock's
+#    own spock_gen_slot_name on Z rather than put together here. The same name
+#    covers the slot a join pre-creates on Z for the joining zone, and the one
+#    the joining zone's copy subscription uses on its source. Only an inactive
+#    slot is dropped. One that something is still reading from is waited on
+#    for a while -- a walsender lingers after its subscriber went away, until
+#    the connection closes or wal_sender_timeout passes -- and if it is still
+#    in use after that, nothing more is done and the run stops, naming it.
+#
+# 3. R's node row, if step 1 did not already take it with the last
+#    subscription. Spock refuses to drop a node that any subscription still
+#    names, which is what makes this safe, and the query never names Z's own
+#    node.
+#
+# 4. Z's progress rows for R, which Spock never removes (see below).
+#
+# Each step selects only what is still there, so the row count says whether
+# anything changed and a second pass changes nothing.
+
+- name: Ensure every other zone's primary is known
+  assert:
+    that:
+    - unknown | length == 0
+    fail_msg: >-
+      Zone {{ remove_zone }} cannot be cleared from {{ remove_zone_db }}
+      because no host is known to run the primary of
+      {{ 'zone' if unknown | length == 1 else 'zones' }}
+      {{ unknown | join(', ') }}. Every other zone has to be reachable for its
+      Spock configuration to be cleaned. Make sure each zone has a running
+      primary that is part of this run, and run this again.
+    quiet: true
+  vars:
+    unknown: >-
+      {{ remove_zone_remaining | selectattr('host', 'eq', '')
+         | map(attribute='zone') | list }}
+  run_once: true
+
+# A zone that was never built, or not yet given this database, has nothing to
+# clear in it, and connecting to a database that does not exist would fail. A
+# database in db_names always has Spock once setup_postgres has run, but one
+# without it has no Spock objects to clear either.
+
+- name: Find which other zones have {{ remove_zone_db }} with Spock in it
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT EXISTS (SELECT FROM pg_database WHERE datname = %(db)s) AS present
+    named_args:
+      db: "{{ remove_zone_db }}"
+  loop: "{{ remove_zone_remaining }}"
+  loop_control:
+    label: "zone {{ item.zone }} ({{ item.host }})"
+  register: remove_zone_rz_present
+  changed_when: false
+  delegate_to: "{{ item.host }}"
+  run_once: true
+  become: true
+  become_user: postgres
+
+- name: Check which of them have Spock in {{ remove_zone_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT EXISTS (SELECT FROM pg_extension WHERE extname = 'spock') AS spock
+  loop: >-
+    {{ remove_zone_rz_present.results
+       | selectattr('query_result.0.present') | map(attribute='item') | list }}
+  loop_control:
+    label: "zone {{ item.zone }} ({{ item.host }})"
+  register: remove_zone_rz_spock
+  changed_when: false
+  delegate_to: "{{ item.host }}"
+  run_once: true
+  become: true
+  become_user: postgres
+
+- name: Note the zones to clear zone {{ remove_zone }} from
+  set_fact:
+    remove_zone_rz_zones: >-
+      {{ remove_zone_rz_spock.results | selectattr('query_result.0.spock')
+         | map(attribute='item') | list }}
+  run_once: true
+
+- name: Drop the subscriptions from zone {{ remove_zone }} in {{ remove_zone_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT s.sub_name::text AS sub_name, spock.sub_drop(s.sub_name)
+        FROM spock.subscription s
+        JOIN spock.node n ON n.node_id = s.sub_origin
+       WHERE n.node_name = %(node)s
+    named_args:
+      node: "{{ remove_zone_node }}"
+  loop: "{{ remove_zone_rz_zones }}"
+  loop_control:
+    label: "zone {{ item.zone }} ({{ item.host }})"
+  register: remove_zone_rz_subs
+  changed_when: remove_zone_rz_subs.rowcount > 0
+  delegate_to: "{{ item.host }}"
+  run_once: true
+  become: true
+  become_user: postgres
+
+- name: Wait for the slots that served zone {{ remove_zone }} to fall idle
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT r.slot_name::text AS slot_name, r.active_pid,
+             a.client_addr::text AS client_addr,
+             pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(),
+                                            r.restart_lsn)) AS retained
+        FROM pg_replication_slots r
+        LEFT JOIN pg_stat_activity a ON a.pid = r.active_pid
+       WHERE r.active
+         AND r.slot_name = spock.spock_gen_slot_name(%(db)s, %(provider)s,
+                                                     %(sub)s)
+    named_args:
+      db: "{{ remove_zone_db }}"
+      provider: "edge{{ item.zone }}"
+      sub: "sub_n{{ remove_zone | int }}_n{{ item.zone }}"
+  loop: "{{ remove_zone_rz_zones }}"
+  loop_control:
+    label: "zone {{ item.zone }} ({{ item.host }})"
+  register: remove_zone_rz_active
+  until: remove_zone_rz_active.rowcount == 0
+  retries: 30
+  delay: 5
+  failed_when: false
+  changed_when: false
+  delegate_to: "{{ item.host }}"
+  run_once: true
+  become: true
+  become_user: postgres
+
+- name: Ensure no slot that served zone {{ remove_zone }} is still in use
+  assert:
+    that:
+    - busy | length == 0
+    fail_msg: >-
+      Zone {{ remove_zone }} cannot be cleared from {{ remove_zone_db }}:
+      {{ busy | join('; ') }}.
+      {{ 'This slot is' if busy | length == 1 else 'These slots are' }} still
+      being read after 150 seconds. Only zone {{ remove_zone }}'s own
+      subscriptions read {{ 'it' if busy | length == 1 else 'them' }}, so
+      either zone {{ remove_zone }} is running and could not be detached, or
+      something outside this cluster's configuration is reading
+      {{ 'it' if busy | length == 1 else 'them' }}. Stop whatever is
+      connected, or stop zone {{ remove_zone }}, and run this again. The
+      subscriptions from zone {{ remove_zone }} in {{ remove_zone_db }} have
+      been dropped on every other zone; its slots and node rows there have
+      not.
+    quiet: true
+  vars:
+    busy: >-
+      {%- set out = [] -%}
+      {%- for r in remove_zone_rz_active.results -%}
+      {%-   for s in r.query_result | default([]) -%}
+      {%-     set _ = out.append('slot ' ~ s.slot_name ~ ' on zone ' ~ r.item.zone
+                  ~ ' (' ~ r.item.host ~ ') is in use by process '
+                  ~ s.active_pid ~ (' from ' ~ s.client_addr
+                                    if s.client_addr else '')
+                  ~ ', holding ' ~ s.retained ~ ' of WAL') -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+- name: Drop the slots that served zone {{ remove_zone }} in {{ remove_zone_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT slot_name::text AS slot_name, pg_drop_replication_slot(slot_name)
+        FROM pg_replication_slots
+       WHERE NOT active
+         AND slot_name = spock.spock_gen_slot_name(%(db)s, %(provider)s,
+                                                   %(sub)s)
+    named_args:
+      db: "{{ remove_zone_db }}"
+      provider: "edge{{ item.zone }}"
+      sub: "sub_n{{ remove_zone | int }}_n{{ item.zone }}"
+  loop: "{{ remove_zone_rz_zones }}"
+  loop_control:
+    label: "zone {{ item.zone }} ({{ item.host }})"
+  register: remove_zone_rz_slots
+  changed_when: remove_zone_rz_slots.rowcount > 0
+  delegate_to: "{{ item.host }}"
+  run_once: true
+  become: true
+  become_user: postgres
+
+- name: Drop zone {{ remove_zone }}'s node from {{ remove_zone_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT spock.node_drop(node_name := n.node_name, ifexists := true)
+        FROM spock.node n
+       WHERE n.node_name = %(node)s
+         AND NOT EXISTS (SELECT FROM spock.local_node l
+                          WHERE l.node_id = n.node_id)
+    named_args:
+      node: "{{ remove_zone_node }}"
+  loop: "{{ remove_zone_rz_zones }}"
+  loop_control:
+    label: "zone {{ item.zone }} ({{ item.host }})"
+  register: remove_zone_rz_node
+  changed_when: remove_zone_rz_node.rowcount > 0
+  delegate_to: "{{ item.host }}"
+  run_once: true
+  become: true
+  become_user: postgres
+
+# 4. The progress rows Z kept for R. Spock records, per remote node, the last
+#    LSN and commit time it applied from it, in spock.progress, and nothing
+#    removes that row when the subscription or node goes. When a subscription
+#    from the same node id is created again, Spock keeps an existing row rather
+#    than starting a new one. Node ids come from the node's name, so a zone
+#    that rejoins as edge<R> would inherit R's old position: on a rebuilt host,
+#    whose WAL starts again from the beginning, a join's wait for Z to reach a
+#    position on R would see the stale one and pass before Z had applied
+#    anything. By now nothing on Z subscribes to R and R's node row is gone, so
+#    the rows to drop are those for a remote node Z no longer knows. No apply
+#    worker reads or writes them any more.
+
+- name: Drop the progress zone {{ remove_zone }} left in {{ remove_zone_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      DELETE FROM spock.progress p
+       WHERE NOT EXISTS (SELECT FROM spock.node n
+                          WHERE n.node_id = p.remote_node_id)
+      RETURNING p.remote_node_id
+  loop: "{{ remove_zone_rz_zones }}"
+  loop_control:
+    label: "zone {{ item.zone }} ({{ item.host }})"
+  register: remove_zone_rz_progress
+  changed_when: remove_zone_rz_progress.rowcount > 0
+  delegate_to: "{{ item.host }}"
+  run_once: true
+  become: true
+  become_user: postgres

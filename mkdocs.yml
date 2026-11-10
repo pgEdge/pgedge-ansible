@@ -92,6 +92,7 @@ nav:
       - setup_backrest: roles/setup_backrest.md
       - finalize_backrest: roles/finalize_backrest.md
       - wipe_cluster: roles/wipe_cluster.md
+      - remove_zone: roles/remove_zone.md
       - recover_postgres: roles/recover_postgres.md
       - install_lakekeeper: roles/install_lakekeeper.md
       - setup_lakekeeper: roles/setup_lakekeeper.md

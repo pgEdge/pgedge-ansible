@@ -1,0 +1,55 @@
+---
+
+argument_specs:
+  main:
+    short_description: Detach a zone from a running pgEdge cluster
+    description:
+    - Remove every trace of one zone from the Spock configuration of every
+      other zone, in every database in I(db_names) -- the subscriptions from
+      it, the replication slots that served it, and its node -- and, when the
+      zone itself can be reached, drop its subscriptions and reset its
+      databases so that it can join the cluster again from scratch.
+    - The zone stays in the inventory while it is removed. Afterwards, either
+      take it out of the inventory, or join it again by running the deployment
+      playbook with C(-e pgedge_join_zones=<N>).
+    - The hosts themselves are left as they are. Stopping or erasing them is
+      the operator's business.
+    options:
+      remove_zone:
+        type: "int"
+        required: true
+        description:
+        - The number of the zone to remove. It must be a zone of the inventory.
+          Pass it with C(-e), for example C(-e remove_zone=3).
+      remove_zone_confirm:
+        type: "bool"
+        default: false
+        description:
+        - Must be C(true) for the role to do anything. Pass it with C(-e),
+          never from an inventory.
+  remaining_zones:
+    short_description: Clear one zone from the other zones, for one database
+    description:
+    - The part of removing a zone that runs on every other zone, for a single
+      database. It drops every subscription whose provider is the zone's node,
+      every inactive replication slot that served the zone, and the zone's
+      node row, on each other zone's primary. It never connects to the zone
+      being removed, so it works whether that zone is reachable or not.
+    - Runs once for the play and delegates to each zone's primary, so it can
+      be included from a single host, such as a run_once block. In an HA
+      cluster every zone's C(zone_primary) must already be known
+      (C(role_config)'s C(zone_primary) tasks).
+    - Used by this role for every database in I(db_names), and by
+      C(setup_pgedge) to release what a join that cannot be resumed was
+      holding.
+    options:
+      remove_zone:
+        type: "int"
+        required: true
+        description:
+        - The number of the zone being removed.
+      remove_zone_db:
+        type: "str"
+        required: true
+        description:
+        - The database to clear it from.

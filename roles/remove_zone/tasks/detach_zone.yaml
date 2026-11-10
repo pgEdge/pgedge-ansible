@@ -1,0 +1,33 @@
+---
+
+# On the primary of the zone being removed, when it can be reached: drop every
+# subscription it has, in every database in db_names that has Spock.
+#
+# This comes before the other zones are cleaned, and the order matters. Each
+# of this zone's subscriptions reads from a slot on another zone, and that
+# slot stays in use for as long as the subscription's apply worker is
+# connected. sub_drop stops the worker first, so once this is done nothing of
+# this zone's is reading from the other zones, and the slots there that served
+# it can be dropped. sub_drop also tries to drop each of those slots itself; if
+# the other zone's walsender has not let go yet, Spock only warns, and
+# remaining_zones.yaml drops the slot once it is idle.
+#
+# The zone's own node is not dropped here. Its databases are dropped
+# altogether once the other zones have let go of them (reset_zone.yaml), which
+# takes the node with them.
+
+- name: Drop zone {{ remove_zone }}'s own subscriptions
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT s.sub_name::text AS sub_name, spock.sub_drop(s.sub_name)
+        FROM spock.subscription s
+  loop: >-
+    {{ remove_zone_state.dbs | dict2items | selectattr('value.spock')
+       | map(attribute='key') | list }}
+  register: remove_zone_own_subs
+  changed_when: remove_zone_own_subs.rowcount > 0
+  become: true
+  become_user: postgres
