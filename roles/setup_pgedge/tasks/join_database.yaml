@@ -1,0 +1,692 @@
+---
+
+# Join pgedge_join_zone (N) to one database, pgedge_join_db: steps 2 to 10 of
+# the procedure join_zones.yaml describes. Runs on N's primary. The source, S,
+# is pgedge_join_source and the other members, Z, are pgedge_join_others.
+#
+# Every step finds out from the cluster whether it still has work to do, so a
+# rerun after a failure, or after the run was stopped, goes on from wherever
+# this one got to. A step that cannot be redone safely is guarded by the state
+# that makes it safe, as described at each.
+#
+# Any failure lands in the rescue at the end, which sorts it into one of two
+# kinds. A join that can be resumed keeps everything and says what it holds
+# (join_report.yaml). A join that cannot -- see pgedge_join_fatal below --
+# releases what it holds on the other zones (join_release.yaml) and says to
+# reset the zone with remove_zone before trying again. A failure not known to
+# be final is treated as one that can be resumed, which keeps the slots: a
+# slot dropped by mistake loses writes, one kept by mistake only holds WAL.
+
+- name: Join zone {{ pgedge_join_zone }} to {{ pgedge_join_db }}
+  vars:
+    # Step 7's positions, for the subscriptions still disabled.
+    targets: >-
+      {{ pgedge_join_targets.results | default([])
+         | rejectattr('skipped', 'defined')
+         | selectattr('query_result.0.target') | list }}
+  block:
+  # Set by a step that finds the join cannot go on, just before it fails, to
+  # say why. Cleared here so a failure in another database is not taken for
+  # one in this.
+
+  - name: Clear any earlier verdict on this join
+    set_fact:
+      pgedge_join_fatal: ""
+
+  - name: "Step 2: create zone {{ pgedge_join_zone }}'s node"
+    include_tasks: join_seed.yaml
+    vars:
+      pgedge_join_seed_step: node
+
+  # Every slot a subscription on N reads is named by N's Spock, from the
+  # database, the provider's node name and the subscription's name, so the
+  # names are asked of it here, once, rather than put together by hand. The
+  # slot a join creates on a member has to carry exactly the name N's
+  # subscription will look for.
+
+  - name: Ask zone {{ pgedge_join_zone }}'s Spock for the names of the slots it will read
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT json_object_agg(m, spock.spock_gen_slot_name(
+                 %(db)s, 'edge' || m, 'sub_n' || %(zone)s || '_n' || m)::text)
+               AS slots
+          FROM json_array_elements_text(%(members)s::json) AS m
+      named_args:
+        db: "{{ pgedge_join_db }}"
+        zone: "{{ pgedge_join_zone | string }}"
+        members: "{{ pgedge_join_members | map('string') | list | to_json }}"
+    register: pgedge_join_slot_names
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  - name: Note the slot names
+    set_fact:
+      pgedge_join_slots: "{{ pgedge_join_slot_names.query_result[0].slots }}"
+
+  - include_tasks: join_read.yaml
+
+  # Step 3. For each Z: a slot on Z that keeps every Z write from now on, and
+  # on N a subscription from Z, created disabled, that will read it. Nothing
+  # reads the slot yet; step 7 moves it to the right place first.
+  #
+  # The slot is created only while N has no subscription from Z. Once the
+  # subscription exists the slot is the one it was made for, and if it is gone
+  # -- dropped by hand, or lost in a failover before Spock's slot sync copied
+  # it to the new primary -- it cannot be made again at the position it had,
+  # and the writes Z made in between would be lost. That cannot be resumed.
+
+  - name: "Step 3: look for zone {{ pgedge_join_zone }}'s slots on the other members"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT current_setting('server_version_num')::int AS version,
+               coalesce(current_setting('spock.use_native_failover_slots',
+                                        true), 'off') = 'on' AS failover,
+               EXISTS (SELECT FROM pg_replication_slots
+                        WHERE slot_name = %(slot)s) AS present
+      named_args:
+        slot: "{{ pgedge_join_slots[item | string] }}"
+    loop: "{{ pgedge_join_others }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_other_slots
+    changed_when: false
+    delegate_to: "{{ pgedge_zone_hosts[item | string] }}"
+    become: true
+    become_user: postgres
+
+  - name: "Step 3: note any slot zone {{ pgedge_join_zone }} needed that is gone"
+    set_fact:
+      pgedge_join_fatal: >-
+        {{ lost | join(', ') }} that zone {{ pgedge_join_zone }}'s disabled
+        {{ 'subscription reads is' if lost | length == 1
+           else 'subscriptions read are' }} gone, and cannot be created again
+        at the position it had, so writes made there in between would be lost
+    vars:
+      lost: >-
+        {%- set out = [] -%}
+        {%- for r in pgedge_join_other_slots.results -%}
+        {%-   set sub = pgedge_join_subs['sub_n' ~ pgedge_join_zone ~ '_n'
+                                         ~ r.item] | default(none) -%}
+        {%-   if sub and not sub.enabled and not r.query_result[0].present -%}
+        {%-     set _ = out.append('the slot on zone ' ~ r.item ~ ' ('
+                    ~ pgedge_join_slots[r.item | string] ~ ')') -%}
+        {%-   endif -%}
+        {%- endfor -%}
+        {{ out }}
+    when: lost | length > 0
+
+  - name: "Step 3: stop, since a slot the join needs is gone"
+    fail:
+      msg: "{{ pgedge_join_fatal }}."
+    when: pgedge_join_fatal | length > 0
+
+  # On PostgreSQL 17 and later, when Spock is set to use PostgreSQL's own
+  # failover slots, the slot is made one, as Spock's own add-node does, so
+  # that a failover in Z keeps it. Decided by each Z's own server, since the
+  # zones may run different releases.
+
+  - name: "Step 3: create zone {{ pgedge_join_zone }}'s slot on each other member"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT (pg_create_logical_replication_slot(%(slot)s, 'spock_output'
+               {%- if item.query_result[0].version | int >= 170000 -%}
+               , false, false, %(failover)s
+               {%- endif -%})).lsn::text AS lsn
+         WHERE NOT EXISTS (SELECT FROM pg_replication_slots
+                            WHERE slot_name = %(slot)s)
+      named_args:
+        slot: "{{ pgedge_join_slots[item.item | string] }}"
+        failover: "{{ item.query_result[0].failover | bool }}"
+    loop: "{{ pgedge_join_other_slots.results }}"
+    loop_control:
+      label: "zone {{ item.item }}"
+    register: pgedge_join_slot_created
+    changed_when: pgedge_join_slot_created.rowcount > 0
+    delegate_to: "{{ pgedge_zone_hosts[item.item | string] }}"
+    become: true
+    become_user: postgres
+    when: ('sub_n' ~ pgedge_join_zone ~ '_n' ~ item.item) not in pgedge_join_subs
+
+  # Created disabled and without any copy, Spock marks the subscription ready
+  # at once and creates the replication origin, named like the slot, that
+  # tracks how far N has read from Z. An origin by that name with no
+  # subscription is left from one dropped by hand, and would make the create
+  # fail; Spock's add-node drops it the same way.
+
+  - name: "Step 3: drop stale replication origins on zone {{ pgedge_join_zone }}"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT roname::text AS roname, pg_replication_origin_drop(roname)
+          FROM pg_replication_origin
+         WHERE roname = %(slot)s
+           AND NOT EXISTS (SELECT FROM spock.subscription
+                            WHERE sub_name = %(sub)s)
+      named_args:
+        slot: "{{ pgedge_join_slots[item | string] }}"
+        sub: "sub_n{{ pgedge_join_zone }}_n{{ item }}"
+    loop: "{{ pgedge_join_others }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_stale_origin
+    changed_when: pgedge_join_stale_origin.rowcount > 0
+    become: true
+    become_user: postgres
+
+  - name: "Step 3: subscribe zone {{ pgedge_join_zone }} to each other member, disabled"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: |-
+        SELECT spock.sub_create(
+                 subscription_name := %(sub_name)s,
+                 provider_dsn := %(dsn)s,
+                 synchronize_structure := false,
+                 synchronize_data := false,
+                 enabled := false
+               )
+         WHERE NOT EXISTS (
+                 SELECT FROM spock.subscription s
+                   JOIN spock.node n ON n.node_id = s.sub_origin
+                  WHERE s.sub_name = %(sub_name)s
+                     OR n.node_name = %(provider)s
+               )
+      named_args:
+        sub_name: "sub_n{{ pgedge_join_zone }}_n{{ item }}"
+        provider: "edge{{ item }}"
+        dsn: "{{ pgedge_zone_dsn }}"
+    vars:
+      pgedge_dsn_zone: "{{ item }}"
+      pgedge_dsn_db: "{{ pgedge_join_db }}"
+    loop: "{{ pgedge_join_others }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_disabled_subs
+    changed_when: pgedge_join_disabled_subs.rowcount > 0
+    become: true
+    become_user: postgres
+
+  # Step 4. For each Z: a bookmark on Z, and a wait for S to apply it. The
+  # bookmark comes after the slot, so once S has it, S holds every Z write
+  # from before the slot began, and the copy N takes from S next holds them
+  # too. Pointless once the copy has started, so skipped then.
+
+  - name: "Step 4: wait for zone {{ pgedge_join_source }} to apply every other member's writes"
+    include_tasks: join_event.yaml
+    vars:
+      pgedge_event_zone: "{{ pgedge_join_other }}"
+      pgedge_event_waiters: ["{{ pgedge_join_source }}"]
+      pgedge_event_why: "step 4, before zone {{ pgedge_join_zone }} copies {{ pgedge_join_db }}"
+    loop: "{{ pgedge_join_others }}"
+    loop_control:
+      loop_var: pgedge_join_other
+    when: ('sub_n' ~ pgedge_join_zone ~ '_n' ~ pgedge_join_source) not in pgedge_join_subs
+
+  - name: "Steps 5 and 6: copy zone {{ pgedge_join_source }}"
+    include_tasks: join_seed.yaml
+    vars:
+      pgedge_join_seed_step: copy
+
+  # Step 7. For each Z: move Z's slot, and N's origin for it, to the last Z
+  # write that S had applied when N copied it. N has every Z write up to there
+  # from the copy, and will read every one after it from the slot.
+  #
+  # That position is N's own spock.progress for Z, or the exact one step 5
+  # recorded in N's origin for Z, whichever is later (see join_seed.yaml for
+  # why Spock 5.0's own record can trail the copy by up to a second). N's
+  # subscription from Z created both in step 3, and the copy set the progress
+  # to what S had recorded for Z in the same snapshot it copied the rows from.
+  # Because step 4 had S apply a bookmark Z set after creating the slot, it is
+  # always past the slot's starting point. Neither moves while the
+  # subscription is disabled, so a rerun finds the same position.
+  #
+  # This is the only thing that keeps a Z write from arriving twice, or not at
+  # all, so it runs only while N's subscription from Z is disabled, and the
+  # subscription is never enabled before it has run. Spock's add-node falls
+  # back to Z's current WAL position when N has no progress for Z; that would
+  # skip every Z write S had not applied, so here it is a failure that cannot
+  # be resumed instead. So is a slot already past the position, which would
+  # skip the writes in between.
+
+  - include_tasks: join_read.yaml
+
+  - name: "Step 7: read how far zone {{ pgedge_join_zone }}'s copy has each other member's writes"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT nullif(greatest(
+                 (SELECT p.{{ column }}
+                    FROM spock.progress p
+                    JOIN spock.node n ON n.node_id = p.remote_node_id
+                   WHERE p.node_id = (SELECT node_id FROM spock.node_info())
+                     AND n.node_name = %(provider)s),
+                 pg_replication_origin_progress(%(slot)s, false)),
+                 '0/0')::text AS target,
+               pg_replication_origin_progress(%(slot)s, false)::text AS origin
+      named_args:
+        provider: "edge{{ item }}"
+        slot: "{{ pgedge_join_slots[item | string] }}"
+    vars:
+      # One of two fixed names, chosen by N's Spock release; never input.
+      column: "{{ pgedge_join_progress_columns[pgedge_join_zone | string] }}"
+    loop: "{{ pgedge_join_others }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_targets
+    changed_when: false
+    become: true
+    become_user: postgres
+    when: >-
+      not (pgedge_join_subs['sub_n' ~ pgedge_join_zone ~ '_n' ~ item]
+           | default({'enabled': true})).enabled
+
+  - name: "Step 7: read each other member's slot for zone {{ pgedge_join_zone }}"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT active, confirmed_flush_lsn::text AS confirmed,
+               confirmed_flush_lsn < %(target)s::pg_lsn AS behind,
+               confirmed_flush_lsn > %(target)s::pg_lsn AS beyond
+          FROM pg_replication_slots
+         WHERE slot_name = %(slot)s
+      named_args:
+        slot: "{{ pgedge_join_slots[item.item | string] }}"
+        target: "{{ item.query_result[0].target }}"
+    loop: "{{ targets }}"
+    loop_control:
+      label: "zone {{ item.item }}"
+    register: pgedge_join_slot_state
+    changed_when: false
+    delegate_to: "{{ pgedge_zone_hosts[item.item | string] }}"
+    become: true
+    become_user: postgres
+
+  - name: "Step 7: note a position the join cannot move a slot to"
+    set_fact:
+      pgedge_join_fatal: "{{ problems | join('; ') }}"
+    vars:
+      problems: >-
+        {%- set out = [] -%}
+        {%- for r in pgedge_join_targets.results
+              if r is not skipped and not r.query_result[0].target -%}
+        {%-   set _ = out.append('zone ' ~ pgedge_join_zone ~ ' has no record'
+                  ~ ' of the writes from zone ' ~ r.item ~ ' its copy holds,'
+                  ~ ' so the slot on zone ' ~ r.item ~ ' cannot be placed') -%}
+        {%- endfor -%}
+        {%- for r in pgedge_join_slot_state.results -%}
+        {%-   if not r.query_result -%}
+        {%-     set _ = out.append('the slot on zone ' ~ r.item.item ~ ' ('
+                    ~ pgedge_join_slots[r.item.item | string] ~ ') that zone '
+                    ~ pgedge_join_zone ~ "'s disabled subscription reads is"
+                    ~ ' gone') -%}
+        {%-   elif r.query_result[0].beyond -%}
+        {%-     set _ = out.append('the slot on zone ' ~ r.item.item ~ ' ('
+                    ~ pgedge_join_slots[r.item.item | string] ~ ') is at '
+                    ~ r.query_result[0].confirmed ~ ', past '
+                    ~ r.item.query_result[0].target ~ ', the last write from'
+                    ~ ' that zone the copy holds, so the writes in between'
+                    ~ ' would be lost') -%}
+        {%-   endif -%}
+        {%- endfor -%}
+        {{ out }}
+    when: problems | length > 0
+
+  - name: "Step 7: stop, since a slot cannot be placed"
+    fail:
+      msg: "{{ pgedge_join_fatal }}."
+    when: pgedge_join_fatal | length > 0
+
+  # Nothing should be reading a slot whose subscription is disabled. If
+  # something is, the slot cannot be moved, and what is reading it should be
+  # found first; the join keeps everything and can be resumed.
+
+  - name: "Step 7: ensure no other member's slot for zone {{ pgedge_join_zone }} is in use"
+    assert:
+      that:
+      - busy | length == 0
+      fail_msg: >-
+        {{ busy | join(', ') }}: zone {{ pgedge_join_zone }}'s subscription
+        from there is disabled, so nothing should be reading
+        {{ 'it' if busy | length == 1 else 'them' }}, and an active slot
+        cannot be moved. Find what is connected, stop it, and run this again.
+      quiet: true
+    vars:
+      busy: >-
+        {%- set out = [] -%}
+        {%- for r in pgedge_join_slot_state.results
+              if r.query_result[0].active | default(false) -%}
+        {%-   set _ = out.append('The slot on zone ' ~ r.item.item ~ ' ('
+                  ~ pgedge_join_slots[r.item.item | string] ~ ') is in use') -%}
+        {%- endfor -%}
+        {{ out }}
+
+  - name: "Step 7: move each other member's slot to what zone {{ pgedge_join_zone }} copied"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT slot_name::text AS slot_name, end_lsn::text AS end_lsn
+          FROM pg_replication_slot_advance(%(slot)s, %(target)s::pg_lsn)
+      named_args:
+        slot: "{{ pgedge_join_slots[item.item.item | string] }}"
+        target: "{{ item.item.query_result[0].target }}"
+    loop: "{{ pgedge_join_slot_state.results }}"
+    loop_control:
+      label: "zone {{ item.item.item }} to {{ item.item.query_result[0].target }}"
+    register: pgedge_join_advanced
+    changed_when: true
+    delegate_to: "{{ pgedge_zone_hosts[item.item.item | string] }}"
+    become: true
+    become_user: postgres
+    when: item.query_result[0].behind | default(false)
+
+  # Spock created the origin with the subscription in step 3, so it is
+  # created here only if something removed it since.
+
+  - name: "Step 7: ensure zone {{ pgedge_join_zone }} tracks its place in each other member's writes"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT pg_replication_origin_create(%(slot)s)
+         WHERE NOT EXISTS (SELECT FROM pg_replication_origin
+                            WHERE roname = %(slot)s)
+      named_args:
+        slot: "{{ pgedge_join_slots[item.item | string] }}"
+    loop: "{{ targets }}"
+    loop_control:
+      label: "zone {{ item.item }}"
+    register: pgedge_join_origin_created
+    changed_when: pgedge_join_origin_created.rowcount > 0
+    become: true
+    become_user: postgres
+
+  - name: "Step 7: move zone {{ pgedge_join_zone }}'s origin for each other member to the same place"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT pg_replication_origin_advance(%(slot)s, %(target)s::pg_lsn)
+      named_args:
+        slot: "{{ pgedge_join_slots[item.item | string] }}"
+        target: "{{ item.query_result[0].target }}"
+    loop: "{{ targets }}"
+    loop_control:
+      label: "zone {{ item.item }} to {{ item.query_result[0].target }}"
+    changed_when: true
+    become: true
+    become_user: postgres
+    when: item.query_result[0].origin != item.query_result[0].target
+
+  # Spock's add-node also moves S's slot for N's copy subscription when it
+  # finds it idle. It is not done here. That subscription is enabled, its
+  # apply worker owns the slot and may reconnect at any moment, and when it
+  # does it starts from its own origin, so the slot's position cannot lose or
+  # repeat anything either way.
+
+  - name: "Step 7a: mirror zone {{ pgedge_join_source }}'s replication sets"
+    include_tasks: join_seed.yaml
+    vars:
+      pgedge_join_seed_step: repsets
+
+  # Step 8. For each Z: enable N's subscription from Z, now that its slot and
+  # origin are in place, and wait for it to replicate and catch up. The
+  # catch-up uses a fresh bookmark set on Z now rather than the one from step
+  # 4, which a resumed run no longer has; reaching it shows more.
+  #
+  # Spock refuses an immediate enable inside a transaction, so this one runs
+  # outside any.
+
+  - include_tasks: join_read.yaml
+
+  - name: "Step 8: enable zone {{ pgedge_join_zone }}'s subscriptions from the other members"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      autocommit: true
+      query: >-
+        SELECT s.sub_name::text AS sub_name,
+               spock.sub_enable(s.sub_name, immediate := true)
+          FROM spock.subscription s
+         WHERE s.sub_name = %(sub)s AND NOT s.sub_enabled
+      named_args:
+        sub: "sub_n{{ pgedge_join_zone }}_n{{ item }}"
+    loop: "{{ pgedge_join_others }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_enabled
+    changed_when: pgedge_join_enabled.rowcount > 0
+    become: true
+    become_user: postgres
+
+  - name: "Step 8: wait for zone {{ pgedge_join_zone }}'s subscriptions from the other members to replicate"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT st.status::text AS status
+          FROM spock.sub_show_status(%(sub)s) st
+      named_args:
+        sub: "sub_n{{ pgedge_join_zone }}_n{{ item }}"
+    loop: "{{ pgedge_join_others }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_replicating
+    until: pgedge_join_replicating.query_result[0].status | default('') == 'replicating'
+    retries: "{{ pgedge_join_wait_retries | int }}"
+    delay: 5
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  - name: "Step 8: wait for zone {{ pgedge_join_zone }} to catch up with each other member"
+    include_tasks: join_event.yaml
+    vars:
+      pgedge_event_zone: "{{ pgedge_join_other }}"
+      pgedge_event_waiters: ["{{ pgedge_join_zone }}"]
+      pgedge_event_why: "step 8, zone {{ pgedge_join_zone }} catches up with the other members in {{ pgedge_join_db }}"
+    loop: "{{ pgedge_join_others }}"
+    loop_control:
+      loop_var: pgedge_join_other
+
+  # Step 9. Every member, the source included, subscribes to N, which now has
+  # every row and every write. Plain subscriptions, as the mesh creates: they
+  # copy nothing and stream N's own writes from the moment they exist, and
+  # nothing has written to N yet except Spock applying other zones' writes,
+  # which are not sent on. The same query as the mesh's, so a rerun, or a
+  # later ordinary run, finds them and creates nothing.
+
+  - name: "Step 9: subscribe every member to zone {{ pgedge_join_zone }}"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: |-
+        SELECT spock.sub_create(
+                 subscription_name := %(sub_name)s, provider_dsn := %(dsn)s
+               )
+         WHERE NOT EXISTS (
+                 SELECT FROM spock.subscription s
+                   JOIN spock.node n ON n.node_id = s.sub_origin
+                  WHERE s.sub_name = %(sub_name)s
+                     OR n.node_name = %(provider)s
+               )
+      named_args:
+        sub_name: "sub_n{{ item }}_n{{ pgedge_join_zone }}"
+        provider: "edge{{ pgedge_join_zone }}"
+        dsn: "{{ pgedge_zone_dsn }}"
+    vars:
+      pgedge_dsn_zone: "{{ pgedge_join_zone }}"
+      pgedge_dsn_db: "{{ pgedge_join_db }}"
+    loop: "{{ pgedge_join_members }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_reverse
+    changed_when: pgedge_join_reverse.rowcount > 0
+    delegate_to: "{{ pgedge_zone_hosts[item | string] }}"
+    become: true
+    become_user: postgres
+
+  # Step 10. Bookmarks both ways: one from N that every member applies, and
+  # one from every member that N applies. Then N has to look like any other
+  # member: an enabled, replicating subscription from every member, and every
+  # member one from N. How far behind anyone is does not decide membership;
+  # the bookmarks have already waited for that.
+
+  - name: "Step 10: wait for every member to apply zone {{ pgedge_join_zone }}'s writes"
+    include_tasks: join_event.yaml
+    vars:
+      pgedge_event_zone: "{{ pgedge_join_zone }}"
+      pgedge_event_waiters: "{{ pgedge_join_members }}"
+      pgedge_event_why: "step 10, the members reach zone {{ pgedge_join_zone }} in {{ pgedge_join_db }}"
+
+  - name: "Step 10: wait for zone {{ pgedge_join_zone }} to apply every member's writes"
+    include_tasks: join_event.yaml
+    vars:
+      pgedge_event_zone: "{{ pgedge_join_other }}"
+      pgedge_event_waiters: ["{{ pgedge_join_zone }}"]
+      pgedge_event_why: "step 10, zone {{ pgedge_join_zone }} reaches the members in {{ pgedge_join_db }}"
+    loop: "{{ pgedge_join_members }}"
+    loop_control:
+      loop_var: pgedge_join_other
+
+  - name: "Step 10: wait for zone {{ pgedge_join_zone }} and every member to replicate from each other"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT %(want)s::int AS wanted, count(*) AS replicating
+          FROM spock.subscription s
+          JOIN spock.node n ON n.node_id = s.sub_origin
+          JOIN LATERAL spock.sub_show_status(s.sub_name) st ON true
+         WHERE s.sub_enabled AND st.status = 'replicating'
+           AND n.node_name::text IN (
+                 SELECT 'edge' || json_array_elements_text(%(providers)s::json))
+      named_args:
+        want: "{{ providers | length }}"
+        providers: "{{ providers | to_json }}"
+    vars:
+      providers: >-
+        {{ pgedge_join_members | map('string') | list
+           if item == pgedge_join_zone | int
+           else [pgedge_join_zone | string] }}
+    loop: "{{ [pgedge_join_zone | int] + pgedge_join_members }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_membership
+    until: >-
+      pgedge_join_membership.query_result[0].replicating | int
+      == pgedge_join_membership.query_result[0].wanted | int
+    retries: "{{ pgedge_join_wait_retries | int }}"
+    delay: 5
+    changed_when: false
+    delegate_to: "{{ pgedge_zone_hosts[item | string] }}"
+    become: true
+    become_user: postgres
+
+  - name: Report that zone {{ pgedge_join_zone }} has joined {{ pgedge_join_db }}
+    debug:
+      msg: >-
+        Zone {{ pgedge_join_zone }} is a member of {{ pgedge_join_db }}: it
+        copied zone {{ pgedge_join_source }}, and replicates with
+        {{ 'zone' if pgedge_join_members | length == 1 else 'zones' }}
+        {{ pgedge_join_members | join(', ') }} both ways.
+
+  rescue:
+  # A step that found the join cannot go on said so in pgedge_join_fatal. The
+  # copy's wait says so in its own words: a copy Spock disabled, or one whose
+  # worker stopped while creating the schema, copying rows or building
+  # constraints, never continues. Anything else, including a wait that ran
+  # out of time, can be resumed.
+
+  - name: Decide whether zone {{ pgedge_join_zone }}'s join of {{ pgedge_join_db }} can be resumed
+    set_fact:
+      pgedge_join_failed_task: >-
+        {{ ansible_failed_task.name | default('an unknown step') }}
+      # A step that set pgedge_join_fatal failed with that same text, so it is
+      # not repeated.
+      pgedge_join_failed_msg: >-
+        {{ '' if pgedge_join_fatal | default('', true) | length > 0
+           else failure | trim | truncate(3000) }}
+      pgedge_join_fatal: >-
+        {{ pgedge_join_fatal | default('', true)
+           if pgedge_join_fatal | default('', true) | length > 0
+           else ('the copy of zone ' ~ pgedge_join_source ~ ' stopped where'
+                 ~ ' Spock cannot continue it')
+           if failure is search('Spock does not resume a copy from there')
+           else ('Spock disabled the copy of zone ' ~ pgedge_join_source)
+           if failure is search('Copy of .* failed: Spock disabled the subscription')
+           else '' }}
+    vars:
+      failure: >-
+        {%- set r = ansible_failed_result | default({}) -%}
+        {%- set out = [r.msg | default('')] -%}
+        {%- for x in r.results | default([]) if x.failed | default(false) -%}
+        {%-   set _ = out.append(x.msg | default('')) -%}
+        {%-   set _ = out.append(x.stderr | default('')) -%}
+        {%- endfor -%}
+        {%- set _ = out.append(r.stderr | default('')) -%}
+        {{ out | select | reject('eq', 'One or more items failed') | join(' ')
+           | regex_replace('\\s+', ' ') }}
+
+  - name: Release what the other zones hold for zone {{ pgedge_join_zone }}
+    include_tasks: join_release.yaml
+    when: pgedge_join_fatal | length > 0
+
+  - name: Stop, since zone {{ pgedge_join_zone }}'s join of {{ pgedge_join_db }} cannot be resumed
+    fail:
+      msg: >-
+        Zone {{ pgedge_join_zone }} cannot finish joining
+        {{ pgedge_join_db }}, and the join cannot be resumed:
+        {{ pgedge_join_fatal | regex_replace('\\s+', ' ') | trim }}. It failed at
+        "{{ pgedge_join_failed_task }}"{% if pgedge_join_failed_msg %}:
+        {{ pgedge_join_failed_msg }}{% endif %}
+        So that nothing keeps WAL for a join that cannot finish, zone
+        {{ pgedge_join_zone }}'s subscriptions in {{ pgedge_join_db }} have
+        been dropped{{ ' as far as it could be reached'
+        if pgedge_join_detached is failed else '' }}, and every other zone
+        has dropped what it held for it there{% if released %}, including
+        {{ released | join(', ') }}{% endif %}.
+        Run the remove_zone playbook with -e remove_zone={{ pgedge_join_zone }}
+        -e remove_zone_confirm=true to reset zone {{ pgedge_join_zone }}, then
+        run this again with
+        -e pgedge_join_zones={{ pgedge_join_plan | join(',') }} to join it from
+        the beginning.
+    vars:
+      released: >-
+        {%- set out = [] -%}
+        {%- for r in remove_zone_rz_slots.results | default([]) -%}
+        {%-   for s in r.query_result | default([]) -%}
+        {%-     set _ = out.append('slot ' ~ s.slot_name ~ ' on zone '
+                    ~ r.item.zone) -%}
+        {%-   endfor -%}
+        {%- endfor -%}
+        {{ out }}
+    when: pgedge_join_fatal | length > 0
+
+  - name: Report what zone {{ pgedge_join_zone }}'s join holds, so that it can be resumed
+    include_tasks: join_report.yaml
+    when: pgedge_join_fatal | length == 0

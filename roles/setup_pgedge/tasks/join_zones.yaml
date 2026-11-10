@@ -1,20 +1,58 @@
 ---
 
-# Placeholder for joining zones to a running cluster (EE-45). The procedure
-# copies an existing zone's schema and data into each zone in pgedge_join_plan
-# and accounts for every write the other zones take meanwhile; it replaces
-# this file.
+# Join the zones in pgedge_join_plan to a cluster that already holds data.
 #
-# Until then a run that would join a zone stops here. classify.yaml has already
-# checked that the join was asked for and is allowed, and the ordinary path has
-# created nothing for the joining zones in any database that holds data, so
-# stopping here leaves the cluster as it was.
+# A zone added to a running cluster has to start with every row the other
+# zones hold, and then receive every write any of them takes from that moment
+# on, exactly once. The plain subscriptions an ordinary run creates cannot do
+# that: they stream forward from the moment they exist and copy nothing. So a
+# joining zone, N, copies one existing zone, S, and the procedure accounts for
+# the writes every other zone, Z, makes while the copy runs. It follows Spock's
+# own add-node procedure (samples/Z0DAN/zodan.sql in Spock 5.0.13), as native
+# tasks so that every step can be checked, resumed and reported on its own:
+#
+#   1. Copy S's roles to N, so that the copied tables' owners and grants exist.
+#   2. Create N's Spock node.
+#   3. On each Z, a replication slot for N, and on N a disabled subscription
+#      from Z that will read it. The slot keeps every Z write from now on.
+#   4. A bookmark on each Z, and a wait for S to apply it, so that S holds
+#      every Z write the slot does not.
+#   5. N copies S's schema and data, through a subscription that then goes on
+#      replicating from S.
+#   6. A bookmark on S, and a wait for N to apply it.
+#   7. Each Z slot, and N's record of where it has read up to from Z, moved to
+#      the last Z write S had when N copied it. N already has every Z write up
+#      to there; the slot gives it every one after.
+#   7a. N's replication sets made to match S's.
+#   8. N's subscriptions from each Z enabled, and caught up.
+#   9. Every member subscribes to N.
+#   10. Bookmarks both ways, and a check that N is now a member.
+#
+# Zones join one at a time, in the order pgedge_join_zones gave them, and each
+# goes through its databases one at a time, so at most one copy is running and
+# the slots held for a database are held as briefly as possible. Nothing about
+# a join's progress is stored: every step asks the cluster whether it is done,
+# so a join that stopped partway resumes when the same command is run again.
+#
+# A join that cannot be resumed -- N's copy died where Spock cannot continue
+# it, a slot N needed is gone, or N holds something the join did not put there
+# -- releases what it holds on the other zones and says to run remove_zone
+# before trying again. Any other failure keeps the slots, so that a rerun can
+# carry on, and says how much WAL each is keeping.
+#
+# Spock's work on a zone is done on its primary, over the local socket, as
+# postgres. A joining zone's own steps run on its primary, which every task
+# below is limited to; work on the other zones is delegated to theirs.
 
-- name: Stop, since joining a zone is not implemented yet
-  fail:
-    msg: >-
-      Joining zone {{ pgedge_join_plan | join(', ') }} through
-      pgedge_join_zones is not implemented yet. Nothing has been created for
-      {{ 'it' if pgedge_join_plan | length == 1 else 'them' }} in
-      {{ pgedge_cluster.established | join(', ') }}.
-  run_once: true
+- name: Check the cluster is ready for a zone to join it
+  include_tasks: join_prechecks.yaml
+
+# Every host includes the file for every zone, so that the zones are taken in
+# the order of the list rather than the order of their hosts; the tasks in it
+# run only on the joining zone's primary.
+
+- name: Join each zone in pgedge_join_zones in turn
+  include_tasks: join_zone.yaml
+  loop: "{{ pgedge_join_plan }}"
+  loop_control:
+    loop_var: pgedge_join_zone

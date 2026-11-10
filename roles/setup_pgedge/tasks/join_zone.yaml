@@ -1,0 +1,26 @@
+---
+
+# Join one zone, pgedge_join_zone (N below), to every database that holds data
+# and that it is not yet a member of. Every task runs on N's primary only.
+#
+# Its roles first, once for the zone, since roles belong to the whole server
+# rather than to a database. Then each database through the whole procedure,
+# in db_names order.
+
+- name: Copy zone {{ pgedge_join_zone }}'s roles from its source zone
+  include_tasks: join_seed.yaml
+  vars:
+    pgedge_join_seed_step: roles
+    # Roles are the same on every member, so any member is a good source. The
+    # first database's source keeps a resumed join on the zone it started with.
+    pgedge_join_db: "{{ pgedge_join_dbs | first }}"
+  when:
+  - inventory_hostname == pgedge_zone_hosts[pgedge_join_zone | string]
+  - pgedge_join_dbs | length > 0
+
+- name: Join zone {{ pgedge_join_zone }} to each database that holds data
+  include_tasks: join_database.yaml
+  loop: "{{ pgedge_join_dbs }}"
+  loop_control:
+    loop_var: pgedge_join_db
+  when: inventory_hostname == pgedge_zone_hosts[pgedge_join_zone | string]

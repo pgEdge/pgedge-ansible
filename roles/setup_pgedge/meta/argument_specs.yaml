@@ -37,7 +37,10 @@ argument_specs:
         type: "int"
         description:
         - How long a join waits, in minutes, for each zone to catch up with a
-          bookmark set on another zone.
+          bookmark set on another zone, and for each new subscription to start
+          replicating. A wait that runs out fails the join in a way that the
+          same command, run again, resumes. The copy itself is governed by
+          I(pgedge_seed_stall_minutes) and I(pgedge_seed_max_hours) instead.
         default: 30
       pgedge_seed_stall_minutes:
         type: "int"

@@ -1,0 +1,86 @@
+---
+
+# Fail a join of pgedge_join_zone (N) into pgedge_join_db that can be resumed,
+# saying what it holds.
+#
+# The slots the join created on the members stay where they are: a rerun
+# needs them, since the position of each is what lets N take every write it has
+# not yet seen. But each keeps WAL on its zone for as long as nobody reads it,
+# so the failure says which slots they are, how much WAL each holds now, and
+# how to let them go if the join is not going to be resumed soon.
+#
+# The names are asked of Spock on each member, the way remove_zone finds them,
+# so the report is complete even when the join failed before it read them on N.
+# A member that cannot be asked is reported as such rather than failing here.
+
+- name: Find the slots zone {{ pgedge_join_zone }}'s join holds in {{ pgedge_join_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ pgedge_join_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT slot_name::text AS slot_name, active,
+             pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(),
+                                            restart_lsn)) AS retained
+        FROM pg_replication_slots
+       WHERE slot_name = spock.spock_gen_slot_name(%(db)s, %(provider)s, %(sub)s)
+    named_args:
+      db: "{{ pgedge_join_db }}"
+      provider: "edge{{ item }}"
+      sub: "sub_n{{ pgedge_join_zone }}_n{{ item }}"
+  loop: "{{ pgedge_join_members }}"
+  loop_control:
+    label: "zone {{ item }}"
+  register: pgedge_join_held
+  failed_when: false
+  changed_when: false
+  delegate_to: "{{ pgedge_zone_hosts[item | string] }}"
+  become: true
+  become_user: postgres
+
+- name: Stop, keeping zone {{ pgedge_join_zone }}'s join in {{ pgedge_join_db }} resumable
+  fail:
+    msg: >-
+      Zone {{ pgedge_join_zone }} did not finish joining
+      {{ pgedge_join_db }}. It failed at "{{ pgedge_join_failed_task }}":
+      {{ pgedge_join_failed_msg }}
+      This can be resumed: run the same command again, with
+      -e pgedge_join_zones={{ pgedge_join_plan | join(',') }}, and the join
+      carries on from where it stopped.
+      {% if held %}Until then the join holds
+      {{ 'this replication slot' if held | length == 1
+         else 'these replication slots' }}, and each keeps WAL on its zone
+      until it is read or dropped: {{ held | map(attribute='text')
+      | join('; ') }}. If you are not resuming soon, release
+      {{ 'it' if held | length == 1 else 'them' }} by running the remove_zone
+      playbook with -e remove_zone={{ pgedge_join_zone }} -e
+      remove_zone_confirm=true, which also resets zone
+      {{ pgedge_join_zone }} so that the join starts again from the beginning,
+      or by dropping {{ 'it' if held | length == 1 else 'them' }} as postgres
+      on each zone's primary: {{ held | map(attribute='drop') | join('; ') }}.
+      A slot that is in use cannot be dropped until zone
+      {{ pgedge_join_zone }} stops reading it.{% else %}It holds no
+      replication slot on the other zones now.{% endif %}
+      {% if unknown %}Zone{{ 's' if unknown | length > 1 }}
+      {{ unknown | join(', ') }} could not be asked which slots
+      {{ 'it holds' if unknown | length == 1 else 'they hold' }} for the
+      join.{% endif %}
+  vars:
+    held: >-
+      {%- set out = [] -%}
+      {%- for r in pgedge_join_held.results -%}
+      {%-   for s in r.query_result | default([]) -%}
+      {%-     set _ = out.append({
+                'text': s.slot_name ~ ' on zone ' ~ r.item ~ ' ('
+                        ~ pgedge_zone_hosts[r.item | string] ~ '), holding '
+                        ~ s.retained ~ (', in use' if s.active else ''),
+                'drop': 'on ' ~ pgedge_zone_hosts[r.item | string]
+                        ~ ', psql -d ' ~ pgedge_join_db
+                        ~ " -c \"SELECT pg_drop_replication_slot('"
+                        ~ s.slot_name ~ "')\""}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    unknown: >-
+      {{ pgedge_join_held.results | rejectattr('query_result', 'defined')
+         | map(attribute='item') | list }}

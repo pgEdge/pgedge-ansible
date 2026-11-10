@@ -102,3 +102,87 @@ pgedge_mesh_allowed: >-
   {{ pgedge_seed_zone | string > ''
      or pgedge_cluster.dbs[pgedge_mesh_db].outside
         | intersect(pgedge_mesh_zones | map('int') | list) | length == 0 }}
+
+# What a join reads about the cluster, from what classify.yaml found. A task
+# sets pgedge_join_zone and pgedge_join_db in its own vars and reads these.
+#
+# The host that runs each zone's primary, by zone number as a string: the one
+# that answered for the zone in classify.yaml.
+
+pgedge_zone_hosts: >-
+  {%- set out = {} -%}
+  {%- for z, st in pgedge_cluster.zones.items() -%}
+  {%-   set _ = out.update({z | string: st.host}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# How each zone in pgedge_join_plan joins each database, as
+# {zone: {database: {members, source, others}}}, zones as strings. Read by the
+# checks before a join and by every step of it.
+#
+# - The databases are those that hold data and that the zone is not yet a
+#   member of. One it joined in an earlier run is left out.
+# - members: the zones it joins there, which are the members classify.yaml
+#   found and every zone that joins before it in this run. Joins run in the
+#   order of pgedge_join_plan, and each finishes all its databases before the
+#   next zone starts, so the earlier ones are members by then.
+# - source: the zone it copies from, S. A join that already started its copy
+#   keeps the source it started with, so the provider of an existing copy
+#   subscription wins. Otherwise it is the lowest-numbered member.
+# - others: every other member, Z. Empty in a cluster of two zones.
+
+pgedge_join_layout: >-
+  {%- set out = {} -%}
+  {%- for n in pgedge_join_plan -%}
+  {%-   set dbs = {} -%}
+  {%-   for db in db_names
+          if db in pgedge_cluster.established
+             and n | int in pgedge_cluster.dbs[db].outside -%}
+  {%-     set members = (pgedge_cluster.dbs[db].members
+                         + pgedge_join_plan[:pgedge_join_plan.index(n)])
+                        | map('int') | unique | sort -%}
+  {%-     set st = pgedge_cluster.zones[n | string].dbs[db] | default({}) -%}
+  {%-     set copy = st.copy_sub | default(none) -%}
+  {%-     set source = (copy.provider | regex_replace('^edge', '') | int)
+                       if copy else members | first -%}
+  {%-     set _ = dbs.update({db: {
+              'members': members, 'source': source,
+              'others': members | reject('eq', source) | list}}) -%}
+  {%-   endfor -%}
+  {%-   set _ = out.update({n | string: dbs}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# For the zone and database a task names in pgedge_join_zone and
+# pgedge_join_db: the databases the zone joins, in db_names order, and the
+# zones it joins, copies from, and takes the other writes from there.
+
+pgedge_join_dbs: >-
+  {{ db_names | select('in', pgedge_join_layout[pgedge_join_zone | string]
+                               | default({})) | list }}
+pgedge_join_members: >-
+  {{ pgedge_join_layout[pgedge_join_zone | string][pgedge_join_db].members }}
+pgedge_join_source: >-
+  {{ pgedge_join_layout[pgedge_join_zone | string][pgedge_join_db].source }}
+pgedge_join_others: >-
+  {{ pgedge_join_layout[pgedge_join_zone | string][pgedge_join_db].others }}
+
+# Where Spock records, on a node, the last position it applied from each other
+# node: spock.progress, in remote_lsn until Spock 6.0 and remote_commit_lsn
+# from it. Zones may run different Spock releases, so each zone's column comes
+# from its own version, by zone number as a string, in pgedge_join_db.
+
+pgedge_join_progress_columns: >-
+  {%- set out = {} -%}
+  {%- for z, st in pgedge_cluster.zones.items() -%}
+  {%-   set v = (st.dbs[pgedge_join_db] | default({})).spock_version
+               | default(none) -%}
+  {%-   set _ = out.update({z | string: 'remote_commit_lsn'
+                if v and v is version('6.0.0', '>=') else 'remote_lsn'}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# How many times a sync wait polls, five seconds apart, within
+# pgedge_join_wait_minutes.
+
+pgedge_join_wait_retries: "{{ (pgedge_join_wait_minutes | int * 12, 1) | max }}"

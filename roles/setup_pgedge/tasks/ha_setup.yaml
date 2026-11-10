@@ -161,6 +161,11 @@
 # This may not be strictly necessary, but it's good practice to wait until the
 # subscriptions are synced before continuing. If this is preventing cluster
 # setup from completing, it will be moved to an optional validation step.
+#
+# A zone partway into a join is left out in the databases it is joining: its
+# copy, if a stopped join left one running, is waited for by the join itself,
+# which can tell a copy that is still moving from one that never will.
+# spock.sub_wait_for_sync() cannot, and would wait for either.
 
 - name: Wait for subscriptions to sync
   community.postgresql.postgresql_query:
@@ -170,6 +175,10 @@
     query: |
       SELECT spock.sub_wait_for_sync(subscription_name := sub_name)
         FROM spock.subscription;
+  vars:
+    pgedge_mesh_db: "{{ item }}"
+    pgedge_mesh_zones: ["{{ zone }}"]
   loop: "{{ db_names }}"
   become: true
   become_user: postgres
+  when: pgedge_mesh_allowed | bool
