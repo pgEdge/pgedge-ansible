@@ -39,7 +39,7 @@
       db: "{{ item }}"
   loop: "{{ remove_zone_reset_dbs }}"
   register: remove_zone_own_active
-  until: remove_zone_own_active.rowcount == 0
+  until: remove_zone_own_active.rowcount | default(0) == 0
   retries: 30
   delay: 5
   failed_when: false
@@ -62,6 +62,10 @@
     busy: >-
       {%- set out = [] -%}
       {%- for r in remove_zone_own_active.results -%}
+      {%-   if r.query_result is not defined and not r.skipped | default(false) -%}
+      {%-     set _ = out.append(r.item ~ ' could not be asked about its slots: '
+                  ~ r.msg | default('no answer')) -%}
+      {%-   endif -%}
       {%-   for s in r.query_result | default([]) -%}
       {%-     set _ = out.append('slot ' ~ s.slot_name ~ ' in ' ~ r.item
                   ~ ' by process ' ~ s.active_pid

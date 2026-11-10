@@ -79,9 +79,14 @@
                 return 1
             return 0
           }
-          existing("CREATE ROLE ") { next }
-          existing("ALTER ROLE ") { next }
-          existing("COMMENT ON ROLE ") { next }
+          # A skipped statement may go on over several lines, as a comment
+          # with a newline in it does, so skip up to the line that ends it.
+          skipping { if (/;$/) skipping = 0; next }
+          existing("CREATE ROLE ") || existing("ALTER ROLE ") ||
+          existing("COMMENT ON ROLE ") {
+            if ($0 !~ /;$/) skipping = 1
+            next
+          }
           { print }
         ' |
         "{{ pg_path }}/bin/psql" -X -q -v ON_ERROR_STOP=1 --single-transaction \

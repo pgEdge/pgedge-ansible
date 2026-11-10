@@ -45,7 +45,8 @@
       {%-   for db in db_names -%}
       {%-     set nv = (pgedge_cluster.zones[n | string].dbs[db]
                         | default({})).spock_version | default(none) -%}
-      {%-     for m in (pgedge_cluster.dbs[db].members | default([])) -%}
+      {%-     for m in ((pgedge_join_layout[n | string] | default({}))[db]
+                        | default({})).members | default([]) -%}
       {%-       set mv = (pgedge_cluster.zones[m | string].dbs[db]
                           | default({})).spock_version | default(none) -%}
       {%-       if nv and mv and (nv.split('.')[:2] | join('.'))
@@ -216,7 +217,7 @@
     {{ db_names | select('in', pgedge_cluster.zones[zone | string].dbs.keys())
        | list }}
   register: pgedge_join_subs_ready
-  until: pgedge_join_subs_ready.rowcount == 0
+  until: pgedge_join_subs_ready.rowcount | default(0) == 0
   retries: 30
   delay: 10
   failed_when: false

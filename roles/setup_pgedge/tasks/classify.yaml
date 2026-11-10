@@ -293,8 +293,19 @@
       {%-     endfor -%}
       {%-     set by_copy = cands | select('in', copy_zones) | list -%}
       {%-     set no_data = cands | reject('in', table_zones) | list -%}
+      {#-       A copy's record stays after it finishes, so a zone that joined
+                earlier counts in by_copy too. A join that stopped in step 9,
+                with only a member that joined before it left to subscribe to
+                it, is the zone the missing subscriptions come from. -#}
+      {%-     set by_provider = [] -%}
+      {%-     for x in by_copy
+                if missing | map('last') | reject('eq', x) | list
+                   | length == 0 -%}
+      {%-       set _ = by_provider.append(x) -%}
+      {%-     endfor -%}
       {%-     set joining = [] if not missing
                        else cands if cands | length == 1
+                       else by_provider if by_provider | length == 1
                        else by_copy if by_copy | length == 1
                        else no_data if no_data | length == 1
                        else none -%}

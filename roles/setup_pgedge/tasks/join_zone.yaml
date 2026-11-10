@@ -7,6 +7,33 @@
 # rather than to a database. Then each database through the whole procedure,
 # in db_names order.
 
+# A zone that joins before N in this run is one of N's members by the time N
+# starts. If its join failed, its primary has left the play, and N must not
+# treat a zone that is half joined as a member, let alone copy from it. A
+# failed host is no longer in ansible_play_hosts.
+
+- name: Stop zone {{ pgedge_join_zone }}, since a zone before it did not finish joining
+  fail:
+    msg: >-
+      Zone {{ unfinished | join(', ') }}, which joins before zone
+      {{ pgedge_join_zone }} in this run, did not finish joining, so zone
+      {{ pgedge_join_zone }} has not started and holds nothing on the other
+      zones. Deal with zone {{ unfinished | join(', ') }} as its own failure
+      says, then run the same command again.
+  vars:
+    unfinished: >-
+      {%- set out = [] -%}
+      {%- for z in pgedge_join_plan[:pgedge_join_plan.index(pgedge_join_zone)]
+            if pgedge_join_layout[z | string] | default({}) | length > 0
+               and pgedge_zone_hosts[z | string] not in ansible_play_hosts -%}
+      {%-   set _ = out.append(z) -%}
+      {%- endfor -%}
+      {{ out }}
+  when:
+  - inventory_hostname == pgedge_zone_hosts[pgedge_join_zone | string]
+  - pgedge_join_dbs | length > 0
+  - unfinished | length > 0
+
 - name: Copy zone {{ pgedge_join_zone }}'s roles from its source zone
   include_tasks: join_seed.yaml
   vars:

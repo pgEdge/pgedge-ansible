@@ -167,7 +167,7 @@
   loop_control:
     label: "zone {{ item.zone }} ({{ item.host }})"
   register: remove_zone_rz_active
-  until: remove_zone_rz_active.rowcount == 0
+  until: remove_zone_rz_active.rowcount | default(0) == 0
   retries: 30
   delay: 5
   failed_when: false
@@ -199,6 +199,11 @@
     busy: >-
       {%- set out = [] -%}
       {%- for r in remove_zone_rz_active.results -%}
+      {%-   if r.query_result is not defined and not r.skipped | default(false) -%}
+      {%-     set _ = out.append('zone ' ~ r.item.zone ~ ' (' ~ r.item.host
+                  ~ ') could not be asked about its slots: '
+                  ~ r.msg | default('no answer')) -%}
+      {%-   endif -%}
       {%-   for s in r.query_result | default([]) -%}
       {%-     set _ = out.append('slot ' ~ s.slot_name ~ ' on zone ' ~ r.item.zone
                   ~ ' (' ~ r.item.host ~ ') is in use by process '
