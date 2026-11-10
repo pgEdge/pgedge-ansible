@@ -649,8 +649,16 @@
         {%-   set _ = out.append(x.stderr | default('')) -%}
         {%- endfor -%}
         {%- set _ = out.append(r.stderr | default('')) -%}
-        {{ out | select | reject('eq', 'One or more items failed') | join(' ')
-           | regex_replace('\\s+', ' ') }}
+        {%- set out = out | select | reject('eq', 'One or more items failed')
+                          | list -%}
+        {%- set tries = ([r] + r.results | default([]))
+                        | selectattr('attempts', 'defined')
+                        | map(attribute='attempts') | list -%}
+        {%- if out | length == 0 and tries | length > 0 -%}
+        {%-   set _ = out.append('the wait gave up after ' ~ tries | max
+                                 ~ ' tries') -%}
+        {%- endif -%}
+        {{ out | join(' ') | regex_replace('\\s+', ' ') }}
 
   - name: Release what the other zones hold for zone {{ pgedge_join_zone }}
     include_tasks: join_release.yaml

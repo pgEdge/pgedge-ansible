@@ -35,8 +35,9 @@
       {%-     elif v is version('5.0.9', '<') -%}
       {%-       set _ = out.append('Zone ' ~ z ~ ' runs Spock ' ~ v ~ ' in '
                     ~ db ~ ', older than 5.0.9, the oldest that can take part'
-                    ~ ' in a join. Upgrade its packages and run ALTER'
-                    ~ ' EXTENSION spock UPDATE in each database.') -%}
+                    ~ ' in a join. Upgrade its packages, restart Postgres'
+                    ~ ' so that it loads the new Spock library, and run'
+                    ~ ' ALTER EXTENSION spock UPDATE in each database.') -%}
       {%-     endif -%}
       {%-   endfor -%}
       {%- endfor -%}
