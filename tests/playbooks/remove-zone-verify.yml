@@ -10,7 +10,10 @@
 #     from this zone's subscription to zone N,
 #   - and, when zone N's primary answers, each of its databases in db_names is
 #     either gone or empty: no Spock node, no subscription and no tables of its
-#     own, and no replication slot in it.
+#     own, and no replication slot in it. Pass
+#     -e remove_zone_verify_removed=false to check only the other zones, as
+#     after a join that could not be resumed released them: the joining zone
+#     itself keeps what it had until remove_zone resets it.
 #
 # Slot and origin names are asked of Spock's spock_gen_slot_name, as the role
 # does. Nothing here changes anything. Facts are not gathered up front, since
@@ -163,6 +166,7 @@
     when:
     - verify_primary | bool
     - verify_removed | bool
+    - remove_zone_verify_removed | default(true) | bool
 
   - name: Ensure zone {{ remove_zone }}'s databases are gone or empty
     assert:
@@ -183,3 +187,4 @@
     when:
     - verify_primary | bool
     - verify_removed | bool
+    - remove_zone_verify_removed | default(true) | bool
