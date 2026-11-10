@@ -62,6 +62,9 @@ in full.
   (EE-45)
 - `pgedge_seed_zone` is documented as recovery-only, and a run refuses it
   together with `pgedge_join_zones`. (EE-45)
+- The playbook configuration guide states that running the playbooks with
+  `--limit` is not supported: every run should cover the whole inventory.
+  (EE-45)
 
 ### Fixed
 

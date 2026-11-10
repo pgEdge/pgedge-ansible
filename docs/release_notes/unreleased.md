@@ -33,9 +33,12 @@ Playbooks and inventories written for v2.1.0 need no changes, unless they set
 `db_names` to different lists on different pgEdge nodes. `init_server` now
 refuses that; set `db_names` once, on the `pgedge` group.
 
-A run whose `--limit` leaves out the node running a zone's primary now stops
-rather than skipping the writes to that zone. Include each zone's primary in
-the limit.
+Running the playbooks with `--limit` is not supported, and the
+[Execution Strategy](../configure_playbook.md#execution-strategy) section now
+says so. Every run should cover the whole inventory. A run whose `--limit`
+leaves out a zone's primary now stops rather than skipping the writes to that
+zone, and `setup_pgedge` stops unless it can read the Spock state of every
+zone. These checks are safeguards, not a supported way to limit a run.
 
 A run now stops, before it creates anything in Spock, when the inventory lists
 a zone that is not part of a cluster that already holds data. Previously such
