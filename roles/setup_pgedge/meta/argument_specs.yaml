@@ -18,16 +18,38 @@ argument_specs:
         - In an HA cluster, a zone that already holds the cluster's data. Every
           other zone copies its schema and data from it before the rest of the
           subscriptions are created. Empty in an ordinary deployment.
+        - For recovery only, where the recovery playbook sets it to the zone it
+          restored. To add a zone to a running cluster, use
+          I(pgedge_join_zones). The two cannot be given together.
         default: ""
+      pgedge_join_zones:
+        type: "list"
+        elements: "int"
+        description:
+        - Zones to join to a cluster that already holds data, by zone number,
+          in the order they should join. Pass it with C(-e), for example
+          C(-e pgedge_join_zones=4) or C(-e '{"pgedge_join_zones":[4,5]}').
+        - A zone that is in the inventory but not yet part of a cluster holding
+          data stops the run unless it is listed here. Every listed zone must be
+          in the inventory. A listed zone that is already a member is skipped.
+        default: []
+      pgedge_join_wait_minutes:
+        type: "int"
+        description:
+        - How long a join waits, in minutes, for each zone to catch up with a
+          bookmark set on another zone.
+        default: 30
       pgedge_seed_stall_minutes:
         type: "int"
         description:
-        - Give up on the copy from I(pgedge_seed_zone) when it has made no
-          progress for this many minutes.
+        - Give up on the copy from I(pgedge_seed_zone), or on the copy a
+          joining zone makes from an existing one, when it has made no progress
+          for this many minutes.
         default: 15
       pgedge_seed_max_hours:
         type: "int"
         description:
-        - The longest the copy from I(pgedge_seed_zone) may take, in hours. A
-          backstop behind I(pgedge_seed_stall_minutes).
+        - The longest the copy from I(pgedge_seed_zone), or a joining zone's
+          copy, may take, in hours. A backstop behind
+          I(pgedge_seed_stall_minutes).
         default: 24

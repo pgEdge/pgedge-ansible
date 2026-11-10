@@ -1,7 +1,5 @@
 ---
 
-- include_tasks: user_access.yaml
-
 # Under HA, Spock's node and subscriptions live in each zone's primary, and the
 # replicas receive them through physical replication. After a failover the
 # primary need not be the zone's first node.
@@ -12,6 +10,16 @@
     tasks_from: zone_primary
   when: is_ha_cluster
 
+# Read what Spock already holds in every zone, and stop here, before anything
+# is created, if the cluster is in a shape this run must not touch: above all a
+# zone added to a cluster that holds data without pgedge_join_zones naming it.
+# Everything below reads the result to decide what to create.
+
+- name: Classify every zone and stop if the cluster must not be touched
+  include_tasks: classify.yaml
+
+- include_tasks: user_access.yaml
+
 - include_tasks: ha_setup.yaml
   when:
   - is_ha_cluster
@@ -20,3 +28,12 @@
 - include_tasks: setup.yaml
   when:
   - not is_ha_cluster
+
+# Join the zones pgedge_join_zones names, one at a time, once the rest of the
+# cluster is wired together as before. The ordinary path above has left those
+# zones out of every database that holds data, so the join is the only thing
+# that creates their nodes and subscriptions there.
+
+- name: Join the zones pgedge_join_zones names
+  include_tasks: join_zones.yaml
+  when: pgedge_join_plan | length > 0

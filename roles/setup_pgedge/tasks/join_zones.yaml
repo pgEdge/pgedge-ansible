@@ -1,0 +1,20 @@
+---
+
+# Placeholder for joining zones to a running cluster (EE-45). The procedure
+# copies an existing zone's schema and data into each zone in pgedge_join_plan
+# and accounts for every write the other zones take meanwhile; it replaces
+# this file.
+#
+# Until then a run that would join a zone stops here. classify.yaml has already
+# checked that the join was asked for and is allowed, and the ordinary path has
+# created nothing for the joining zones in any database that holds data, so
+# stopping here leaves the cluster as it was.
+
+- name: Stop, since joining a zone is not implemented yet
+  fail:
+    msg: >-
+      Joining zone {{ pgedge_join_plan | join(', ') }} through
+      pgedge_join_zones is not implemented yet. Nothing has been created for
+      {{ 'it' if pgedge_join_plan | length == 1 else 'them' }} in
+      {{ pgedge_cluster.established | join(', ') }}.
+  run_once: true

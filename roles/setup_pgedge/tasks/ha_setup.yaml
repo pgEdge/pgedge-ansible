@@ -26,6 +26,9 @@
 # that selects the create call only when the object is absent returns a row
 # exactly when it made one, so the row count says whether anything changed; a
 # DO block reports a change whether or not it did anything.
+#
+# A zone joining a database that already holds data gets its node from the
+# join instead, once the join's checks have passed (see pgedge_mesh_allowed).
 
 - name: Set up Spock to manage node metadata
   community.postgresql.postgresql_query:
@@ -37,19 +40,27 @@
        WHERE NOT EXISTS (SELECT FROM spock.node WHERE node_name = %(node_name)s)
     named_args:
       node_name: "edge{{ zone }}"
-      dsn: "host={{ subscribe_target }} user={{ pgedge_user }} dbname={{ item }} port={{ proxy_port }}"
+      dsn: "{{ pgedge_zone_dsn }}"
+  vars:
+    pgedge_dsn_zone: "{{ zone }}"
+    pgedge_dsn_db: "{{ item }}"
+    pgedge_mesh_db: "{{ item }}"
+    pgedge_mesh_zones: ["{{ zone }}"]
   loop: "{{ db_names }}"
   register: spock_node
   changed_when: spock_node.rowcount > 0
   become: true
   become_user: postgres
+  when: pgedge_mesh_allowed | bool
 
 # When one zone already holds the cluster's data and the others are empty --
-# the zone a recovery restored, or an existing cluster gaining a zone -- the
-# empty zones copy that seed zone before the rest of the mesh exists. This is
-# the one subscription in the collection that copies anything. Every other
-# subscription is created between zones that already hold the same data, and
-# only streams forward from the moment it exists.
+# the zone a recovery restored -- the empty zones copy that seed zone before
+# the rest of the mesh exists. Outside a join, this is the one subscription in
+# the collection that copies anything. Every other subscription is created
+# between zones that already hold the same data, and only streams forward from
+# the moment it exists. A zone joining a running cluster copies an existing
+# zone too, but by the join's own procedure, since there the other zones keep
+# taking writes while it copies.
 #
 # The copy has to finish before any other subscription is created, and it does:
 # under the linear strategy every host finishes this wait before any host moves
@@ -73,7 +84,10 @@
              )
     named_args:
       sub_name: "sub_n{{ zone }}_n{{ pgedge_seed_zone }}"
-      dsn: "host={{ seed_conn_target }} user={{ pgedge_user }} dbname={{ item }} port={{ proxy_port }}"
+      dsn: "{{ pgedge_zone_dsn }}"
+  vars:
+    pgedge_dsn_zone: "{{ pgedge_seed_zone }}"
+    pgedge_dsn_db: "{{ item }}"
   loop: "{{ db_names }}"
   register: spock_seed_sub
   changed_when: spock_seed_sub.rowcount > 0
@@ -83,157 +97,17 @@
   - pgedge_seed_zone | string > ''
   - zone | string != pgedge_seed_zone | string
 
-# The copy is likely the longest step of whatever playbook asked for it, so the
-# wait runs under async: one SSH session held open for the whole copy is one a
-# dropped connection would fail.
-#
-# It does not call spock.sub_wait_for_sync(). That function waits for the copy
-# to finish and nothing else: when the copy fails, Spock restarts the apply
-# worker every few seconds and the function keeps waiting, so a bad provider
-# DSN or a conflict in the structure sync would hold the run until
-# pgedge_seed_max_hours. A copy that fails after it has started never resumes:
-# Spock 5 refuses to continue from the structure, data or constraint step.
-#
-# So the wait reads the state the function reads, plus spock.sub_show_status(),
-# and judges it every few seconds. It finishes when the apply worker is running
-# and the subscription and every table are ready, as the function would. It
-# fails at once if the subscription is disabled, when the worker has been down
-# for two minutes, and when nothing has moved for pgedge_seed_stall_minutes.
-# Movement is any change in the sync step, in the tables still to sync, in the
-# database's size, or in the progress Postgres reports for the COPY and index
-# builds that do the work. pgedge_seed_max_hours stays as the backstop.
+# The wait lives in its own file, which a joining zone's copy uses too. It is
+# described there.
 
 - name: Wait for this zone to finish copying the seed zone
-  shell:
-    cmd: |
-      set -u
-      psql() {
-        "{{ pg_path }}/bin/psql" -X -h /var/run/postgresql -p {{ pg_port }} \
-          -d "$SEED_DB" -v ON_ERROR_STOP=1 -v sub="$SEED_SUB" "$@"
-      }
-      fail() {
-        echo "Copy of $SEED_DB from the seed zone through $SEED_SUB failed: $1" >&2
-        echo "Sync step: $(step "${sync:--}")" >&2
-        printf '%s\n' "$SEED_STATUS" | psql -f - >&2 2>&1
-        log=$(printf '%s\n' "$SEED_LOG" | psql -At -f - 2>/dev/null || true)
-        if [ -n "$log" ] && [ -r "$log" ]; then
-          echo "The apply worker reports its errors in $log. Its last Spock lines:" >&2
-          grep -iE 'spock|subscri' "$log" | tail -n 20 >&2
-        else
-          echo "The apply worker reports its errors in this node's Postgres log." >&2
-        fi
-        exit 1
-      }
-      step() {
-        case $1 in
-          i) echo "i (starting)" ;;
-          s) echo "s (structure)" ;;
-          d) echo "d (data)" ;;
-          c) echo "c (constraints)" ;;
-          u) echo "u (catching up)" ;;
-          r) echo "r (ready)" ;;
-          *) echo "$1" ;;
-        esac
-      }
-      stall=$(( {{ pgedge_seed_stall_minutes | int }} * 60 ))
-      grace=120
-      sync=""
-      last=""
-      last_moved=$(date +%s)
-      down_since=""
-      while :; do
-        now=$(date +%s)
-        if row=$(printf '%s\n' "$SEED_PROBE" | psql -At -F ' ' -f - 2>/dev/null); then
-          [ -n "$row" ] || fail "the subscription no longer exists"
-        else
-          row=""
-        fi
-        set -- $row
-        if [ $# -eq 6 ]; then
-          status=$1
-          sync=$2
-          if [ "$status" = replicating ] && [ "$sync" = r ] && [ "$3" = 0 ]; then
-            echo "$SEED_DB copied the seed zone and is replicating"
-            exit 0
-          fi
-          case $status in
-          disabled)
-            fail "Spock disabled the subscription."
-            ;;
-          down)
-            [ -n "$down_since" ] || down_since=$now
-            if [ $(( now - down_since )) -ge "$grace" ]; then
-              case $sync in
-              s|d|c)
-                fail "the apply worker stopped during step $sync and Spock does not resume a copy from there. Fix the cause, drop the subscription and empty this zone's database before trying again."
-                ;;
-              *)
-                fail "the apply worker has been down for $grace seconds. Spock keeps restarting it and it keeps stopping; the cause is in the log below."
-                ;;
-              esac
-            fi
-            ;;
-          *)
-            down_since=""
-            ;;
-          esac
-          current="$2:$3:$4:$5:$6"
-        else
-          current="$last"
-        fi
-        if [ "$current" != "$last" ]; then
-          last=$current
-          last_moved=$now
-        elif [ $(( now - last_moved )) -ge "$stall" ]; then
-          fail "no progress for {{ pgedge_seed_stall_minutes }} minutes."
-        fi
-        sleep 10
-      done
-  environment:
-    SEED_DB: "{{ item }}"
-    SEED_SUB: "sub_n{{ zone }}_n{{ pgedge_seed_zone }}"
-    SEED_PROBE: |
-      SELECT st.status,
-             coalesce((SELECT l.sync_status::text
-                         FROM spock.local_sync_status l
-                        WHERE l.sync_subid = s.sub_id
-                          AND l.sync_nspname IS NULL
-                          AND l.sync_relname IS NULL), '-'),
-             (SELECT count(*)
-                FROM spock.local_sync_status l
-               WHERE l.sync_subid = s.sub_id
-                 AND l.sync_relname IS NOT NULL
-                 AND l.sync_status <> 'r'),
-             pg_database_size(current_database()),
-             (SELECT coalesce(sum(p.bytes_processed), 0)
-                FROM pg_stat_progress_copy p
-               WHERE p.datname = current_database()),
-             (SELECT coalesce(sum(p.blocks_done + p.tuples_done), 0)
-                FROM pg_stat_progress_create_index p
-               WHERE p.datname = current_database())
-        FROM spock.subscription s,
-             spock.sub_show_status(s.sub_name) st
-       WHERE s.sub_name = :'sub';
-    SEED_STATUS: |
-      \pset footer off
-      SELECT * FROM spock.sub_show_status(:'sub');
-      SELECT l.sync_kind, l.sync_nspname, l.sync_relname, l.sync_status
-        FROM spock.local_sync_status l
-        JOIN spock.subscription s ON s.sub_id = l.sync_subid
-       WHERE s.sub_name = :'sub'
-         AND (l.sync_relname IS NULL OR l.sync_status <> 'r')
-       ORDER BY l.sync_nspname NULLS FIRST, l.sync_relname
-       LIMIT 20;
-    SEED_LOG: |
-      SELECT CASE WHEN f LIKE '/%' THEN f
-                  ELSE current_setting('data_directory') || '/' || f END
-        FROM pg_current_logfile() AS f;
-  loop: "{{ db_names }}"
-  async: "{{ pgedge_seed_max_hours | int * 3600 }}"
-  poll: 30
-  changed_when: false
-  become: true
-  become_user: postgres
+  include_tasks: wait_for_copy.yaml
+  vars:
+    pgedge_copy_source: the seed zone
+    pgedge_copy_waits: >-
+      {{ db_names | map('community.general.dict_kv', 'db')
+         | map('combine', {'sub': 'sub_n' ~ zone ~ '_n' ~ pgedge_seed_zone})
+         | list }}
   when:
   - pgedge_seed_zone | string > ''
   - zone | string != pgedge_seed_zone | string
@@ -243,6 +117,15 @@
 # - The user-specified proxy_node for the host, if present.
 # - The first node in the `haproxy` group for this zone, if any.
 # - The first pgedge node in the zone itself, assuming no proxies match.
+#
+# A subscription is recognised by the node it comes from as well as by its
+# name. Spock allows two subscriptions from the same provider under different
+# names, and both would apply every change, so finding either one is enough to
+# create neither.
+#
+# In a database that already holds data, no subscription is created here to or
+# from a zone that is not yet a member: the join creates those, in the order
+# that keeps every write accounted for (see pgedge_mesh_allowed).
 
 - name: Subscribe to any other pgEdge nodes in the cluster, by zone
   community.postgresql.postgresql_query:
@@ -254,33 +137,26 @@
                subscription_name := %(sub_name)s, provider_dsn := %(dsn)s
              )
        WHERE NOT EXISTS (
-               SELECT FROM spock.subscription WHERE sub_name = %(sub_name)s
+               SELECT FROM spock.subscription s
+                 JOIN spock.node n ON n.node_id = s.sub_origin
+                WHERE s.sub_name = %(sub_name)s
+                   OR n.node_name = %(provider)s
              )
     named_args:
       sub_name: "sub_n{{ zone }}_n{{ item.0 }}"
-      dsn: "host={{ conn_target }} user={{ pgedge_user }} dbname={{ item.1 }} port={{ proxy_port }}"
+      provider: "edge{{ item.0 }}"
+      dsn: "{{ pgedge_zone_dsn }}"
   vars:
-    remote_first_node: >-
-      {{ groups['pgedge'] |
-      map('extract', hostvars) |
-      selectattr('zone', 'eq', item.0) |
-      map(attribute='inventory_hostname') | list | first }}
-    remote_proxy_node: >-
-      {{ hostvars[remote_first_node].proxy_node | default('') }}
-    remote_proxies: >-
-      {{ groups['haproxy'] | default(()) |
-      map('extract', hostvars) |
-      selectattr('zone', 'eq', item.0) |
-      map(attribute='inventory_hostname') | list }}
-    conn_target: >-
-      {{ remote_proxy_node if remote_proxy_node > ''
-         else remote_proxies | first if remote_proxies
-         else remote_first_node }}
+    pgedge_dsn_zone: "{{ item.0 }}"
+    pgedge_dsn_db: "{{ item.1 }}"
+    pgedge_mesh_db: "{{ item.1 }}"
+    pgedge_mesh_zones: ["{{ zone }}", "{{ item.0 }}"]
   loop: "{{ zone_list | reject('equalto', zone) | product(db_names) | list }}"
   register: spock_sub
   changed_when: spock_sub.rowcount > 0
   become: true
   become_user: postgres
+  when: pgedge_mesh_allowed | bool
 
 # This may not be strictly necessary, but it's good practice to wait until the
 # subscriptions are synced before continuing. If this is preventing cluster
