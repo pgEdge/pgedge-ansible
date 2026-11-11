@@ -144,26 +144,13 @@
   # Each zone's rows in every table, as a count per origin and a digest.
   # Waited for until every origin's rows are there, since replication lags.
 
-  - name: Read every table on every zone
-    become: true
-    become_user: postgres
-    command: >-
-      {{ psql }} -F '|' -c "{% for table in tables %}{{ ' UNION ALL ' if not loop.first }}SELECT '{{ table }}', origin_zone, count(*), md5(string_agg(id || ':' || note, ',' ORDER BY id)) FROM {{ table }} GROUP BY origin_zone{% endfor %} ORDER BY 1, 2"
-    register: autoddl_rows
-    until: >-
-      autoddl_rows.rc == 0 and
-      autoddl_rows.stdout_lines | length == expected | length and
-      autoddl_rows.stdout_lines | map('split', '|')
-        | map('batch', 3) | map('first') | map('join', '|') | list
-        == expected
-    retries: 60
-    delay: 2
-    failed_when: false
-    changed_when: false
-    vars:
-      # table|origin|count for every table: its creator's rows, and the joined
-      # zone's.
-      expected: >-
+  # table|origin|count for every table: its creator's rows, and the joined
+  # zone's. Kept as a fact so that the assertion after the wait compares
+  # against it too: running out of retries does not fail the read.
+
+  - name: Note the rows every zone should hold
+    set_fact:
+      autoddl_expected: >-
         {% set out = [] %}
         {%- for m in members %}
         {%-   for z in [m, joining] | sort %}
@@ -179,11 +166,33 @@
     - zone_join_autoddl == 'check'
     - is_primary | bool
 
+  - name: Read every table on every zone
+    become: true
+    become_user: postgres
+    command: >-
+      {{ psql }} -F '|' -c "{% for table in tables %}{{ ' UNION ALL ' if not loop.first }}SELECT '{{ table }}', origin_zone, count(*), md5(string_agg(id || ':' || note, ',' ORDER BY id)) FROM {{ table }} GROUP BY origin_zone{% endfor %} ORDER BY 1, 2"
+    register: autoddl_rows
+    until: >-
+      autoddl_rows.rc == 0 and
+      autoddl_rows.stdout_lines | length == autoddl_expected | length and
+      autoddl_rows.stdout_lines | map('split', '|')
+        | map('batch', 3) | map('first') | map('join', '|') | list
+        == autoddl_expected
+    retries: 60
+    delay: 2
+    failed_when: false
+    changed_when: false
+    when:
+    - zone_join_autoddl == 'check'
+    - is_primary | bool
+
   - name: Assert every zone holds every table's rows
     assert:
       that:
       - autoddl_rows.rc == 0
-      - autoddl_rows.stdout_lines | length == (members | length + 1) * 2
+      - autoddl_rows.stdout_lines | map('split', '|')
+          | map('batch', 3) | map('first') | map('join', '|') | list
+        == autoddl_expected
       fail_msg: >-
         Zone {{ zone }} ({{ inventory_hostname }}) holds, per table and
         origin zone (table|origin|rows|digest):

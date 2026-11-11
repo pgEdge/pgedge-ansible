@@ -23,7 +23,11 @@
 #
 # SIGTERM stops it between inserts, never during one: the insert in flight is
 # finished and recorded first. The unit runs with KillMode=mixed, so psql
-# itself is not signalled.
+# itself is not signalled. An insert that failed is in flight too, since its
+# commit may have landed, so it is retried for up to STOP_GRACE seconds
+# before the writer stops; otherwise the zone could hold a row that the .last
+# file does not count. That stays inside the unit's TimeoutStopSec of 60, with
+# room for one insert's connect and statement timeouts.
 #
 # The password comes from PGPASSFILE, which the unit sets.
 
@@ -52,7 +56,9 @@ export PGOPTIONS="-c statement_timeout=10s"
 CONN="host=$HOST port=$PORT dbname=$DB user=$USER_NAME connect_timeout=5 application_name=zone_join_trickle"
 
 STOPPING=false
-trap 'STOPPING=true' TERM INT
+STOP_GRACE=40
+STOP_BY=""
+trap 'STOPPING=true; [ -n "$STOP_BY" ] || STOP_BY=$((SECONDS + STOP_GRACE))' TERM INT
 
 log() {
   printf '%s zone %s %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
@@ -97,7 +103,7 @@ record "$LAST"
 log "started at seq $((LAST + 1)) through $HOST:$PORT"
 
 FAILING=false
-while ! $STOPPING; do
+while ! $STOPPING || { $FAILING && [ "$SECONDS" -lt "$STOP_BY" ]; }; do
   SEQ=$((LAST + 1))
   if psql "$CONN" -X -q -v ON_ERROR_STOP=1 -c \
       "INSERT INTO zone_join_trickle (origin_zone, seq, ts)
@@ -113,9 +119,12 @@ while ! $STOPPING; do
     log "seq $SEQ failed; retrying"
     FAILING=true
   fi
-  if ! $STOPPING; then
+  if ! $STOPPING || $FAILING; then
     pause
   fi
 done
 
+if $FAILING; then
+  log "stopped with seq $SEQ unresolved: it may be in the zone though seq $LAST is the last recorded"
+fi
 log "stopped; the last row written is seq $LAST"

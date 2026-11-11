@@ -16,8 +16,9 @@ simple and Ultra-HA clusters alike. The new zone's hosts go in the inventory,
 and the deployment playbook runs with `-e pgedge_join_zones=<zone>`. The zone
 copies every database from an existing zone and receives every write the other
 zones make during the copy, with nothing lost or applied twice, while those
-zones keep taking writes. A new `remove_zone` role takes a zone out of the
-cluster again. See [Adding a Zone to a Running Cluster](../add_zone.md).
+zones keep taking writes. Before the copy, the run may restart the existing
+zones one node at a time to enlarge their worker and replication pools. A new
+`remove_zone` role takes a zone out of the cluster again. See [Adding a Zone to a Running Cluster](../add_zone.md).
 
 A zone in an Ultra-HA cluster can now grow while it runs. A node added to the
 inventory with an existing zone's number joins that zone as another replica the
@@ -50,7 +51,8 @@ the cluster are not all subscribed to each other.
 `pgedge_seed_zone` is for recovery only, and a run refuses it together with
 `pgedge_join_zones`. The recovery playbook is unchanged.
 
-Joining a zone needs Spock 5.0.9 or later on every zone. Running the
+Joining a zone needs Spock 5.0.9 or later on every zone, and the joining zone
+may not run an older major or minor Spock release than any member. Running the
 deployment playbook again does not upgrade Spock on a zone that is already
 built, so upgrade any older zone by hand before a join.
 
@@ -98,9 +100,16 @@ built, so upgrade any older zone by hand before a join.
   (EE-45)
 - New `remove_zone` role, with `sample-playbooks/remove-zone`, detaches one
   zone from a running cluster. It refuses to start without
-  `-e remove_zone=<zone> -e remove_zone_confirm=true`, when another zone
-  cannot be reached, or when the zone holds the only complete copy of a
-  database. On every other zone it drops the subscriptions from the zone, the
+  `-e remove_zone=<zone> -e remove_zone_confirm=true`, when another zone's
+  primary cannot be reached or its Postgres is not running, or when the zone
+  holds the only complete copy of a database. When the zone can be reached,
+  it first sets a bookmark in each of its databases with `spock.sync_event()`
+  and waits, up to the new `remove_zone_wait_minutes` (10 by default), for
+  every zone that subscribes to it to apply it, so that no write the zone
+  committed is dropped with it; a zone that falls short stops the run with
+  nothing changed. It only asks Patroni which node leads each zone, and never
+  starts Patroni: a zone being removed whose Patroni or Postgres is stopped is
+  treated as one that cannot be reached. On every other zone it drops the subscriptions from the zone, the
   replication slots that served it once they are idle, its Spock node and the
   rows `spock.progress` kept for it, which Spock never removes. When the zone
   can be reached, it also drops the zone's subscriptions and its databases in
@@ -126,8 +135,9 @@ built, so upgrade any older zone by hand before a join.
   mid-data, tables created on every zone during and after the copy (which
   reach every zone with AutoDDL on), a rebuilt zone the others still
   subscribe to, refused and then joined again after `remove_zone`,
-  `remove_zone` against a zone that is
-  down, and on Ultra-HA reruns with the flag and after a switchover. `off`
+  `remove_zone` refused while another zone has not applied all of the zone's
+  writes, `remove_zone` against a zone whose Postgres is stopped and then
+  again once it is back, `remove_zone` against a zone that is down, and on Ultra-HA reruns with the flag and after a switchover. `off`
   skips the job. Under act, which runs every job on one Docker host, the
   workflows run only the `test` job unless given `--input act_job=zone-join`,
   which runs only the zone-join job. `tests/zone-join-scenarios.sh` runs each
@@ -170,7 +180,10 @@ built, so upgrade any older zone by hand before a join.
   leaves it out. `setup_postgres` and `setup_pgedge` use it to
   choose where to write, and `finalize_backrest` uses it in place of the
   lookup it kept to itself. See
-  [Zone Primary](../roles/role_config.md#zone-primary). (EE-44)
+  [Zone Primary](../roles/role_config.md#zone-primary). (EE-44) A caller
+  that must change nothing sets `zone_primary_read_only`: Patroni is then
+  never started, and a built zone with no running leader records an empty
+  `zone_primary` instead of stopping the run. `remove_zone` uses it. (EE-45)
 - New `sizing_floor` task file in `role_config` reads back the
   `max_worker_processes`, `max_replication_slots`, `max_wal_senders` and
   `max_active_replication_origins` each zone was last configured with, from

@@ -73,15 +73,52 @@
 
 # In an HA cluster, Spock's configuration lives in each zone's primary, which
 # after a failover need not be the zone's first node. Patroni is asked on every
-# node that answered.
+# node that answered. It is only asked: a zone whose Patroni is stopped on
+# every node is left stopped, and has no primary here. For the zone being
+# removed that means it cannot be reached; for any other zone, the run stops
+# below.
 
 - name: Find the node that runs each zone's primary
   include_role:
     name: role_config
     tasks_from: zone_primary
+  vars:
+    zone_primary_read_only: true
   when:
   - is_ha_cluster | bool
   - inventory_hostname in remove_zone_answered
+
+# A host can answer while its Postgres is stopped, and Spock's state cannot be
+# read from it then. Each zone's primary is asked whether Postgres takes
+# connections, and one that does not counts as not answering: the zone being
+# removed is then cleared from the other zones only, with its own data left as
+# it is, and any other zone stops the run below. In an HA cluster a primary
+# found through Patroni is running, but a zone's Postgres can still refuse
+# connections for a moment, as during a restart.
+
+- name: Check whether Postgres takes connections on each zone's primary
+  community.postgresql.postgresql_ping:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+  register: remove_zone_pg
+  become: true
+  become_user: postgres
+  when:
+  - inventory_hostname in remove_zone_answered
+  - inventory_hostname == remove_zone_own_primary
+
+- name: Note which hosts answered with Postgres running
+  set_fact:
+    remove_zone_answered: >-
+      {{ remove_zone_answered | reject('in', down) | list }}
+  vars:
+    down: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('remove_zone_pg.is_available', 'defined')
+         | rejectattr('remove_zone_pg.is_available')
+         | map(attribute='inventory_hostname') | list }}
+  run_once: true
 
 # Every other zone has to be cleaned, or the cluster keeps subscriptions and
 # slots for a zone that is gone: a slot nobody reads holds back WAL on its zone
@@ -93,9 +130,10 @@
     that:
     - unreachable | length == 0
     fail_msg: >-
-      Zone {{ remove_zone }} can only be removed when every other zone can be
-      reached, since each holds subscriptions and slots for it that have to
-      be dropped. Not reachable:
+      Zone {{ remove_zone }} can only be removed when every other zone's
+      primary can be reached and its Postgres is running, since each holds
+      subscriptions and slots for it that have to be dropped. Not reachable,
+      or not running:
       {{ unreachable | join(', ') }}. Nothing has been changed. Bring
       {{ 'it' if unreachable | length == 1 else 'them' }} back, or remove
       {{ 'that zone' if unreachable | length == 1 else 'those zones' }} first,
@@ -107,7 +145,8 @@
       {%- for z in remove_zone_remaining -%}
       {%-   if z.host == '' or z.host not in remove_zone_answered -%}
       {%-     set _ = out.append('zone ' ~ z.zone
-                  ~ (' (' ~ z.host ~ ')' if z.host else ' (no primary found)')) -%}
+                  ~ (' (' ~ z.host ~ ')' if z.host
+                     else ' (no running primary found)')) -%}
       {%-   endif -%}
       {%- endfor -%}
       {{ out }}
@@ -123,8 +162,8 @@
 - name: Report that zone {{ remove_zone }} cannot be reached
   debug:
     msg: >-
-      Zone {{ remove_zone }}'s primary{{ primary }} cannot be reached, so it is
-      cleared from the other zones only. Its own databases keep their Spock
+      Zone {{ remove_zone }}'s primary{{ primary }} cannot be reached, or its
+      Postgres is not running, so it is cleared from the other zones only. Its own databases keep their Spock
       configuration and data. If it comes back while it is still in the
       inventory, run this again to
       detach and reset it as well; otherwise erase its hosts before they are

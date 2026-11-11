@@ -27,6 +27,14 @@ argument_specs:
         description:
         - Must be C(true) for the role to do anything. Pass it with C(-e),
           never from an inventory.
+      remove_zone_wait_minutes:
+        type: "int"
+        default: 10
+        description:
+        - When the zone can be reached, how long to wait, in minutes, for each
+          other zone that subscribes to it to apply every write it has
+          committed, before anything is changed. A wait that runs out stops
+          the run with nothing changed.
   remaining_zones:
     short_description: Clear one zone from the other zones, for one database
     description:

@@ -157,6 +157,34 @@
   # reads nothing new, so a record made after starting the copy would be lost
   # with it. A run stopped before the copy starts reads again on the rerun,
   # from later positions, which only ever move the record forward.
+  #
+  # The positions go in the origins Spock created with those subscriptions in
+  # step 3. One that something has removed since is created again first, as
+  # step 7 would, so that the record can be kept.
+
+  - name: "Step 5: ensure zone {{ pgedge_join_zone }} has an origin for each other member"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT pg_replication_origin_create(%(slot)s)
+         WHERE NOT EXISTS (SELECT FROM pg_replication_origin
+                            WHERE roname = %(slot)s)
+      named_args:
+        slot: "{{ pgedge_join_slots[item.key] }}"
+    loop: >-
+      {{ ((pgedge_join_source_applied.query_result | default([{}]))[0].applied
+          | default({})) | dict2items }}
+    loop_control:
+      label: "zone {{ item.key }}"
+    register: pgedge_join_origin_ensured
+    changed_when: pgedge_join_origin_ensured.rowcount > 0
+    become: true
+    become_user: postgres
+    when:
+    - copy_sub not in pgedge_join_subs
+    - pgedge_join_others | length > 0
 
   - name: "Step 5: record on zone {{ pgedge_join_zone }} how far its copy will have each other member"
     community.postgresql.postgresql_query:
@@ -165,7 +193,9 @@
       login_unix_socket: /var/run/postgresql
       query: >-
         SELECT pg_replication_origin_advance(%(slot)s, %(lsn)s::pg_lsn)
-         WHERE coalesce(pg_replication_origin_progress(%(slot)s, false),
+         WHERE coalesce((SELECT pg_replication_origin_progress(roname, false)
+                           FROM pg_replication_origin
+                          WHERE roname = %(slot)s),
                         '0/0') < %(lsn)s::pg_lsn
       named_args:
         slot: "{{ pgedge_join_slots[item.key] }}"

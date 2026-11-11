@@ -69,3 +69,28 @@ remove_zone_reset_dbs: >-
   {%-   endif -%}
   {%- endfor -%}
   {{ out }}
+
+# The other zones that have to apply every write of the zone being removed in
+# remove_zone_db before anything is changed (catch_up.yaml): those whose
+# primary reported a subscription from it there, as {zone, host, version},
+# where version is that zone's Spock release in the database. Empty when the
+# zone being removed has no node of its own in the database, since then it has
+# nothing to send. Built from hostvars, so it reads the same from any host.
+
+remove_zone_cu_waiters: >-
+  {%- set out = [] -%}
+  {%- set t = hostvars[remove_zone_target.host].pgedge_spock_state
+              | default({}) if remove_zone_target.host else {} -%}
+  {%- if ((t.dbs | default({}))[remove_zone_db] | default({})).node
+         | default(none) -%}
+  {%-   for z in remove_zone_remaining -%}
+  {%-     set d = ((hostvars[z.host].pgedge_spock_state | default({})).dbs
+                   | default({}))[remove_zone_db] | default({}) -%}
+  {%-     if remove_zone_node in d.subs | default([])
+                                 | map(attribute='provider') | list -%}
+  {%-       set _ = out.append({'zone': z.zone, 'host': z.host,
+                                'version': d.spock_version | default(none)}) -%}
+  {%-     endif -%}
+  {%-   endfor -%}
+  {%- endif -%}
+  {{ out }}

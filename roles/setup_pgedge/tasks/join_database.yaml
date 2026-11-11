@@ -275,9 +275,12 @@
                     JOIN spock.node n ON n.node_id = p.remote_node_id
                    WHERE p.node_id = (SELECT node_id FROM spock.node_info())
                      AND n.node_name = %(provider)s),
-                 pg_replication_origin_progress(%(slot)s, false)),
+                 (SELECT pg_replication_origin_progress(roname, false)
+                    FROM pg_replication_origin WHERE roname = %(slot)s)),
                  '0/0')::text AS target,
-               pg_replication_origin_progress(%(slot)s, false)::text AS origin
+               (SELECT pg_replication_origin_progress(roname, false)
+                  FROM pg_replication_origin
+                 WHERE roname = %(slot)s)::text AS origin
       named_args:
         provider: "edge{{ item }}"
         slot: "{{ pgedge_join_slots[item | string] }}"
@@ -399,7 +402,9 @@
     when: item.query_result[0].behind | default(false)
 
   # Spock created the origin with the subscription in step 3, so it is
-  # created here only if something removed it since.
+  # created here only if something removed it since. The reads above take a
+  # missing origin as having no position, rather than failing before this can
+  # run.
 
   - name: "Step 7: ensure zone {{ pgedge_join_zone }} tracks its place in each other member's writes"
     community.postgresql.postgresql_query:

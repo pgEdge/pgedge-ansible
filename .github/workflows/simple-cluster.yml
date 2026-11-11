@@ -407,6 +407,14 @@ jobs:
         if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster rebuilt $JOIN_ARGS $REPO_ARGS
 
+      - name: Refuse to remove a zone a subscriber is behind on (full)
+        if: inputs.zone_join == 'full'
+        run: tests/zone-join-scenarios.sh simple-cluster remove-behind $JOIN_ARGS $REPO_ARGS
+
+      - name: Remove a zone whose Postgres is stopped, then reset and rejoin it (full)
+        if: inputs.zone_join == 'full'
+        run: tests/zone-join-scenarios.sh simple-cluster remove-pg-stopped $JOIN_ARGS $REPO_ARGS
+
       - name: Remove an unreachable zone (full)
         if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster remove-unreachable $JOIN_ARGS $REPO_ARGS

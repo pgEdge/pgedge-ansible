@@ -1,0 +1,114 @@
+---
+
+# On the primary of the zone being removed, when it can be reached, before
+# anything is changed: make sure every other zone that subscribes to it has
+# applied every write it committed, in one database.
+#
+# Input, set by the includer:
+#
+#   remove_zone_db  The database.
+#
+# The tasks run once for the play, so that a wait that runs out stops every
+# host, not only the zone's own, before any other zone is changed.
+#
+# Once the other zones drop their subscriptions from this zone, nothing more
+# of its comes to them, and once its databases are dropped, a write it made
+# that they had not yet applied has no copy left anywhere. So a bookmark is set
+# in its change stream, as a join does (setup_pgedge's join_event.yaml), and
+# each zone that subscribes to it is waited on until it has applied the
+# bookmark, and with it every transaction committed before it.
+#
+# spock.sync_event(true) commits a marker as a transaction of its own and
+# returns where it is. Each subscriber applies it in commit order and records
+# the position in spock.progress, in the column its own Spock release has.
+# received_lsn is never used: it also moves on keepalives, before anything has
+# been applied.
+#
+# This covers what was committed before the bookmark. Writes that applications
+# go on sending to the zone afterwards are not covered, which is why the zone's
+# applications are to be stopped before it is removed.
+#
+# A zone whose subscription from this one is disabled never applies the
+# bookmark. The wait then runs out and the run stops, having changed nothing:
+# its data would otherwise be dropped while that zone still lacks some of it.
+# A zone that no longer subscribes to this one at all, as after an earlier run
+# that removed it while it was down, is not waited on.
+
+- name: Set a bookmark on zone {{ remove_zone }} in {{ remove_zone_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: SELECT spock.sync_event(true)::text AS lsn
+  register: remove_zone_cu_event
+  changed_when: false
+  delegate_to: "{{ remove_zone_target.host }}"
+  run_once: true
+  become: true
+  become_user: postgres
+  when: remove_zone_cu_waiters | length > 0
+
+- name: Wait for the other zones to apply zone {{ remove_zone }}'s writes in {{ remove_zone_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT coalesce(max(p.{{ column }})::text, 'none') AS applied,
+             coalesce(max(p.{{ column }}) >= %(lsn)s::pg_lsn, false) AS reached
+        FROM spock.progress p
+        JOIN spock.node n ON n.node_id = p.remote_node_id
+       WHERE p.node_id = (SELECT node_id FROM spock.node_info())
+         AND n.node_name = %(origin)s
+    named_args:
+      lsn: "{{ remove_zone_cu_event.query_result[0].lsn }}"
+      origin: "{{ remove_zone_node }}"
+  vars:
+    # One of two fixed names, chosen by that zone's Spock release; never input.
+    column: >-
+      {{ 'remote_commit_lsn' if item.version and item.version
+         is version('6.0.0', '>=') else 'remote_lsn' }}
+  loop: "{{ remove_zone_cu_waiters }}"
+  loop_control:
+    label: "zone {{ item.zone }} ({{ item.host }})"
+  register: remove_zone_cu_wait
+  until: remove_zone_cu_wait.query_result[0].reached | default(false) | bool
+  retries: "{{ (remove_zone_wait_minutes | int * 12, 1) | max }}"
+  delay: 5
+  failed_when: false
+  changed_when: false
+  delegate_to: "{{ item.host }}"
+  run_once: true
+  become: true
+  become_user: postgres
+  when: remove_zone_cu_waiters | length > 0
+
+- name: Ensure the other zones have every write zone {{ remove_zone }} made in {{ remove_zone_db }}
+  assert:
+    that:
+    - behind | length == 0
+    fail_msg: >-
+      Zone {{ remove_zone }} cannot be removed yet: after
+      {{ remove_zone_wait_minutes }} minutes,
+      {{ behind | join('; ') }}.
+      Removing it now would drop writes that only zone {{ remove_zone }}
+      holds, so nothing has been changed. Check that every subscription from
+      zone {{ remove_zone }} is enabled and replicating (spock.sub_show_status()
+      on the zones named), stop the applications writing to zone
+      {{ remove_zone }}, and run this again.
+    quiet: true
+  vars:
+    behind: >-
+      {%- set out = [] -%}
+      {%- for r in remove_zone_cu_wait.results | default([]) -%}
+      {%-   if not r.query_result[0].reached | default(false) | bool -%}
+      {%-     set _ = out.append('zone ' ~ r.item.zone ~ ' (' ~ r.item.host
+                  ~ ') has applied zone ' ~ remove_zone ~ ' up to '
+                  ~ (r.query_result[0].applied | default(r.msg | default('no answer')))
+                  ~ ', short of its bookmark at '
+                  ~ remove_zone_cu_event.query_result[0].lsn) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+  when: remove_zone_cu_waiters | length > 0

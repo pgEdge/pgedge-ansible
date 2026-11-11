@@ -95,9 +95,11 @@ its empty databases. Nothing in Spock has changed.
   data on any zone yet. A new cluster is built by an ordinary run: run again
   without the flag.
 - **A database is in `db_names` but not yet in Spock on any zone.** Adding a
-  database and joining a zone are separate changes. Run once without the flag
-  to add the database to the existing zones, then again with it, or leave the
-  database out of `db_names` until the join is done.
+  database and joining a zone are separate changes. Either leave the database
+  out of `db_names` until the join is done, or add it to the existing zones
+  first: take the joining zone's hosts out of the inventory, run once without
+  the flag, then put them back and run the join again. A run without the flag
+  stops while the joining zone is in the inventory.
 - **A zone that is not yet a member is not listed.** Every zone outside a
   cluster that holds data has to join it. Add the zone to the list, or take it
   out of the inventory.
@@ -117,14 +119,22 @@ subscriptions were dropped, or never created, outside the collection. Create
 the missing subscriptions, or remove the zone that is out of step with
 [`remove_zone`](../roles/remove_zone.md), and run again.
 
+A subscription created again replicates only what its provider writes from
+then on. Writes the provider made while the subscription was missing do not
+reach the subscriber, so the zones can differ even after the run passes this
+check. Compare the affected tables across zones, with Spock's ACE tool or by
+hand, and repair any differences before you rely on the cluster again.
+
 ## Join Refuses an Older Spock
 
 **Symptom:** A join stops before it changes anything, with a message that a
 zone runs a Spock older than 5.0.9, or that the joining zone runs an older
-Spock than a member.
+major or minor Spock release than a member.
 
 **Solution:** A join needs Spock 5.0.9 or later in every database on every
-zone, and the joining zone may not run an older release than any member.
+zone, and the joining zone may not run an older major or minor release than
+any member. Patch releases are not compared: a joining zone on 5.0.9 can join
+members on 5.0.13.
 Running the deployment again doesn't upgrade Spock on a zone that is already
 built. Upgrade the zone's packages, restart its Postgres one node at a time,
 and run `ALTER EXTENSION spock UPDATE` in each database, then run the join

@@ -186,7 +186,8 @@ other members are Z.
 First, a set of checks that change nothing:
 
 - Spock is 5.0.9 or later in every database on every zone, and N's Spock is
-  no older than any member's.
+  no older than any member's in its major and minor release. Patch releases
+  are not compared.
 - N has the `lolor` extension wherever S replicates `lolor` tables.
 - Every zone runs with worker, slot, WAL sender and replication origin pools
   at least as large as the larger cluster needs, with no restart pending.

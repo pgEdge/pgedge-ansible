@@ -24,7 +24,8 @@ in full.
 - New `remove_zone` role and `sample-playbooks/remove-zone` playbook detach
   one zone from a running cluster: every other zone drops its subscriptions,
   replication slots, node and progress for the zone, and the zone's own
-  subscriptions and databases are dropped when it can be reached. (EE-45)
+  subscriptions and databases are dropped when it can be reached, once
+  every zone subscribing to it has applied all its writes. (EE-45)
 - The end-to-end tests can add zones to a deployed cluster that holds data,
   under a steady trickle of writes on every existing zone, and verify that
   every zone ends with the same rows and no replication conflicts. A new
@@ -42,7 +43,9 @@ in full.
   that node is not in the play or the zone's nodes disagree on it. A built
   zone whose Patroni is stopped everywhere has Patroni started so its members
   elect a leader, rather than taking the first node as primary.
-  `finalize_backrest` uses it in place of its own lookup. (EE-44)
+  `finalize_backrest` uses it in place of its own lookup. (EE-44) With
+  `zone_primary_read_only`, it never starts Patroni and leaves the primary of
+  such a zone empty, for `remove_zone`. (EE-45)
 - New `sizing_floor` task file in `role_config` reads back the worker and
   slot pool sizes each zone was last configured with, and the calculated
   sizes never go below them. (EE-44)

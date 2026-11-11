@@ -54,7 +54,7 @@
       {%-         set _ = out.append('Zone ' ~ n ~ ' runs Spock ' ~ nv ~ ' in '
                       ~ db ~ ', older than ' ~ mv ~ ' on zone ' ~ m
                       ~ '. A joining zone may run a newer release than the'
-                      ~ ' members, never an older one.') -%}
+                      ~ ' members, never an older major or minor one.') -%}
       {%-       endif -%}
       {%-     endfor -%}
       {%-   endfor -%}

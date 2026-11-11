@@ -90,7 +90,12 @@
 #
 #   In a two-zone cluster both zones fit that description when one link is
 #   missing. The joining one is then the zone whose copy subscription exists,
-#   or failing that the one without data.
+#   or failing that the one without data. Those two tie-breaks apply to two
+#   zones only. With three or more, a join's missing links all involve the
+#   joining zone until its last step, which the providers of the missing links
+#   settle, so two candidates there mean a link between members was dropped:
+#   taking one of them for a joining zone would send the operator to join a
+#   full member, and that join would fail and detach it.
 #
 # The result is one fact every host reads, built once.
 
@@ -165,8 +170,10 @@
       {%-     set joining = [] if not missing
                        else cands if cands | length == 1
                        else by_provider if by_provider | length == 1
-                       else by_copy if by_copy | length == 1
-                       else no_data if no_data | length == 1
+                       else by_copy if node_zones | length == 2
+                                       and by_copy | length == 1
+                       else no_data if node_zones | length == 2
+                                       and no_data | length == 1
                        else none -%}
       {%-     if joining is none -%}
       {%-       set links = [] -%}

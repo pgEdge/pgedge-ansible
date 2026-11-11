@@ -121,7 +121,9 @@ without application changes.
 ### Adding a Zone to a Running Cluster
 
 A cluster that already holds data can grow by a zone while it keeps taking
-writes, on a simple cluster or an Ultra-HA one. The new zone copies every
+writes, on a simple cluster or an Ultra-HA one. The existing zones may be
+restarted one node at a time before the copy, to enlarge their worker and
+replication pools. The new zone copies every
 database in `db_names` from an existing zone and receives every write made
 during the copy, with nothing lost or applied twice.
 

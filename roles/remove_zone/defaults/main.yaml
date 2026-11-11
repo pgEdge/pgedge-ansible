@@ -12,3 +12,9 @@ remove_zone_confirm: false
 # remove_zone, the number of the zone to remove, has no default: there is no
 # zone it would be safe to guess. It is given on the command line too, with
 # -e remove_zone=<N>.
+
+# How long, in minutes, to wait for each other zone to apply every write the
+# zone being removed has committed, before anything is changed. A wait that
+# runs out stops the run with nothing changed.
+
+remove_zone_wait_minutes: 10

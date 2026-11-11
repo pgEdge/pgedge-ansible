@@ -53,6 +53,27 @@
            (zone_primary if is_ha_cluster | bool else inventory_hostname) }}
       verify_removed: "{{ zone | int == remove_zone | int }}"
 
+  # Every check below runs on a zone's primary, so a zone without one that
+  # answered would pass without being checked. Only zone N may be down.
+
+  - name: Ensure every other zone has a primary that answered
+    assert:
+      that:
+      - unchecked | length == 0
+      fail_msg: >-
+        No primary answered for {{ 'zone' if unchecked | length == 1
+        else 'zones' }} {{ unchecked | join(', ') }}, so what zone
+        {{ remove_zone }} left there cannot be checked.
+    vars:
+      unchecked: >-
+        {{ zone_list | map('int') | unique | reject('eq', remove_zone | int)
+           | reject('in', ansible_play_hosts | map('extract', hostvars)
+                          | selectattr('verify_primary', 'defined')
+                          | selectattr('verify_primary')
+                          | map(attribute='zone') | map('int') | list)
+           | sort | list }}
+    run_once: true
+
   - name: Find which databases in db_names exist here
     community.postgresql.postgresql_query:
       login_port: "{{ pg_port }}"

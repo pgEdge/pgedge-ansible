@@ -9,9 +9,12 @@ The role performs the following tasks on inventory hosts:
 
 - Refuse to start unless `remove_zone_confirm` is `true` and `remove_zone`
   names a zone of the inventory.
-- Refuse when any other zone cannot be reached.
+- Refuse when any other zone's primary cannot be reached or its Postgres is
+  not running.
 - Refuse when the zone holds the only complete copy of a database that holds
   data.
+- On every other zone that subscribes to the zone, if the zone can be
+  reached, wait until it has applied every write the zone has committed.
 - On the zone's primary, if it can be reached, drop every subscription in each
   database in `db_names`.
 - On every other zone's primary, for each database in `db_names`, drop the
@@ -64,6 +67,11 @@ ansible-playbook playbook.yaml -i ../simple-cluster/inventory.yaml \
   -e remove_zone=3 -e remove_zone_confirm=true
 ```
 
+Stop the applications that write to the zone before you run the role. The
+role makes sure the other zones have every write the zone committed before it
+starts, but a write that arrives after that point is dropped with the zone's
+databases.
+
 Afterwards, do one of the following:
 
 - Take the zone's hosts out of the inventory.
@@ -86,6 +94,7 @@ This role uses the following parameters:
 |-----------|----------|
 | `remove_zone` | The number of the zone to remove (required). |
 | `remove_zone_confirm` | Must be `true` for the role to do anything (default: `false`). |
+| `remove_zone_wait_minutes` | How long to wait for each other zone to apply the zone's writes before anything is changed (default: `10`). |
 | `db_names` | The databases the zone is removed from. |
 
 ## How It Works
@@ -94,7 +103,17 @@ Spock records a zone's membership on both sides. Each other zone has a
 subscription from the zone, a replication slot that the zone's own
 subscription reads from, and a row for the zone's node. The zone itself has
 its node and a subscription from every other zone. The role removes all of
-it, for every database in `db_names`, in three steps.
+it, for every database in `db_names`, in three steps, after one check.
+
+Before it changes anything, if the zone can be reached, the role makes sure
+that no write the zone has committed is lost with it. In each database where
+the zone has a node, it sets a bookmark in the zone's change stream with
+`spock.sync_event()`, and waits until every other zone that subscribes to the
+zone has applied the bookmark, as recorded in its `spock.progress`. That zone
+then has every transaction the zone committed before the bookmark. A zone
+that has not applied it within `remove_zone_wait_minutes`, for example
+because its subscription from the zone is disabled, stops the run with
+nothing changed.
 
 1. On the zone, if it can be reached, the role drops every subscription.
    This stops the zone reading from the other zones, so the slots that served
@@ -119,11 +138,17 @@ join that cannot be resumed was holding.
 
 ### Zones That Cannot Be Reached
 
-A zone that is down is still removed from every other zone, which is all the
+A zone counts as down when its primary doesn't answer, or answers with
+Postgres not running. A zone that is down is still removed from every other zone, which is all the
 cluster needs to carry on without it. Each subscription the role drops on the
 other zones tries to drop its slot on the zone too, and waits up to Spock's
 30-second connection timeout per subscription before warning that it could
 not. Those slots are in the zone's own databases.
+
+Nothing can confirm that the other zones received every write the zone made
+before it went down. A write it committed that had not yet reached them is
+not in the cluster after the removal, though it stays in the zone's own
+databases until they are reset.
 
 The zone's own databases keep their Spock configuration and data. If the zone
 comes back while it is still in the inventory, run the role again to detach
@@ -161,6 +186,10 @@ In an Ultra-HA cluster, the role finds each zone's primary through Patroni
 and makes every change there. The replicas follow through physical
 replication, and Spock's slot synchronization removes the dropped slots from
 them, as long as `spock.drop_extra_slots` keeps its default of `on`. The zone counts as reachable when its primary is.
+The role only asks Patroni which node leads each zone. It never starts
+Patroni, so a zone whose Patroni is stopped on every node has no primary: the
+zone being removed is then treated as one that cannot be reached, and any
+other zone stops the run.
 
 ## Idempotency
 

@@ -2,8 +2,11 @@
 
 This page describes how to add a zone to a pgEdge cluster that already holds
 data, on a simple cluster or an Ultra-HA one. The new zone receives a copy of
-every database in `db_names`, and then every write that any other zone makes,
-while the existing zones keep taking writes throughout.
+every database in `db_names`, and then every write that any other zone makes.
+The existing zones keep taking writes while the data is copied. Before the
+copy, the run may restart each existing zone, one node at a time, to enlarge
+its worker and replication pools; see
+[Larger Pools on Every Zone](#larger-pools-on-every-zone).
 
 Adding a zone has two steps:
 
@@ -44,8 +47,11 @@ Check the following before running the join:
   that. Upgrade any zone running an older Spock by hand before the join, as
   the Spock documentation describes: upgrade the packages, restart Postgres
   one node at a time, and run `ALTER EXTENSION spock UPDATE` in each
-  database. The new zone may run a
-  newer Spock than the existing zones, but never an older one.
+  database. The new zone may run a newer Spock than the existing zones, but
+  not an older major or minor release: a zone on 5.0 cannot join members on
+  6.0. The
+  join compares only those two parts, so a zone on 5.0.9 can join members on
+  5.0.13.
 - **All existing zones replicating.** Every subscription between the existing
   zones must be enabled and `replicating`. The join waits up to five minutes
   for this, since the same run may have just restarted them, and then refuses
@@ -215,8 +221,9 @@ sudo -u postgres psql -d demo -c "
 
 ### Effects on the Existing Zones
 
-The existing zones keep taking reads and writes throughout. The join changes
-them in the following ways:
+The existing zones keep taking reads and writes throughout the join itself,
+apart from the restarts for larger pools described above, which come before
+it. The join changes them in the following ways:
 
 - **Held WAL.** Each slot the join creates keeps WAL on its zone until the new
   zone reads it. The slots keep WAL from step 3 until the new zone starts

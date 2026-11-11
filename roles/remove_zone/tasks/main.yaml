@@ -13,6 +13,11 @@
 #
 # So, for every database in db_names:
 #
+# 0. If the zone can be reached, every other zone that subscribes to it is
+#    waited on until it has applied every write the zone committed
+#    (catch_up.yaml). Nothing has been changed until this has passed for every
+#    database, so a zone that is behind stops the run with the cluster as it
+#    was.
 # 1. If the zone can be reached, its own subscriptions are dropped, which stops
 #    it reading from the other zones (detach_zone.yaml).
 # 2. Every other zone drops its subscriptions from the zone, the slots that
@@ -32,6 +37,15 @@
 # picks up where it left off, and a second run changes nothing.
 
 - include_tasks: preflight.yaml
+
+- name: Wait for the other zones to have every write zone {{ remove_zone }} made
+  include_tasks: catch_up.yaml
+  loop: "{{ db_names }}"
+  loop_control:
+    loop_var: remove_zone_db
+  when:
+  - remove_zone_reachable | bool
+  - inventory_hostname in remove_zone_answered
 
 - name: Detach zone {{ remove_zone }} from the other zones
   include_tasks: detach_zone.yaml

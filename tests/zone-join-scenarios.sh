@@ -57,6 +57,14 @@
 #                 it. A join refuses, naming those subscriptions; remove_zone
 #                 clears them, and zone 5 then joins under the trickle.
 #                 Verified.
+#   remove-behind [full] (simple-cluster) Zone 1's subscription from zone 5 is
+#                 disabled, so zone 1 never applies zone 5's bookmark:
+#                 remove_zone refuses after its wait and changes nothing.
+#   remove-pg-stopped
+#                 [full] (simple-cluster) Zone 5's Postgres stopped while its
+#                 host answers: remove_zone cleans the other zones and leaves
+#                 zone 5's data alone. Once Postgres is back, a second run
+#                 detaches and resets it, and zone 5 joins again.
 #   remove-unreachable
 #                 [full] (simple-cluster) Zone 5's container stopped: remove_zone
 #                 cleans the other zones, and a second run changes nothing.
@@ -218,8 +226,14 @@ deploy_in_background() {
   echo "    deployment running in the background ($DEPLOY_PID), logging to $log"
 }
 
+# stop_deploy now kills it outright instead, for a test that has to act
+# before the copy it caught can finish, which Ctrl-C's orderly shutdown can
+# take longer than.
 stop_deploy() {
   if kill -0 "$DEPLOY_PID" 2>/dev/null; then
+    if [ "${1:-}" = now ]; then
+      kill -KILL -- "-$DEPLOY_PID" 2>/dev/null || true
+    fi
     kill -INT -- "-$DEPLOY_PID" 2>/dev/null || true
     for _ in $(seq 1 30); do
       kill -0 "$DEPLOY_PID" 2>/dev/null || break
@@ -417,11 +431,25 @@ copy-died)
   step "Join zone 5, and stop the run while its copy is in the data step"
   deploy_in_background copy-died-first -e "$(join_flag 5)"
   wait_for_copy 5 data
-  stop_deploy
+  stop_deploy now
 
+  # The copy of the seed table takes tens of seconds, and can finish while
+  # the deployment is being stopped, so the copy is looked at again in the
+  # same command that restarts Postgres. A copy that finished fails the
+  # scenario, saying the window was missed, rather than leaving a join that
+  # completed where the rerun expects one that cannot be resumed.
   step "Restart zone 5's Postgres mid-copy"
-  on_host "$(simple_host 5)" \
-    'sudo systemctl restart $(systemctl list-units --plain --no-legend --state=active "postgresql@*" "pgedge-postgres-*" | awk "{print \$1}")'
+  on_host "$(simple_host 5)" '
+    state=$(cd /tmp && sudo -u postgres psql -X -d demo -t -A -v ON_ERROR_STOP=1 -c "
+      SELECT l.sync_status::text FROM spock.subscription s
+        JOIN spock.local_sync_status l ON l.sync_subid = s.sub_id
+       WHERE l.sync_nspname IS NULL AND l.sync_relname IS NULL
+         AND l.sync_kind = '"'"'f'"'"' AND s.sub_name = '"'"'sub_n5_n1'"'"'") || exit 1
+    if [ "$state" != d ]; then
+      echo "ERROR: zone 5'"'"'s copy is no longer in its data step (sync status ${state:-none}): the window was missed." >&2
+      exit 1
+    fi
+    sudo systemctl restart $(systemctl list-units --plain --no-legend --state=active "postgresql@*" "pgedge-postgres-*" | awk "{print \$1}")'
 
   step "The rerun finds the copy cannot go on, and releases the other zones"
   expect_failure copy-died-rerun \
@@ -469,6 +497,76 @@ rebuilt)
     deploy -e "$(join_flag 5)"
 
   step "remove_zone clears it, and zone 5 joins again under the trickle"
+  remove_zone 5
+  removed 5
+  trickle start -e zone_join_trickle_zones=1,2,3,4
+  deploy -e "$(join_flag 5)"
+  verify
+  ;;
+
+remove-behind)
+  step "Disable zone 1's subscription from zone 5, and try to remove zone 5"
+  psql_on "$(simple_host 1)" demo "SELECT spock.sub_disable('sub_n1_n5')"
+  expect_failure remove-behind \
+    "Zone 5 cannot be removed yet" \
+    "zone 1 ($(simple_host 1)) has applied zone 5 up to" \
+    "nothing has been changed" -- \
+    play "$REMOVE_PLAYBOOK" "${WITH[@]}" -e remove_zone=5 \
+    -e remove_zone_confirm=true -e remove_zone_wait_minutes=1
+
+  step "Nothing was changed: zones 1 and 5 still subscribe to each other"
+  for pair in "1 5" "5 1"; do
+    read -r sub prov <<<"$pair"
+    subs=$(psql_on "$(simple_host "$sub")" demo \
+      "SELECT count(*) FROM spock.subscription WHERE sub_name = 'sub_n${sub}_n${prov}'")
+    if [ "$subs" != 1 ]; then
+      echo "ERROR: zone $sub no longer has sub_n${sub}_n${prov} after a refused removal." >&2
+      exit 1
+    fi
+  done
+
+  step "Enable the subscription again, and wait for it to replicate"
+  psql_on "$(simple_host 1)" demo "SELECT spock.sub_enable('sub_n1_n5')"
+  status=""
+  for _ in $(seq 1 60); do
+    status=$(psql_on "$(simple_host 1)" demo \
+      "SELECT status FROM spock.sub_show_status('sub_n1_n5')")
+    [ "$status" = replicating ] && break
+    sleep 2
+  done
+  if [ "$status" != replicating ]; then
+    echo "ERROR: sub_n1_n5 is $status, not replicating, two minutes after it was enabled." >&2
+    exit 1
+  fi
+  ;;
+
+remove-pg-stopped)
+  unit=$(on_host "$(simple_host 5)" \
+    'systemctl list-units --plain --no-legend --state=active "postgresql@*" "pgedge-postgres-*" | awk "{print \$1}"')
+  if [ -z "$unit" ]; then
+    echo "ERROR: no Postgres unit is running on $(simple_host 5)." >&2
+    exit 1
+  fi
+
+  step "Stop zone 5's Postgres ($unit), leaving its host up, and remove the zone"
+  on_host "$(simple_host 5)" "sudo systemctl stop $unit"
+  log="$LOG_DIR/remove-pg-stopped.log"
+  remove_zone 5 2>&1 | tee "$log"
+  if ! tr -s ' \n' ' ' <"$log" | grep -qF "or its Postgres is not running, so it is cleared from the other zones only"; then
+    echo "ERROR: remove-pg-stopped: the run did not treat zone 5 as one that cannot be reached." >&2
+    exit 1
+  fi
+
+  step "Start zone 5's Postgres: the other zones are clear, zone 5 is untouched"
+  on_host "$(simple_host 5)" "sudo systemctl start $unit"
+  removed 5 -e remove_zone_verify_removed=false
+  node=$(psql_on "$(simple_host 5)" demo "SELECT count(*) FROM spock.local_node")
+  if [ "$node" != 1 ]; then
+    echo "ERROR: zone 5 lost its Spock node while its Postgres was stopped." >&2
+    exit 1
+  fi
+
+  step "A second removal detaches and resets zone 5, and it joins again"
   remove_zone 5
   removed 5
   trickle start -e zone_join_trickle_zones=1,2,3,4
