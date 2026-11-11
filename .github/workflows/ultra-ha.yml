@@ -84,15 +84,32 @@ on:
           - lsn
       zone_join:
         description: >-
-          Also run the zone-join job: a cluster of its own that zone 3, two
-          nodes and a proxy, joins while it takes writes, then reruns before
-          and after a switchover. Not with ColdFront.
-        type: boolean
+          The zone-join job: a cluster of its own that zone 3, two nodes and a
+          proxy, joins while it takes writes. basic verifies the join and a
+          rerun; full adds a rerun with the flag and one after a switchover.
+          Not with ColdFront.
+        type: choice
         required: false
-        default: true
+        default: basic
+        options:
+          - "off"
+          - basic
+          - full
+      act_job:
+        description: >-
+          Under act only: which job to run. act runs every job on one Docker
+          host, and the jobs' clusters share a compose project and addresses,
+          so only one may run at a time. Ignored on GitHub, which runs both.
+        type: choice
+        required: false
+        default: test
+        options:
+          - test
+          - zone-join
 
 jobs:
   test:
+    if: ${{ github.actor != 'nektos/act' || inputs.act_job == 'test' }}
     name: >-
       Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}${{
       inputs.coldfront && ' - coldfront' || '' }}${{
@@ -433,9 +450,10 @@ jobs:
   # is layered on from its first deployment, so the verify playbooks above do
   # not hold for it, and verify-zone-join.yml is its verifier.
   #
-  # After the job above rather than beside it: both use the same compose
-  # project and the same fixed addresses, which matters wherever the two would
-  # share a Docker host, as under act. It runs whether that job passed or not.
+  # Beside the job above on GitHub, where each job has a runner of its own.
+  # Under act, whose actor is nektos/act, every job shares one Docker host,
+  # and both jobs use the same compose project and fixed addresses, so the
+  # act_job input runs one or the other, never both.
   #
   # The scenarios are tests/zone-join-scenarios.sh's, which documents them.
   # Not with ColdFront, whose layer the join has not been tried with.
@@ -443,8 +461,9 @@ jobs:
     name: >-
       Ultra-HA zone join - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}${{
       inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}
-    needs: test
-    if: ${{ !cancelled() && inputs.zone_join && !inputs.coldfront }}
+    if: >-
+      ${{ inputs.zone_join != 'off' && !inputs.coldfront &&
+          (github.actor != 'nektos/act' || inputs.act_job == 'zone-join') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -467,6 +486,7 @@ jobs:
       JOIN_ARGS: >-
         --private-key tests/.ssh/id_ed25519
         -e repo_environment=${{ inputs.environment }}
+      ZONE_JOIN_LEVEL: ${{ inputs.zone_join }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -545,10 +565,15 @@ jobs:
             -i tests/inventories/ultra-ha-zone-join.yml \
             --private-key tests/.ssh/id_ed25519
 
-      - name: Deploy, refusing pgedge_join_zones on a new cluster, and seed
+      - name: Refuse pgedge_join_zones on a new cluster (full)
+        if: inputs.zone_join == 'full'
+        run: tests/zone-join-scenarios.sh ultra-ha refuse-new $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+
+      - name: Deploy and seed
         run: tests/zone-join-scenarios.sh ultra-ha deploy $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
 
-      - name: Join zone 3, and rerun before and after a switchover
+      # At full, also reruns with the flag and after a switchover.
+      - name: Join zone 3, and rerun
         run: tests/zone-join-scenarios.sh ultra-ha join-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
 
       - name: Show the trickle writers' logs

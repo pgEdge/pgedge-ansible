@@ -47,15 +47,33 @@ on:
           - mirror
       zone_join:
         description: >-
-          Also run the zone-join job: a cluster of its own that zones 4 and 5
-          join while it takes writes, through refusals, interruptions, a join
-          that cannot be resumed, remove_zone and AutoDDL. Not with ColdFront.
-        type: boolean
+          The zone-join job: a cluster of its own that zones 4 and 5 join while
+          it takes writes. basic joins both, one interrupted mid-copy and
+          resumed, checks the flag's gate and removes a zone; full adds every
+          refusal, interruption, AutoDDL and remove_zone variant. Not with
+          ColdFront.
+        type: choice
         required: false
-        default: true
+        default: basic
+        options:
+          - "off"
+          - basic
+          - full
+      act_job:
+        description: >-
+          Under act only: which job to run. act runs every job on one Docker
+          host, and the jobs' clusters share a compose project and addresses,
+          so only one may run at a time. Ignored on GitHub, which runs both.
+        type: choice
+        required: false
+        default: test
+        options:
+          - test
+          - zone-join
 
 jobs:
   test:
+    if: ${{ github.actor != 'nektos/act' || inputs.act_job == 'test' }}
     name: >-
       Simple Cluster - ${{ matrix.os }}${{
       inputs.coldfront && ' - coldfront' || '' }}${{
@@ -261,9 +279,10 @@ jobs:
   # seed data, about 1GB on each of five zones, off the disk the job above
   # filled.
   #
-  # After the job above rather than beside it: both use the same compose
-  # project and the same fixed addresses, which matters wherever the two would
-  # share a Docker host, as under act. It runs whether that job passed or not.
+  # Beside the job above on GitHub, where each job has a runner of its own.
+  # Under act, whose actor is nektos/act, every job shares one Docker host,
+  # and both jobs use the same compose project and fixed addresses, so the
+  # act_job input runs one or the other, never both.
   #
   # Each scenario is a step of tests/zone-join-scenarios.sh, which documents
   # them, and each starts from the cluster the one before it left. Not with
@@ -272,8 +291,9 @@ jobs:
     name: >-
       Simple Cluster zone join - ${{ matrix.os }}${{
       inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}
-    needs: test
-    if: ${{ !cancelled() && inputs.zone_join && !inputs.coldfront }}
+    if: >-
+      ${{ inputs.zone_join != 'off' && !inputs.coldfront &&
+          (github.actor != 'nektos/act' || inputs.act_job == 'zone-join') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -290,6 +310,7 @@ jobs:
       JOIN_ARGS: >-
         --private-key tests/.ssh/id_ed25519
         -e repo_environment=${{ inputs.environment }}
+      ZONE_JOIN_LEVEL: ${{ inputs.zone_join }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -343,28 +364,47 @@ jobs:
             fi
           done
 
-      - name: Deploy, refusing pgedge_join_zones on a new cluster, and seed
+      # Scenarios marked full run only with zone_join=full; the others also
+      # trim their reruns at basic (ZONE_JOIN_LEVEL).
+      - name: Refuse pgedge_join_zones on a new cluster (full)
+        if: inputs.zone_join == 'full'
+        run: tests/zone-join-scenarios.sh simple-cluster refuse-new $JOIN_ARGS $REPO_ARGS
+
+      - name: Deploy and seed
         run: tests/zone-join-scenarios.sh simple-cluster deploy $JOIN_ARGS $REPO_ARGS
 
-      - name: Refuse new zones without the flag, and with a database added
+      - name: Refuse new zones without the flag
         run: tests/zone-join-scenarios.sh simple-cluster gate $JOIN_ARGS $REPO_ARGS
+
+      - name: Refuse new zones with a database added (full)
+        if: inputs.zone_join == 'full'
+        run: tests/zone-join-scenarios.sh simple-cluster gate-db-added $JOIN_ARGS $REPO_ARGS
 
       - name: Join zones 4 and 5, interrupted mid-copy and resumed
         run: tests/zone-join-scenarios.sh simple-cluster join-two $JOIN_ARGS $REPO_ARGS
 
-      - name: Resume a join stopped after step 3
+      - name: Remove a running zone (basic)
+        if: inputs.zone_join == 'basic'
+        run: tests/zone-join-scenarios.sh simple-cluster remove $JOIN_ARGS $REPO_ARGS
+
+      - name: Resume a join stopped after step 3 (full)
+        if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster resume-step4 $JOIN_ARGS $REPO_ARGS
 
-      - name: Refuse a join that cannot be resumed, release it, and reset the zone
+      - name: Refuse a join that cannot be resumed, release it, and reset the zone (full)
+        if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster not-resumable $JOIN_ARGS $REPO_ARGS
 
-      - name: Refuse a join whose copy died in its data step
+      - name: Refuse a join whose copy died in its data step (full)
+        if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster copy-died $JOIN_ARGS $REPO_ARGS
 
-      - name: Join with AutoDDL during and after the copy
+      - name: Join with AutoDDL during and after the copy (full)
+        if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster autoddl $JOIN_ARGS $REPO_ARGS
 
-      - name: Remove an unreachable zone
+      - name: Remove an unreachable zone (full)
+        if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster remove-unreachable $JOIN_ARGS $REPO_ARGS
 
       - name: Show the trickle writers' logs

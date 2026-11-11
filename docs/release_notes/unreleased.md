@@ -111,15 +111,23 @@ built, so upgrade any older zone by hand before a join.
   `tests/verify/verify-zone-join.yml` checks that every zone, the new ones
   included, ends with the same rows, the full subscription mesh, no
   replication conflicts and no join slots left idle. The Simple Cluster and
-  Ultra-HA workflows each gain a `zone-join` job, on by default and skipped
-  with ColdFront, which runs these joins on a cluster of their own. On simple
-  clusters the job also runs two joins stopped partway and resumed; a join
-  refused because it cannot be resumed, then reset with `remove_zone` and
-  retried; a copy that died mid-data; tables created on every zone during and
-  after the copy, which reach every zone with AutoDDL on; and `remove_zone`
-  against a zone that is down. On Ultra-HA it checks that a run after a
-  switchover changes nothing. `tests/zone-join-scenarios.sh` runs each
-  scenario locally the same way. (EE-45)
+  Ultra-HA workflows each gain a `zone-join` job, skipped with ColdFront,
+  which runs these joins on a cluster of its own beside the existing job.
+  Its `zone_join` input chooses how much it runs. At `basic`, the default,
+  zones 4 and 5 of a simple cluster join in one run, stopped while zone 5
+  copies and resumed, a run without the flag refuses, and `remove_zone`
+  removes a running zone; on Ultra-HA, zone 3 joins and a second run changes
+  nothing. `full` adds refused joins on a new cluster and with a database
+  added, a join stopped after step 3 and resumed, a join refused because it
+  cannot be resumed and then reset with `remove_zone`, a copy that died
+  mid-data, tables created on every zone during and after the copy (which
+  reach every zone with AutoDDL on), `remove_zone` against a zone that is
+  down, and on Ultra-HA reruns with the flag and after a switchover. `off`
+  skips the job. Under act, which runs every job on one Docker host, the
+  workflows run only the `test` job unless given `--input act_job=zone-join`,
+  which runs only the zone-join job. `tests/zone-join-scenarios.sh` runs each
+  scenario locally the same way, with `ZONE_JOIN_LEVEL` choosing the level.
+  (EE-45)
 - A node added to the inventory of an Ultra-HA zone that already runs joins
   the zone when the deployment playbook runs again. Previously `setup_etcd`
   started the new node's etcd as though bootstrapping the zone from nothing,

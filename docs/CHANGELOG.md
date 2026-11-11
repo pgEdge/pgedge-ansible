@@ -28,9 +28,10 @@ in full.
 - The end-to-end tests can add zones to a deployed cluster that holds data,
   under a steady trickle of writes on every existing zone, and verify that
   every zone ends with the same rows and no replication conflicts. A new
-  `zone-join` job in the Simple Cluster and Ultra-HA workflows runs joins,
-  interrupted and resumed joins, refused joins, AutoDDL during a join, and
-  `remove_zone`. (EE-45)
+  `zone-join` job in the Simple Cluster and Ultra-HA workflows runs beside the
+  existing one. Its `zone_join` input is `basic` by default, covering joins,
+  an interrupted and resumed join, the gate and `remove_zone`, and `full`
+  adds every refused join, interruption and AutoDDL during a join. (EE-45)
 - A node added to the inventory of an Ultra-HA zone that already runs joins
   the zone when the deployment playbook runs again. Where the collection runs
   etcd, `setup_etcd` adds the node to the zone's etcd cluster as a learner,

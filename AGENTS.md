@@ -90,6 +90,13 @@ rerun the same playbook against the whole inventory.
 - The e2e tests run locally with `act` on the two workflows, or with
   `tests/run-test.sh <scenario> <os>`. They use compose project `e2e` with
   fixed addresses on 192.168.6.0/24, so only one test cluster runs on a host
-  at a time.
+  at a time. On GitHub each workflow's `test` and `zone-join` jobs run side by
+  side. Under act, a guard on act's actor (`nektos/act`) runs only one of
+  them: `test` by default, and the zone-join job with
+  `--input act_job=zone-join`.
+- The zone-join job's `zone_join` input is `basic` by default (the main path:
+  joins, one interrupted and resumed, the gate, and removal). Set it to `full`
+  for every refusal, interruption and variant, as when changing the join or
+  `remove_zone` code. `tests/zone-join-scenarios.sh` lists the scenarios.
 - Never put customer names or other identifying data in code, tests, issues
   or PRs.

@@ -15,39 +15,50 @@
 # on; once the new zones are in play, simple-zone-join.yml or
 # ultra-ha-zone-join.yml as well.
 #
+# ZONE_JOIN_LEVEL chooses how thorough a scenario is: basic or full (the
+# default). The workflows' zone_join input sets it, and runs the scenarios
+# marked [full] only at that level. basic covers the main path: two zones
+# joining in one run, one stopped mid-copy and resumed, the flag's gate, and
+# remove_zone. full adds every refusal, interruption and variant below.
+#
 # Scenarios, in the order the workflows run them:
 #
-#   deploy        A first deployment with -e pgedge_join_zones refuses, since
-#                 there is no running cluster to join; without it, the cluster
-#                 is built. Then the seed data, a check that the cluster
-#                 verifies before any zone joins, and the trickle is started.
+#   refuse-new    [full] A first deployment with -e pgedge_join_zones refuses,
+#                 since there is no running cluster to join.
+#   deploy        The cluster is built without the new zones. Then the seed
+#                 data, a check that the cluster verifies before any zone
+#                 joins, and the trickle is started.
 #   gate          (simple-cluster) With the new zones in the inventory, a run
-#                 without the flag refuses before creating anything for them,
-#                 and so does a run with the flag that also adds a database.
+#                 without the flag refuses before creating anything for them.
+#   gate-db-added [full] (simple-cluster) A run with the flag that also adds a
+#                 database refuses.
 #   join-two      (simple-cluster) Zones 4 and 5 join in one run, stopped
 #                 while zone 5 copies; the same command again skips zone 4 and
-#                 finishes zone 5. Verified, then a second run with and
-#                 without the flag changes nothing.
-#   resume-step4  (simple-cluster) Zone 5 removed, and joined again with its
+#                 finishes zone 5. Verified, then a second run changes nothing:
+#                 without the flag, and at full also with it.
+#   remove        (simple-cluster) basic only, as its last scenario: zone 5 is
+#                 removed while it runs, and nothing of it is left. At full,
+#                 resume-step4 and the scenarios after it cover removal.
+#   resume-step4  [full] (simple-cluster) Zone 5 removed, and joined again with its
 #                 source's apply held back, so the join fails after step 3 and
 #                 says what it holds; the same command then finishes it.
-#   not-resumable (simple-cluster) As resume-step4, but a table is created on
+#   not-resumable [full] (simple-cluster) As resume-step4, but a table is created on
 #                 zone 5 before the rerun: the rerun refuses and releases the
 #                 slots on the other zones. remove_zone resets it.
-#   copy-died     (simple-cluster) Zone 5's join stopped during the copy's data
+#   copy-died     [full] (simple-cluster) Zone 5's join stopped during the copy's data
 #                 step and its Postgres restarted: the rerun finds the copy
 #                 cannot go on, releases the slots, and remove_zone resets it.
-#   autoddl       (simple-cluster) Zone 5 joins while the members create
+#   autoddl       [full] (simple-cluster) Zone 5 joins while the members create
 #                 tables and write to them, and they create and write more
 #                 after; every zone, zone 5 included, ends with all of it.
 #                 Verified, and second runs change nothing.
 #   remove-unreachable
-#                 (simple-cluster) Zone 5's container stopped: remove_zone
+#                 [full] (simple-cluster) Zone 5's container stopped: remove_zone
 #                 cleans the other zones, and a second run changes nothing.
 #   join-ha       (ultra-ha) Zone 3 joins under the trickle. Verified,
-#                 including its replica; then a second run with and without
-#                 the flag, and one after a switchover in every zone, change
-#                 nothing.
+#                 including its replica; then a second run without the flag
+#                 changes nothing. At full, so do a run with the flag and one
+#                 after a switchover in every zone.
 #
 # Interruptions use test playbooks and signals, never a role variable:
 # tests/playbooks/zone-join-wait.yml finds the moment, and the deployment
@@ -68,6 +79,14 @@ if [ -z "$TOPOLOGY" ] || [ -z "$SCENARIO" ]; then
 fi
 shift 2
 ARGS=("$@")
+LEVEL="${ZONE_JOIN_LEVEL:-full}"
+case "$LEVEL" in
+  basic|full) ;;
+  *)
+    echo "ERROR: ZONE_JOIN_LEVEL must be basic or full, not $LEVEL" >&2
+    exit 1
+    ;;
+esac
 
 case "$TOPOLOGY" in
   simple-cluster)
@@ -249,13 +268,15 @@ simple_host() {
 }
 
 case "$SCENARIO" in
-deploy)
+refuse-new)
   step "A first deployment with pgedge_join_zones refuses: there is nothing to join"
   expect_failure deploy-with-flag \
     "no database in db_names holds data on any zone with a Spock node" \
     "run this again without pgedge_join_zones" -- \
     play "$PLAYBOOK" "${BEFORE[@]}" -e "$(join_flag 1)"
+  ;;
 
+deploy)
   step "Deploy the cluster without the new zones"
   play "$PLAYBOOK" "${BEFORE[@]}"
 
@@ -282,7 +303,9 @@ gate)
     step "Nothing refers to zone $z, and zone $z has nothing"
     removed "$z"
   done
+  ;;
 
+gate-db-added)
   step "A run that joins zones and adds a database refuses (one change per run)"
   expect_failure gate-db-added \
     "zj_added is in db_names but not yet in Spock on any zone" \
@@ -316,12 +339,20 @@ join-two)
   step "Verify all five zones"
   verify
 
-  step "A second run changes nothing, with the flag and without it"
-  idempotent -e "$(join_flag 4 5)"
+  step "A second run changes nothing"
   idempotent
+  if [ "$LEVEL" = full ]; then
+    idempotent -e "$(join_flag 4 5)"
+  fi
 
   # Zone 4 is a member now, so it takes writes for the joins to come.
   trickle start -e zone_join_trickle_zones=1,2,3,4
+  ;;
+
+remove)
+  step "Remove zone 5 while it runs, under the trickle"
+  remove_zone 5
+  removed 5
   ;;
 
 resume-step4)
@@ -444,14 +475,15 @@ join-ha)
   step "Verify all three zones, zone 3's replica included"
   verify
 
-  step "A second run changes nothing, with the flag and without it"
-  idempotent -e "$(join_flag 3)"
+  step "A second run changes nothing"
   idempotent
-
-  step "Nor does one after a switchover in every zone, zone 3 included"
-  play "$SCRIPT_DIR/playbooks/move-leaders.yml" "${WITH[@]}" -e leaders_to=second
-  idempotent
-  play "$SCRIPT_DIR/playbooks/move-leaders.yml" "${WITH[@]}" -e leaders_to=first
+  if [ "$LEVEL" = full ]; then
+    step "Nor does one with the flag, or one after a switchover in every zone"
+    idempotent -e "$(join_flag 3)"
+    play "$SCRIPT_DIR/playbooks/move-leaders.yml" "${WITH[@]}" -e leaders_to=second
+    idempotent
+    play "$SCRIPT_DIR/playbooks/move-leaders.yml" "${WITH[@]}" -e leaders_to=first
+  fi
   ;;
 
 *)
@@ -461,4 +493,4 @@ join-ha)
 esac
 
 echo ""
-echo "    Scenario $SCENARIO passed on $TOPOLOGY."
+echo "    Scenario $SCENARIO passed on $TOPOLOGY ($LEVEL)."
