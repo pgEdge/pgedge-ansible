@@ -59,6 +59,10 @@
 #                 including its replica; then a second run without the flag
 #                 changes nothing. At full, so do a run with the flag and one
 #                 after a switchover in every zone.
+#   remove-ha     (ultra-ha) Zone 3 is removed while it runs, under the
+#                 trickle on zones 1 and 2, and nothing of it is left; a
+#                 second removal changes nothing. Run at both levels: no other
+#                 scenario removes an Ultra-HA zone.
 #
 # Interruptions use test playbooks and signals, never a role variable:
 # tests/playbooks/zone-join-wait.yml finds the moment, and the deployment
@@ -484,6 +488,18 @@ join-ha)
     idempotent
     play "$SCRIPT_DIR/playbooks/move-leaders.yml" "${WITH[@]}" -e leaders_to=first
   fi
+  ;;
+
+remove-ha)
+  step "Remove zone 3 while it runs, under the trickle on zones 1 and 2"
+  trickle start -e zone_join_trickle_zones=1,2
+  remove_zone 3
+  trickle stop
+  removed 3
+
+  step "A second removal changes nothing"
+  "$SCRIPT_DIR/check-idempotence.sh" "$BASE_INVENTORY" "$REMOVE_PLAYBOOK" \
+    "${WITH[@]:2}" -e remove_zone=3 -e remove_zone_confirm=true
   ;;
 
 *)

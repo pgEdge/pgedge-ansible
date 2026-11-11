@@ -1,0 +1,172 @@
+---
+
+# Read what Spock holds in this zone and record it as pgedge_spock_state, for
+# setup_pgedge's classification and for remove_zone's preflight. Nothing here
+# writes.
+#
+# Input, set by the include:
+#
+#   pgedge_spock_state_here  Whether this host answers for its zone: the zone's
+#                            primary, and reachable. Every other host records
+#                            an empty state.
+#
+# The state is cleared on every host first, so that a caller pooling it
+# through hostvars sees only the answers given just now, never one left from an
+# earlier play. On the host that answers it is
+#
+#   {zone, host, dbs: {<db>: {spock_version, has_user_tables, node, subs,
+#                             copy_sub, copying}}}
+#
+# with one entry for each database in db_names that exists in the zone.
+# spock_version is null where Spock is not installed, and node, subs, copy_sub
+# and copying then keep their empty values.
+
+- name: Clear any earlier record of this zone's Spock state
+  set_fact:
+    pgedge_spock_state: {}
+
+- name: Read this zone's Spock state
+  when: pgedge_spock_state_here | bool
+  block:
+
+  # A database in db_names may not exist yet on a zone that has never been
+  # built. It is then simply absent there, and connecting to it would fail, so
+  # only the databases that exist are read.
+  #
+  # The names go in as one JSON array. postgresql_query turns a list argument
+  # into an array literal with every element still in quotes, which matches no
+  # database at all, and that would make every zone look empty.
+
+  - name: Find which databases in db_names exist in this zone
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: postgres
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT datname FROM pg_database
+         WHERE datname IN (SELECT json_array_elements_text(%(dbs)s::json))
+      named_args:
+        dbs: "{{ db_names | to_json }}"
+    register: pgedge_spock_state_dbs
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  # Whether Spock is installed, and whether the database holds tables of its
+  # own. The tables are counted as Spock's add-node procedure counts them,
+  # leaving out Postgres's own schemas, Spock's, and temporary ones, and also
+  # leaving out tables an extension created: those come with the extension on
+  # every zone and say nothing about whether anyone has stored data. Nothing
+  # here touches Spock's schema, which a database without the extension does
+  # not have.
+
+  - name: Read whether each database has Spock and tables holding data
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT (SELECT extversion FROM pg_extension
+                 WHERE extname = 'spock') AS spock_version,
+               EXISTS (
+                 SELECT FROM pg_class c
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                  WHERE c.relkind IN ('r', 'p')
+                    AND n.nspname NOT IN ('information_schema', 'pg_catalog',
+                                          'pg_toast', 'spock')
+                    AND left(n.nspname, 8) <> 'pg_temp_'
+                    AND left(n.nspname, 14) <> 'pg_toast_temp_'
+                    AND NOT EXISTS (
+                          SELECT FROM pg_depend d
+                           WHERE d.classid = 'pg_class'::regclass
+                             AND d.objid = c.oid
+                             AND d.deptype = 'e')
+               ) AS has_user_tables
+    loop: >-
+      {{ db_names | select('in', pgedge_spock_state_dbs.query_result
+                                 | map(attribute='datname') | list) | list }}
+    register: pgedge_spock_state_basic
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  # Then, where Spock is installed, what it holds: this zone's own node; every
+  # subscription with the node it comes from and whether it is enabled and
+  # replicating; the subscription that copied this zone's schema and data, if
+  # one did, with how many of its tables are not yet copied; and whether any
+  # copy of schema or data, by any subscription, is still under way.
+  #
+  # spock.local_node names the node this database is; it has been in Spock's
+  # catalog unchanged since 5.0.0. spock.sub_show_status() is called once for
+  # each subscription row, never on its own, because it raises an error in a
+  # database that has no local node yet.
+
+  - name: Read each database's Spock node and subscriptions
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item.item }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT
+          (SELECT n.node_name::text
+             FROM spock.local_node l
+             JOIN spock.node n ON n.node_id = l.node_id) AS node,
+          coalesce((
+            SELECT json_agg(json_build_object(
+                     'name', s.sub_name,
+                     'provider', n.node_name,
+                     'enabled', s.sub_enabled,
+                     'status', st.status) ORDER BY s.sub_name)
+              FROM spock.subscription s
+              JOIN spock.node n ON n.node_id = s.sub_origin
+              LEFT JOIN LATERAL spock.sub_show_status(s.sub_name) st ON true
+          ), '[]'::json) AS subs,
+          (SELECT json_build_object(
+                    'name', s.sub_name,
+                    'provider', n.node_name,
+                    'sync_status', l.sync_status,
+                    'tables_pending', (
+                      SELECT count(*) FROM spock.local_sync_status t
+                       WHERE t.sync_subid = s.sub_id
+                         AND t.sync_relname IS NOT NULL
+                         AND t.sync_status <> 'r'))
+             FROM spock.local_sync_status l
+             JOIN spock.subscription s ON s.sub_id = l.sync_subid
+             JOIN spock.node n ON n.node_id = s.sub_origin
+            WHERE l.sync_kind = 'f'
+              AND l.sync_nspname IS NULL
+              AND l.sync_relname IS NULL
+            ORDER BY s.sub_name
+            LIMIT 1) AS copy_sub,
+          EXISTS (SELECT FROM spock.local_sync_status
+                   WHERE sync_status <> 'r'
+                     AND (sync_kind IN ('f', 'd', 's')
+                          OR sync_relname IS NOT NULL)) AS copying
+    loop: >-
+      {{ pgedge_spock_state_basic.results
+         | selectattr('query_result.0.spock_version') | list }}
+    loop_control:
+      label: "{{ item.item }}"
+    register: pgedge_spock_state_spock
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  - name: Record this zone's Spock state
+    set_fact:
+      pgedge_spock_state: "{{ state_json | from_json }}"
+    vars:
+      state_json: >-
+        {%- set dbs = {} -%}
+        {%- for r in pgedge_spock_state_basic.results -%}
+        {%-   set _ = dbs.update({r.item: {
+                  'spock_version': r.query_result[0].spock_version,
+                  'has_user_tables': r.query_result[0].has_user_tables | bool,
+                  'node': none, 'subs': [], 'copy_sub': none,
+                  'copying': false}}) -%}
+        {%- endfor -%}
+        {%- for r in pgedge_spock_state_spock.results -%}
+        {%-   set _ = dbs[r.item.item].update(r.query_result[0]) -%}
+        {%- endfor -%}
+        {{ {'zone': zone | int, 'host': inventory_hostname, 'dbs': dbs}
+           | to_json }}

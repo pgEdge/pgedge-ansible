@@ -135,110 +135,22 @@
   run_once: true
   when: not remove_zone_reachable | bool
 
-# What each zone's primary has in Spock, read the way setup_pgedge classifies a
-# cluster: whether each database exists and has Spock, whether it holds tables
-# of its own, and, where Spock is installed, the zone's own node and the nodes
-# it subscribes to. Only the zone being removed decides anything with it here,
-# but the other zones' answers are what that decision is checked against.
-# Whether a copy of schema or data is still under way is read from Spock's
-# sync status, as setup_pgedge reads a joining zone's copy: a subscription that
-# copies, or any table it copies, not yet in state 'r'.
-#
-# The names go in as one JSON array. postgresql_query turns a list argument
-# into an array literal with every element still in quotes, which matches no
-# database at all.
+# What each zone's primary has in Spock, read with the same task file
+# setup_pgedge classifies a cluster with: whether each database exists and has
+# Spock, whether it holds tables of its own, and, where Spock is installed, the
+# zone's own node, the nodes it subscribes to, and whether a copy of schema or
+# data is still under way. Only the zone being removed decides anything with
+# it here, but the other zones' answers are what that decision is checked
+# against. A host that did not answer the ping records an empty state.
 
 - name: Read the Spock state of each zone's primary
-  when:
-  - inventory_hostname == remove_zone_own_primary
-  - inventory_hostname in remove_zone_answered
-  block:
-  - name: Find which databases in db_names exist in this zone
-    community.postgresql.postgresql_query:
-      login_port: "{{ pg_port }}"
-      login_db: postgres
-      login_unix_socket: /var/run/postgresql
-      query: >-
-        SELECT datname FROM pg_database
-         WHERE datname IN (SELECT json_array_elements_text(%(dbs)s::json))
-      named_args:
-        dbs: "{{ db_names | to_json }}"
-    register: remove_zone_dbs
-    changed_when: false
-    become: true
-    become_user: postgres
-
-  - name: Read whether each database has Spock and tables holding data
-    community.postgresql.postgresql_query:
-      login_port: "{{ pg_port }}"
-      login_db: "{{ item }}"
-      login_unix_socket: /var/run/postgresql
-      query: >-
-        SELECT EXISTS (SELECT FROM pg_extension
-                        WHERE extname = 'spock') AS spock,
-               EXISTS (
-                 SELECT FROM pg_class c
-                   JOIN pg_namespace n ON n.oid = c.relnamespace
-                  WHERE c.relkind IN ('r', 'p')
-                    AND n.nspname NOT IN ('information_schema', 'pg_catalog',
-                                          'pg_toast', 'spock')
-                    AND left(n.nspname, 8) <> 'pg_temp_'
-                    AND left(n.nspname, 14) <> 'pg_toast_temp_'
-                    AND NOT EXISTS (
-                          SELECT FROM pg_depend d
-                           WHERE d.classid = 'pg_class'::regclass
-                             AND d.objid = c.oid
-                             AND d.deptype = 'e')
-               ) AS user_tables
-    loop: "{{ remove_zone_dbs.query_result | map(attribute='datname') | list }}"
-    register: remove_zone_basic
-    changed_when: false
-    become: true
-    become_user: postgres
-
-  - name: Read each database's Spock node and subscriptions
-    community.postgresql.postgresql_query:
-      login_port: "{{ pg_port }}"
-      login_db: "{{ item.item }}"
-      login_unix_socket: /var/run/postgresql
-      query: >-
-        SELECT (SELECT n.node_name::text
-                  FROM spock.local_node l
-                  JOIN spock.node n ON n.node_id = l.node_id) AS node,
-               ARRAY(SELECT n.node_name::text
-                       FROM spock.subscription s
-                       JOIN spock.node n ON n.node_id = s.sub_origin
-                      ORDER BY 1) AS providers,
-               EXISTS (SELECT FROM spock.local_sync_status
-                        WHERE sync_status <> 'r'
-                          AND (sync_kind IN ('f', 'd', 's')
-                               OR sync_relname IS NOT NULL)) AS copying
-    loop: >-
-      {{ remove_zone_basic.results | selectattr('query_result.0.spock')
-         | list }}
-    loop_control:
-      label: "{{ item.item }}"
-    register: remove_zone_spock
-    changed_when: false
-    become: true
-    become_user: postgres
-
-  - name: Record this zone's Spock state
-    set_fact:
-      remove_zone_state: "{{ state_json | from_json }}"
-    vars:
-      state_json: >-
-        {%- set dbs = {} -%}
-        {%- for r in remove_zone_basic.results -%}
-        {%-   set _ = dbs.update({r.item: {
-                  'spock': r.query_result[0].spock | bool,
-                  'user_tables': r.query_result[0].user_tables | bool,
-                  'node': none, 'providers': [], 'copying': false}}) -%}
-        {%- endfor -%}
-        {%- for r in remove_zone_spock.results -%}
-        {%-   set _ = dbs[r.item.item].update(r.query_result[0]) -%}
-        {%- endfor -%}
-        {{ {'zone': zone | int, 'dbs': dbs} | to_json }}
+  include_role:
+    name: role_config
+    tasks_from: spock_state
+  vars:
+    pgedge_spock_state_here: >-
+      {{ inventory_hostname == remove_zone_own_primary
+         and inventory_hostname in remove_zone_answered }}
 
 # Refuse when no other zone holds a complete copy of a database that the zone
 # holds data in: removing it would reset the last copy there is. Another zone
@@ -264,22 +176,24 @@
       go.
     quiet: true
   vars:
-    target: "{{ hostvars[remove_zone_target.host].remove_zone_state }}"
+    target: "{{ hostvars[remove_zone_target.host].pgedge_spock_state }}"
     others: >-
       {{ remove_zone_remaining | map(attribute='host')
-         | map('extract', hostvars) | selectattr('remove_zone_state', 'defined')
-         | map(attribute='remove_zone_state') | list }}
+         | map('extract', hostvars) | selectattr('pgedge_spock_state', 'defined')
+         | map(attribute='pgedge_spock_state') | select | list }}
     sole: >-
       {%- set out = [] -%}
       {%- for db, d in target.dbs.items() -%}
-      {%-   if d.node and d.user_tables -%}
+      {%-   if d.node and d.has_user_tables -%}
       {%-     set partners = [] -%}
       {%-     for o in others -%}
       {%-       set od = o.dbs[db] | default({}) -%}
-      {%-       set subscribed = remove_zone_node in od.providers | default([]) -%}
-      {%-       if od.node | default(none) and od.user_tables | default(false)
+      {%-       set subscribed = remove_zone_node in od.subs | default([])
+                                     | map(attribute='provider') | list -%}
+      {%-       if od.node | default(none) and od.has_user_tables | default(false)
                    and not od.copying | default(false)
-                   and (not subscribed or od.node in d.providers) -%}
+                   and (not subscribed or od.node in d.subs
+                                          | map(attribute='provider') | list) -%}
       {%-         set _ = partners.append(o.zone) -%}
       {%-       endif -%}
       {%-     endfor -%}

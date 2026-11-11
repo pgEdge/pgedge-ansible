@@ -25,7 +25,7 @@
       SELECT s.sub_name::text AS sub_name, spock.sub_drop(s.sub_name)
         FROM spock.subscription s
   loop: >-
-    {{ remove_zone_state.dbs | dict2items | selectattr('value.spock')
+    {{ pgedge_spock_state.dbs | dict2items | selectattr('value.spock_version')
        | map(attribute='key') | list }}
   register: remove_zone_own_subs
   changed_when: remove_zone_own_subs.rowcount > 0

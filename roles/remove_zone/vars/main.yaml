@@ -57,14 +57,14 @@ remove_zone_node: "edge{{ remove_zone | int }}"
 # The databases of the zone being removed that have to be dropped, in db_names
 # order: those that hold its Spock node, a subscription, or tables of its own,
 # going by what its primary reported before anything was changed. Read on that
-# primary, which recorded remove_zone_state.
+# primary, which recorded pgedge_spock_state.
 
 remove_zone_reset_dbs: >-
   {%- set out = [] -%}
   {%- for db in db_names -%}
-  {%-   set d = remove_zone_state.dbs[db] | default({}) -%}
-  {%-   if d.node | default(none) or d.providers | default([])
-           or d.user_tables | default(false) -%}
+  {%-   set d = pgedge_spock_state.dbs[db] | default({}) -%}
+  {%-   if d.node | default(none) or d.subs | default([])
+           or d.has_user_tables | default(false) -%}
   {%-     set _ = out.append(db) -%}
   {%-   endif -%}
   {%- endfor -%}

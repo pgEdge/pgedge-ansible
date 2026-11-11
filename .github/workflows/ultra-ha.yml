@@ -576,6 +576,9 @@ jobs:
       - name: Join zone 3, and rerun
         run: tests/zone-join-scenarios.sh ultra-ha join-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
 
+      - name: Remove zone 3 while it runs
+        run: tests/zone-join-scenarios.sh ultra-ha remove-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+
       - name: Show the trickle writers' logs
         if: always()
         run: |

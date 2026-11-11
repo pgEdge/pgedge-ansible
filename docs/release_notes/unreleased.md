@@ -116,8 +116,8 @@ built, so upgrade any older zone by hand before a join.
   Its `zone_join` input chooses how much it runs. At `basic`, the default,
   zones 4 and 5 of a simple cluster join in one run, stopped while zone 5
   copies and resumed, a run without the flag refuses, and `remove_zone`
-  removes a running zone; on Ultra-HA, zone 3 joins and a second run changes
-  nothing. `full` adds refused joins on a new cluster and with a database
+  removes a running zone; on Ultra-HA, zone 3 joins, a second run changes
+  nothing, and `remove_zone` then removes zone 3 while it runs. `full` adds refused joins on a new cluster and with a database
   added, a join stopped after step 3 and resumed, a join refused because it
   cannot be resumed and then reset with `remove_zone`, a copy that died
   mid-data, tables created on every zone during and after the copy (which
