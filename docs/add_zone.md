@@ -54,6 +54,11 @@ Check the following before running the join:
   [Larger Pools on Every Zone](#larger-pools-on-every-zone).
 - **No other changes in the inventory.** Leave `db_names`, the other zones'
   hosts, and the rest of the configuration as they were for the last run.
+- **A zone that was a member before is removed first.** To join a zone whose
+  hosts were rebuilt, or whose databases were dropped, after it was part of
+  the cluster, first run [`remove_zone`](roles/remove_zone.md) for it. Until
+  then, the other zones still subscribe to the old zone, and the join refuses
+  to start, naming those subscriptions.
 - **Schema changes are replicated, but keep them few.** Data writes are
   expected and safe. With AutoDDL on, which is the default, a table created
   on any zone while the join runs reaches the new zone too. Because those

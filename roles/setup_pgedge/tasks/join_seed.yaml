@@ -107,8 +107,8 @@
   # pause cannot be had, or the workers resume early (Spock lets each go after
   # spock.pause_timeout), the reading is simply from a little before the
   # snapshot. So the worst case is Spock's own behaviour, never a skipped
-  # write. Only done when this run starts the copy; a copy started by an
-  # earlier run already has whatever that run recorded.
+  # write. Only done when the copy has not started yet; once it has, the
+  # positions were recorded by the run that started it.
 
   - name: "Step 5: pause zone {{ pgedge_join_source }}'s apply workers for the copy's snapshot"
     community.postgresql.postgresql_query:
@@ -152,6 +152,37 @@
     - copy_sub not in pgedge_join_subs
     - pgedge_join_others | length > 0
 
+  # Recorded before the copy starts, so that a run stopped at any point after
+  # this already has the positions. The rerun finds the copy under way and
+  # reads nothing new, so a record made after starting the copy would be lost
+  # with it. A run stopped before the copy starts reads again on the rerun,
+  # from later positions, which only ever move the record forward.
+
+  - name: "Step 5: record on zone {{ pgedge_join_zone }} how far its copy will have each other member"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT pg_replication_origin_advance(%(slot)s, %(lsn)s::pg_lsn)
+         WHERE coalesce(pg_replication_origin_progress(%(slot)s, false),
+                        '0/0') < %(lsn)s::pg_lsn
+      named_args:
+        slot: "{{ pgedge_join_slots[item.key] }}"
+        lsn: "{{ item.value }}"
+    loop: >-
+      {{ ((pgedge_join_source_applied.query_result | default([{}]))[0].applied
+          | default({})) | dict2items }}
+    loop_control:
+      label: "zone {{ item.key }} at {{ item.value }}"
+    register: pgedge_join_recorded
+    changed_when: pgedge_join_recorded.rowcount > 0
+    become: true
+    become_user: postgres
+    when:
+    - copy_sub not in pgedge_join_subs
+    - pgedge_join_others | length > 0
+
   # Spock's own copy: the structure from pg_dump run by this server against
   # the source, then every table's rows, all from one snapshot of the source.
   # It then carries on as this zone's subscription from the source. Recognised
@@ -186,29 +217,6 @@
     changed_when: pgedge_join_copy.rowcount > 0
     become: true
     become_user: postgres
-
-  - name: "Step 5: record on zone {{ pgedge_join_zone }} how far its copy has each other member"
-    community.postgresql.postgresql_query:
-      login_port: "{{ pg_port }}"
-      login_db: "{{ pgedge_join_db }}"
-      login_unix_socket: /var/run/postgresql
-      query: >-
-        SELECT pg_replication_origin_advance(%(slot)s, %(lsn)s::pg_lsn)
-         WHERE coalesce(pg_replication_origin_progress(%(slot)s, false),
-                        '0/0') < %(lsn)s::pg_lsn
-      named_args:
-        slot: "{{ pgedge_join_slots[item.key] }}"
-        lsn: "{{ item.value }}"
-    loop: >-
-      {{ ((pgedge_join_source_applied.query_result | default([{}]))[0].applied
-          | default({})) | dict2items }}
-    loop_control:
-      label: "zone {{ item.key }} at {{ item.value }}"
-    register: pgedge_join_recorded
-    changed_when: pgedge_join_recorded.rowcount > 0
-    become: true
-    become_user: postgres
-    when: pgedge_join_copy.rowcount | default(0) > 0
 
   # The same wait a recovery's seed copy uses, with the same limits. It ends at
   # once if the copy has already finished, and fails at once if the copy can

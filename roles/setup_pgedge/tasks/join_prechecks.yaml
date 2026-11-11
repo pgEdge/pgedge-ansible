@@ -260,6 +260,53 @@
       {{ out }}
   run_once: true
 
+# A member that still subscribes to a joining zone that has no node yet is
+# holding on to an earlier copy of that zone: one whose host was rebuilt, or
+# whose databases were dropped, without remove_zone clearing it from the
+# others. The join creates each member's subscription from the zone in step 9
+# only if none from it is there, so the old one would stand in for the new,
+# reading from a slot that no longer exists, and the join would wait for it
+# in step 10 until it gave up, every time it was run. A join that has started
+# has created the zone's node already, so this never stops one being resumed.
+
+- name: Ensure no member still subscribes to an earlier copy of a joining zone
+  fail:
+    msg: >-
+      {% for d in stale %}Zone {{ d.zone }} has no Spock node in {{ d.db }},
+      but {{ d.subs | join(', ') }} still
+      {{ 'subscribes' if d.subs | length == 1 else 'subscribe' }} to it, left
+      from when it was last part of the cluster. {% endfor %}Nothing has been
+      created for the joining {{ 'zone' if zones | length == 1 else 'zones' }}.
+      Run the remove_zone playbook with
+      {% for z in zones %}-e remove_zone={{ z }} {% endfor %}-e
+      remove_zone_confirm=true to clear {{ 'it' if zones | length == 1
+      else 'them, one zone at a time,' }} from the other zones, then run this
+      again with -e pgedge_join_zones={{ pgedge_join_plan | join(',') }}.
+  vars:
+    stale: >-
+      {%- set out = [] -%}
+      {%- for n in pgedge_join_plan -%}
+      {%-   for db, l in pgedge_join_layout[n | string].items()
+              if not (pgedge_cluster.zones[n | string].dbs[db]
+                      | default({})).node | default(none) -%}
+      {%-     set subs = [] -%}
+      {%-     for m in l.members -%}
+      {%-       for s in (pgedge_cluster.zones[m | string].dbs[db]
+                          | default({})).subs | default([])
+                if s.provider == 'edge' ~ n -%}
+      {%-         set _ = subs.append(s.name ~ ' on zone ' ~ m) -%}
+      {%-       endfor -%}
+      {%-     endfor -%}
+      {%-     if subs -%}
+      {%-       set _ = out.append({'zone': n | int, 'db': db, 'subs': subs}) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    zones: "{{ stale | map(attribute='zone') | unique | list }}"
+  run_once: true
+  when: stale | length > 0
+
 # Last, where each joining zone stands in each database it joins. It may be
 # empty, with no node, no subscription and no tables, and the join starts from
 # the beginning. It may hold what an earlier run of this join left: its node,

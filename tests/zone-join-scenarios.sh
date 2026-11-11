@@ -52,6 +52,11 @@
 #                 tables and write to them, and they create and write more
 #                 after; every zone, zone 5 included, ends with all of it.
 #                 Verified, and second runs change nothing.
+#   rebuilt       [full] (simple-cluster) Zone 5's node is erased, as if its
+#                 host were rebuilt, while the other zones still subscribe to
+#                 it. A join refuses, naming those subscriptions; remove_zone
+#                 clears them, and zone 5 then joins under the trickle.
+#                 Verified.
 #   remove-unreachable
 #                 [full] (simple-cluster) Zone 5's container stopped: remove_zone
 #                 cleans the other zones, and a second run changes nothing.
@@ -449,6 +454,26 @@ autoddl)
   verify
   idempotent -e "$(join_flag 5)"
   idempotent
+  ;;
+
+rebuilt)
+  step "Erase zone 5's node, leaving the other zones subscribed to it"
+  play "$SCRIPT_DIR/playbooks/zone-rebuild.yml" "${WITH[@]}" \
+    -e zone_rebuild_zone=5
+
+  step "A join refuses while the other zones still subscribe to the old zone 5"
+  expect_failure rebuilt-join \
+    "Zone 5 has no Spock node in demo" \
+    "still subscribe to it, left from when it was last part of the cluster" \
+    "-e remove_zone=5 -e remove_zone_confirm=true" -- \
+    deploy -e "$(join_flag 5)"
+
+  step "remove_zone clears it, and zone 5 joins again under the trickle"
+  remove_zone 5
+  removed 5
+  trickle start -e zone_join_trickle_zones=1,2,3,4
+  deploy -e "$(join_flag 5)"
+  verify
   ;;
 
 remove-unreachable)

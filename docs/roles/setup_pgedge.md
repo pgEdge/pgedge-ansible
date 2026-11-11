@@ -192,6 +192,9 @@ First, a set of checks that change nothing:
   at least as large as the larger cluster needs, with no restart pending.
 - Every subscription among the members is enabled and `replicating`, waiting
   up to five minutes for the apply workers the run restarted.
+- No member still subscribes to N in a database where N has no node yet, as
+  the members do when N was a member before and was rebuilt without
+  `remove_zone`.
 - N's databases hold nothing a join would not have created.
 
 Then, for each database:

@@ -1,0 +1,47 @@
+---
+# Erase one zone's nodes as if their hosts had been rebuilt, without telling
+# the rest of the cluster.
+#
+#   ansible-playbook tests/playbooks/zone-rebuild.yml \
+#     -i <the inventories the join runs with> -e zone_rebuild_zone=5
+#
+# The other zones keep everything they hold for the zone: their subscriptions
+# from it, the slots and node rows that go with them. This is the state an
+# operator leaves by rebuilding a member's host and joining it again without
+# running remove_zone first, which the join's checks have to refuse.
+#
+# The erasing is wipe_cluster's own: its tasks stop the zone's services and
+# erase its data directory and configuration, and leave its packages. The next
+# deployment run builds the zone's Postgres again from nothing, as it would on
+# a new host.
+
+- hosts: pgedge
+  gather_facts: false
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - name: Ensure the zone to rebuild was given
+    assert:
+      that:
+      - zone_rebuild_zone is defined
+      fail_msg: Pass -e zone_rebuild_zone=<N>.
+    run_once: true
+
+  - name: Erase the zone's nodes
+    when: zone | int == zone_rebuild_zone | int
+    block:
+    - name: Gather facts for the paths that depend on the operating system
+      setup:
+
+    - name: Stop the zone's services
+      include_role:
+        name: wipe_cluster
+        tasks_from: stop
+
+    - name: Erase the zone's data and configuration
+      include_role:
+        name: wipe_cluster
+        tasks_from: erase

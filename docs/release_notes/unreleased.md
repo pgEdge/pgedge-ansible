@@ -86,7 +86,10 @@ built, so upgrade any older zone by hand before a join.
   each with the WAL it holds and the commands to drop it. A failure that
   cannot be resumed (a copy that died after it started, a slot that is gone,
   or a joining zone that was not empty) drops what the other zones held for
-  the join, and says to run `remove_zone` and join again. New
+  the join, and says to run `remove_zone` and join again. A zone that the
+  other zones still subscribe to from an earlier membership, as after its host
+  was rebuilt without `remove_zone`, is refused before anything is created,
+  with the same advice. New
   `pgedge_join_wait_minutes`, `30` by default, limits each wait for a
   bookmark; the copy itself keeps the limits of `pgedge_seed_stall_minutes`
   and `pgedge_seed_max_hours`. See
@@ -121,7 +124,9 @@ built, so upgrade any older zone by hand before a join.
   added, a join stopped after step 3 and resumed, a join refused because it
   cannot be resumed and then reset with `remove_zone`, a copy that died
   mid-data, tables created on every zone during and after the copy (which
-  reach every zone with AutoDDL on), `remove_zone` against a zone that is
+  reach every zone with AutoDDL on), a rebuilt zone the others still
+  subscribe to, refused and then joined again after `remove_zone`,
+  `remove_zone` against a zone that is
   down, and on Ultra-HA reruns with the flag and after a switchover. `off`
   skips the job. Under act, which runs every job on one Docker host, the
   workflows run only the `test` job unless given `--input act_job=zone-join`,

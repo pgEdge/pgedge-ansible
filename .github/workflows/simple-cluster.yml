@@ -403,6 +403,10 @@ jobs:
         if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster autoddl $JOIN_ARGS $REPO_ARGS
 
+      - name: Refuse a rebuilt zone the others still subscribe to, then rejoin it (full)
+        if: inputs.zone_join == 'full'
+        run: tests/zone-join-scenarios.sh simple-cluster rebuilt $JOIN_ARGS $REPO_ARGS
+
       - name: Remove an unreachable zone (full)
         if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster remove-unreachable $JOIN_ARGS $REPO_ARGS
