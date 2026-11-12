@@ -36,7 +36,10 @@
 # zone_primary_read_only. Patroni is then never started, and a built zone with
 # no running leader records an empty zone_primary rather than stopping the run:
 # its primary cannot be known without starting something, and the caller
-# decides what an unknown primary means.
+# decides what an unknown primary means. Such a caller only reads, so the
+# primary need not be one of the play's hosts either: a follower's Patroni can
+# still name a leader whose host dropped out of the play, as when it was
+# unreachable at fact gathering, and the caller decides what that means too.
 #
 # patronictl shows Host as host:port once any member runs on a port other than
 # 5432 (or two members share a host), so the port is stripped before the name
@@ -197,9 +200,9 @@
   assert:
     that:
     - zone_primary in ansible_play_hosts
-      or (zone_primary == '' and zone_primary_read_only | default(false) | bool)
     fail_msg: >-
       {{ zone_primary }} runs zone {{ zone }}'s primary, but is not among this
       play's hosts, whether left out with --limit or failed earlier in the run.
       Everything written to the zone is written there. Run this again with
       {{ zone_primary }} included.
+  when: not zone_primary_read_only | default(false) | bool

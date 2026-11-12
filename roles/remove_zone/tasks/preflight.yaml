@@ -74,9 +74,10 @@
 # In an HA cluster, Spock's configuration lives in each zone's primary, which
 # after a failover need not be the zone's first node. Patroni is asked on every
 # node that answered. It is only asked: a zone whose Patroni is stopped on
-# every node is left stopped, and has no primary here. For the zone being
-# removed that means it cannot be reached; for any other zone, the run stops
-# below.
+# every node is left stopped, and has no primary here. A zone whose Patroni
+# names a leader on a host that did not answer is treated the same. For the
+# zone being removed either means it cannot be reached; for any other zone,
+# the run stops below.
 
 - name: Find the node that runs each zone's primary
   include_role:
@@ -163,11 +164,10 @@
   debug:
     msg: >-
       Zone {{ remove_zone }}'s primary{{ primary }} cannot be reached, or its
-      Postgres is not running, so it is cleared from the other zones only. Its own databases keep their Spock
-      configuration and data. If it comes back while it is still in the
-      inventory, run this again to
-      detach and reset it as well; otherwise erase its hosts before they are
-      used again.
+      Postgres is not running, so it is cleared from the other zones only. Its
+      own databases keep their Spock configuration and data. If it comes back
+      while it is still in the inventory, run this again to detach and reset
+      it as well; otherwise erase its hosts before they are used again.
   vars:
     primary: >-
       {{ ' ' ~ remove_zone_target.host if remove_zone_target.host else '' }}

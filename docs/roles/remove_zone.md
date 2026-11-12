@@ -103,7 +103,7 @@ Spock records a zone's membership on both sides. Each other zone has a
 subscription from the zone, a replication slot that the zone's own
 subscription reads from, and a row for the zone's node. The zone itself has
 its node and a subscription from every other zone. The role removes all of
-it, for every database in `db_names`, in three steps, after one check.
+it, for every database in `db_names`, after one check.
 
 Before it changes anything, if the zone can be reached, the role makes sure
 that no write the zone has committed is lost with it. In each database where
@@ -115,32 +115,43 @@ that has not applied it within `remove_zone_wait_minutes`, for example
 because its subscription from the zone is disabled, stops the run with
 nothing changed.
 
-1. On the zone, if it can be reached, the role drops every subscription.
-   This stops the zone reading from the other zones, so the slots that served
-   it fall idle.
-2. On every other zone, the role drops the subscriptions whose provider is
+The role then works through the databases in `db_names` one at a time, and
+finishes each before it starts the next:
+
+1. On every other zone, the role drops the subscriptions whose provider is
    the zone's node. Spock's `sub_drop` also drops the replication origin that
    tracked each subscription, and the node row once no subscription names it.
-   The role then drops the slot that served the zone's subscription, by the
-   name Spock's `spock_gen_slot_name` gives it, then the node row if one is
-   left. Last, it deletes the rows in `spock.progress` for the zone's node,
-   which Spock never removes, so that a zone joined again under the same
-   number does not start from its old position.
-3. On the zone, if it can be reached, the role drops each database that
-   holds a Spock node, a subscription or tables of its own, with
-   `DROP DATABASE ... WITH (FORCE)`. A database that is already empty in that
-   sense is left alone.
+2. On the zone, if it can be reached, the role drops every subscription. This
+   stops the zone reading from the other zones, so the slots that served it
+   fall idle.
+3. On every other zone, the role drops the slot that served the zone's
+   subscription, by the name Spock's `spock_gen_slot_name` gives it, then the
+   node row if one is left. Last, it deletes the rows in `spock.progress` for
+   the zone's node, which Spock never removes, so that a zone joined again
+   under the same number does not start from its old position.
 
-The second step never connects to the zone, so it works the same whether the
-zone is running or not. The join in `setup_pgedge` runs this step alone,
-through the role's `remaining_zones` entry point, to release the slots that a
-join that cannot be resumed was holding.
+The other zones drop their subscriptions first so that a run stopped between
+steps 1 and 3 leaves each database either as it was or with the other zones
+no longer subscribing to the zone. The next run takes that for a database
+already detached and goes on. The other way round, the zone would subscribe
+to no one while the others still subscribed to it, which is how a zone still
+joining from it looks, and the next run would refuse to remove it.
+
+Once every database is done, on the zone, if it can be reached, the role
+drops each database that holds a Spock node, a subscription or tables of its
+own, with `DROP DATABASE ... WITH (FORCE)`. A database that is already empty
+in that sense is left alone.
+
+Apart from step 2, none of this connects to the zone, so it works the same
+whether the zone is running or not. The join in `setup_pgedge` runs steps 1
+and 3 alone, through the role's `remaining_zones` entry point, to release the
+slots that a join that cannot be resumed was holding.
 
 ### Zones That Cannot Be Reached
 
 A zone counts as down when its primary doesn't answer, or answers with
-Postgres not running. A zone that is down is still removed from every other zone, which is all the
-cluster needs to carry on without it. Each subscription the role drops on the
+Postgres not running. A zone that is down is still removed from every other
+zone, which is all the cluster needs to carry on without it. Each subscription the role drops on the
 other zones tries to drop its slot on the zone too, and waits up to Spock's
 30-second connection timeout per subscription before warning that it could
 not. Those slots are in the zone's own databases.

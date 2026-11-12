@@ -190,8 +190,9 @@ built, so upgrade any older zone by hand before a join.
   lookup it kept to itself. See
   [Zone Primary](../roles/role_config.md#zone-primary). (EE-44) A caller
   that must change nothing sets `zone_primary_read_only`: Patroni is then
-  never started, and a built zone with no running leader records an empty
-  `zone_primary` instead of stopping the run. `remove_zone` uses it. (EE-45)
+  never started, a built zone with no running leader records an empty
+  `zone_primary`, and a primary outside the play's hosts is allowed, all
+  instead of stopping the run. `remove_zone` uses it. (EE-45)
 - New `sizing_floor` task file in `role_config` reads back the
   `max_worker_processes`, `max_replication_slots`, `max_wal_senders` and
   `max_active_replication_origins` each zone was last configured with, from
