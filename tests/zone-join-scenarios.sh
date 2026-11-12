@@ -451,22 +451,29 @@ copy-died)
   stop_deploy now
 
   # The copy of the seed table takes tens of seconds, and can finish while
-  # the deployment is being stopped, so the copy is looked at again in the
-  # same command that restarts Postgres. A copy that finished fails the
-  # scenario, saying the window was missed, rather than leaving a join that
-  # completed where the rerun expects one that cannot be resumed.
+  # the deployment is being stopped, or between any look at it and the
+  # restart. So the copy is looked at after the restart instead: a copy that
+  # finished is recorded in the catalog as past its data step, and one still
+  # recorded in its data step afterwards was cut off by the restart. A copy
+  # that finished fails the scenario, saying the window was missed, rather
+  # than leaving a join that completed where the rerun expects one that
+  # cannot be resumed.
   step "Restart zone 5's Postgres mid-copy"
   on_host "$(simple_host 5)" '
-    state=$(cd /tmp && sudo -u postgres psql -X -d demo -t -A -v ON_ERROR_STOP=1 -c "
-      SELECT l.sync_status::text FROM spock.subscription s
-        JOIN spock.local_sync_status l ON l.sync_subid = s.sub_id
-       WHERE l.sync_nspname IS NULL AND l.sync_relname IS NULL
-         AND l.sync_kind = '"'"'f'"'"' AND s.sub_name = '"'"'sub_n5_n1'"'"'") || exit 1
+    sudo systemctl restart $(systemctl list-units --plain --no-legend --state=active "postgresql@*" "pgedge-postgres-*" | awk "{print \$1}")
+    for _ in $(seq 1 30); do
+      state=$(cd /tmp && sudo -u postgres psql -X -d demo -t -A -v ON_ERROR_STOP=1 -c "
+        SELECT l.sync_status::text FROM spock.subscription s
+          JOIN spock.local_sync_status l ON l.sync_subid = s.sub_id
+         WHERE l.sync_nspname IS NULL AND l.sync_relname IS NULL
+           AND l.sync_kind = '"'"'f'"'"' AND s.sub_name = '"'"'sub_n5_n1'"'"'" 2>/dev/null) && break
+      state=unknown
+      sleep 1
+    done
     if [ "$state" != d ]; then
-      echo "ERROR: zone 5'"'"'s copy is no longer in its data step (sync status ${state:-none}): the window was missed." >&2
+      echo "ERROR: zone 5'"'"'s copy was not in its data step when Postgres restarted (sync status ${state:-none}): the window was missed." >&2
       exit 1
-    fi
-    sudo systemctl restart $(systemctl list-units --plain --no-legend --state=active "postgresql@*" "pgedge-postgres-*" | awk "{print \$1}")'
+    fi'
 
   step "The rerun finds the copy cannot go on, and releases the other zones"
   expect_failure copy-died-rerun \

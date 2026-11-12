@@ -27,7 +27,13 @@
 # commit may have landed, so it is retried for up to STOP_GRACE seconds
 # before the writer stops; otherwise the zone could hold a row that the .last
 # file does not count. That stays inside the unit's TimeoutStopSec of 60, with
-# room for one insert's connect and statement timeouts.
+# room for one insert's connect and statement timeouts. An insert still
+# unresolved when the grace runs out leaves its seq in
+# <state dir>/<database>-zone<zone>.unresolved, and the trickle's stop step
+# fails on that file: the zone may hold one row more than the .last file
+# counts, and the comparison after a join would report that as a mismatch
+# with the wrong cause. A writer started again settles the row, from what the
+# zone holds, and removes the file.
 #
 # The password comes from PGPASSFILE, which the unit sets.
 
@@ -47,6 +53,7 @@ STATE_DIR="$6"
 INTERVAL="${ZONE_JOIN_TRICKLE_INTERVAL:-1}"
 
 LAST_FILE="$STATE_DIR/$DB-zone$ZONE.last"
+UNRESOLVED_FILE="$STATE_DIR/$DB-zone$ZONE.unresolved"
 LOG_FILE="$STATE_DIR/$DB-zone$ZONE.log"
 
 # A statement that hangs, on a proxy that has lost its server or a primary
@@ -100,6 +107,9 @@ if [ -n "$HELD" ] && [ "$HELD" -gt "$LAST" ]; then
   LAST="$HELD"
 fi
 record "$LAST"
+if [ -n "$HELD" ]; then
+  rm -f "$UNRESOLVED_FILE"
+fi
 log "started at seq $((LAST + 1)) through $HOST:$PORT"
 
 FAILING=false
@@ -125,6 +135,7 @@ while ! $STOPPING || { $FAILING && [ "$SECONDS" -lt "$STOP_BY" ]; }; do
 done
 
 if $FAILING; then
+  printf '%s\n' "$SEQ" >"$UNRESOLVED_FILE"
   log "stopped with seq $SEQ unresolved: it may be in the zone though seq $LAST is the last recorded"
 fi
 log "stopped; the last row written is seq $LAST"

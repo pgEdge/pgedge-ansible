@@ -254,6 +254,30 @@
       changed_when: false
       failed_when: still_running.stdout_lines | length > 0
 
+    # A writer that gave up on an insert whose commit it could not confirm
+    # leaves its seq in a .unresolved file. The zone may then hold a row the
+    # .last file does not count, so stopping fails here, naming the cause,
+    # rather than letting the comparison after a join report a mismatch.
+
+    - name: Find any insert a writer stopped without resolving
+      find:
+        paths: "{{ state_dir }}"
+        patterns: "*.unresolved"
+      register: unresolved
+
+    - name: Check every writer resolved its last insert
+      assert:
+        that: unresolved.files | length == 0
+        fail_msg: >-
+          {{ writers | join(', ') }} stopped with an insert it could not confirm, so the zone may hold a
+          row its .last file does not count. The logs in {{ state_dir }} say
+          why; starting the trickle again settles the row from what the zone
+          holds.
+      vars:
+        writers: >-
+          {{ unresolved.files | map(attribute='path') | map('basename')
+             | map('replace', '.unresolved', '') | list }}
+
     - name: Read what each writer recorded
       shell: |
         for f in {{ state_dir }}/*.last; do
