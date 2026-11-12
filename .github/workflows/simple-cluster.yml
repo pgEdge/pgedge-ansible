@@ -415,6 +415,10 @@ jobs:
         if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster remove-pg-stopped $JOIN_ARGS $REPO_ARGS
 
+      - name: Resume a join marked unfinished after every subscription exists (full)
+        if: inputs.zone_join == 'full'
+        run: tests/zone-join-scenarios.sh simple-cluster resume-step10 $JOIN_ARGS $REPO_ARGS
+
       - name: Remove an unreachable zone (full)
         if: inputs.zone_join == 'full'
         run: tests/zone-join-scenarios.sh simple-cluster remove-unreachable $JOIN_ARGS $REPO_ARGS

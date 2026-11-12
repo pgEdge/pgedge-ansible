@@ -30,9 +30,12 @@
 #
 # Zones join one at a time, in the order pgedge_join_zones gave them, and each
 # goes through its databases one at a time, so at most one copy is running and
-# the slots held for a database are held as briefly as possible. Nothing about
-# a join's progress is stored: every step asks the cluster whether it is done,
-# so a join that stopped partway resumes when the same command is run again.
+# the slots held for a database are held as briefly as possible. Every step
+# asks the cluster whether it is done, so a join that stopped partway resumes
+# when the same command is run again. The one thing stored is that a join has
+# not finished, as a setting on the joining zone's database (see
+# join_database.yaml), since once every subscription exists nothing else tells
+# a join stopped in step 9 or 10 from a member.
 #
 # A join that cannot be resumed -- N's copy died where Spock cannot continue
 # it, a slot N needed is gone, or N holds something the join did not put there

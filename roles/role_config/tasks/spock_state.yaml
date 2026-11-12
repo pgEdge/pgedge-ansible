@@ -14,12 +14,14 @@
 # through hostvars sees only the answers given just now, never one left from an
 # earlier play. On the host that answers it is
 #
-#   {zone, host, dbs: {<db>: {spock_version, has_user_tables, node, subs,
-#                             copy_sub, copying}}}
+#   {zone, host, dbs: {<db>: {spock_version, has_user_tables, join_pending,
+#                             node, subs, copy_sub, copying}}}
 #
 # with one entry for each database in db_names that exists in the zone.
 # spock_version is null where Spock is not installed, and node, subs, copy_sub
-# and copying then keep their empty values.
+# and copying then keep their empty values. join_pending is the zone number a
+# join that has not finished recorded on the database (see setup_pgedge's
+# join_database.yaml), or null.
 
 - name: Clear any earlier record of this zone's Spock state
   set_fact:
@@ -52,8 +54,11 @@
     become: true
     become_user: postgres
 
-  # Whether Spock is installed, and whether the database holds tables of its
-  # own. The tables are counted as Spock's add-node procedure counts them,
+  # Whether Spock is installed, whether the database holds tables of its
+  # own, and whether a join into it has not finished. The last is a setting
+  # on the database, pgedge.join_pending, read from pg_db_role_setting rather
+  # than from the session: ALTER DATABASE ... SET reaches only sessions that
+  # start after it, so a session's own value can be out of date. The tables are counted as Spock's add-node procedure counts them,
   # leaving out Postgres's own schemas, Spock's, and temporary ones, and also
   # leaving out tables an extension created: those come with the extension on
   # every zone and say nothing about whether anyone has stored data. Nothing
@@ -81,7 +86,15 @@
                            WHERE d.classid = 'pg_class'::regclass
                              AND d.objid = c.oid
                              AND d.deptype = 'e')
-               ) AS has_user_tables
+               ) AS has_user_tables,
+               (SELECT substr(c, length('pgedge.join_pending=') + 1)
+                  FROM pg_db_role_setting r
+                 CROSS JOIN LATERAL unnest(r.setconfig) c
+                 WHERE r.setrole = 0
+                   AND r.setdatabase = (SELECT oid FROM pg_database
+                                         WHERE datname = current_database())
+                   AND starts_with(c, 'pgedge.join_pending=')
+               ) AS join_pending
     loop: >-
       {{ db_names | select('in', pgedge_spock_state_dbs.query_result
                                  | map(attribute='datname') | list) | list }}
@@ -162,6 +175,7 @@
         {%-   set _ = dbs.update({r.item: {
                   'spock_version': r.query_result[0].spock_version,
                   'has_user_tables': r.query_result[0].has_user_tables | bool,
+                  'join_pending': r.query_result[0].join_pending,
                   'node': none, 'subs': [], 'copy_sub': none,
                   'copying': false}}) -%}
         {%- endfor -%}

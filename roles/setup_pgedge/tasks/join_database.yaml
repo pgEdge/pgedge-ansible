@@ -33,6 +33,34 @@
     set_fact:
       pgedge_join_fatal: ""
 
+  # The marker that this join has not finished, set on N's database before
+  # anything is created in it and cleared once step 10 has passed. A join
+  # whose every subscription exists looks just like a member, and without the
+  # marker a run after a failure in step 9 or 10 would take N for one and
+  # never finish them; with it, classify.yaml takes N for the zone joining,
+  # and the rerun resumes. It is a setting on the database, so it is stored in
+  # the catalog and reaches N's replicas with everything else, and it goes
+  # with the database when remove_zone drops it. Spock does not replicate
+  # ALTER DATABASE, so no other zone sees it.
+
+  - name: "Step 2: record on zone {{ pgedge_join_zone }} that it is joining {{ pgedge_join_db }}"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        DO $$ BEGIN
+          EXECUTE 'ALTER DATABASE ' || quote_ident(current_database())
+                  || ' SET pgedge.join_pending = '
+                  || quote_literal('{{ pgedge_join_zone | int }}');
+        END $$
+    become: true
+    become_user: postgres
+    when: >-
+      (pgedge_cluster.zones[pgedge_join_zone | string].dbs[pgedge_join_db]
+       | default({})).join_pending | default(none) | string
+      != pgedge_join_zone | int | string
+
   - name: "Step 2: create zone {{ pgedge_join_zone }}'s node"
     include_tasks: join_seed.yaml
     vars:
@@ -637,6 +665,19 @@
     delay: 5
     changed_when: false
     delegate_to: "{{ pgedge_zone_hosts[item | string] }}"
+    become: true
+    become_user: postgres
+
+  - name: "Step 10: record on zone {{ pgedge_join_zone }} that its join of {{ pgedge_join_db }} is done"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        DO $$ BEGIN
+          EXECUTE 'ALTER DATABASE ' || quote_ident(current_database())
+                  || ' RESET pgedge.join_pending';
+        END $$
     become: true
     become_user: postgres
 

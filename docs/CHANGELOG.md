@@ -18,8 +18,10 @@ in full.
   copies every database in `db_names` into the zone from an existing one
   while the other zones keep taking writes, accounts for every write made
   during the copy, and then completes the subscription mesh. A join that
-  stops partway resumes when the same command is run again; one that cannot
-  resume releases what it held on the other zones. New
+  stops partway resumes when the same command is run again, even after its
+  last subscription exists, because the zone records an unfinished join on
+  each database until it is done; one that cannot resume releases what it
+  held on the other zones. New
   `pgedge_join_wait_minutes` limits the join's waits for bookmarks. (EE-45)
 - New `remove_zone` role and `sample-playbooks/remove-zone` playbook detach
   one zone from a running cluster: every other zone drops its subscriptions,

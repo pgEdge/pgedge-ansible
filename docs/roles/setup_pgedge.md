@@ -111,9 +111,11 @@ A database *holds data* when some zone has its node there and tables of its
 own. In such a database:
 
 - A zone without a node is not yet part of the cluster.
-- The zones with a node are *members* when each subscribes to every other one,
-  enabled or not. If one zone lacks some of those subscriptions and the rest
-  are complete, that zone is partway through a join.
+- A zone with a node whose database carries `pgedge.join_pending` set to its
+  own number is partway through a join, whatever subscriptions it has.
+- Otherwise the zones with a node are *members* when each subscribes to every
+  other one, enabled or not. If one zone lacks some of those subscriptions
+  and the rest are complete, that zone is partway through a join.
 - Any other shape stops the run, listing the missing subscriptions.
 
 A database that holds no data on any zone is not classified: every zone takes
@@ -226,8 +228,15 @@ Every bookmark is a `spock.sync_event()` waited for in `spock.progress`, for
 up to `pgedge_join_wait_minutes`. On HA clusters every step runs on each
 zone's primary.
 
-No progress is stored. Each step asks the cluster whether it is done, so a
-rerun after any failure picks up where the last one stopped. When a step
+Each step asks the cluster whether it is done, so a rerun after any failure
+picks up where the last one stopped. The only thing stored is that a join has
+not finished: before step 2, the role sets `pgedge.join_pending` to N on N's
+database with `ALTER DATABASE`, and it resets the setting once step 10 has
+passed. Classification takes a zone with a node and that setting for the zone
+joining, even when every subscription already exists, so a join that stopped
+in step 9 or 10 resumes too. The setting is in N's catalog, so N's replicas
+have it, Spock does not replicate it to other zones, and it goes with the
+database when `remove_zone` drops it. When a step
 fails, the role sorts the failure into one of two kinds:
 
 - **Resumable** (the default for anything unexpected): everything is kept,

@@ -88,7 +88,18 @@
 #   at a time, so any other shape was made outside this collection, and the run
 #   stops with the missing links listed rather than guess.
 #
-#   In a two-zone cluster both zones fit that description when one link is
+#   A join records its zone on each database it is joining, as the setting
+#   pgedge.join_pending, before it creates anything there, and clears it only
+#   once the zone replicates with every member both ways (join_database.yaml).
+#   A zone with a node whose database carries its own number is the zone
+#   joining, whatever its subscriptions look like: once a join has created
+#   every subscription, nothing else tells it from a member, and only the
+#   marker lets a join that stopped in its last steps be resumed. Every link
+#   missing then has to involve that zone, or the run stops as below.
+#
+#   Without a marker, as for a join started by an earlier release of this
+#   collection, the joining zone is inferred from the missing links. In a
+#   two-zone cluster both zones fit that description when one link is
 #   missing. The joining one is then the zone whose copy subscription exists,
 #   or failing that the one without data. Those two tie-breaks apply to two
 #   zones only. With three or more, a join's missing links all involve the
@@ -122,8 +133,13 @@
       {%-   set table_zones = [] -%}
       {%-   set copy_zones = [] -%}
       {%-   set providers = {} -%}
+      {%-   set marked = [] -%}
       {%-   for z in zones -%}
       {%-     set d = ((zs[z | string] | default({}))['dbs'] | default({}))[db] | default({}) -%}
+      {%-     if d.node | default(none) and d.join_pending | default(none)
+                 and d.join_pending | string == z | string -%}
+      {%-       set _ = marked.append(z) -%}
+      {%-     endif -%}
       {%-     if d.node | default(none) -%}
       {%-       if d.node != 'edge' ~ z -%}
       {%-         set _ = out.errors.append('In ' ~ db ~ ', zone ' ~ z
@@ -167,7 +183,11 @@
                    | length == 0 -%}
       {%-       set _ = by_provider.append(x) -%}
       {%-     endfor -%}
-      {%-     set joining = [] if not missing
+      {%-     set joining = (marked if missing | reject('contains', marked[0])
+                                          | list | length == 0
+                               else none) if marked | length == 1
+                       else none if marked | length > 1
+                       else [] if not missing
                        else cands if cands | length == 1
                        else by_provider if by_provider | length == 1
                        else by_copy if node_zones | length == 2
@@ -183,8 +203,12 @@
       {%-       set _ = out.errors.append('In ' ~ db
                     ~ ', the zones with a Spock node ('
                     ~ node_zones | join(', ') ~ ') are not one cluster with'
-                    ~ ' at most one zone joining it. Subscriptions'
-                    ~ ' are missing: ' ~ links | join('; ') ~ '.') -%}
+                    ~ ' at most one zone joining it.'
+                    ~ ((' Subscriptions are missing: ' ~ links | join('; ') ~ '.')
+                       if links else '')
+                    ~ ((' ' ~ ('Zone ' if marked | length == 1 else 'Zones ')
+                        ~ marked | join(', ') ~ ' recorded a join that has not'
+                        ~ ' finished.') if marked else '')) -%}
       {%-       set joining = [] -%}
       {%-     endif -%}
       {%-     set _ = info.update({'missing_links': missing, 'joining': joining,

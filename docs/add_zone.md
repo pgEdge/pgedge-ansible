@@ -260,10 +260,14 @@ the cluster needs.
 
 ## When a Join Stops
 
-A join that stops partway can almost always be resumed. Nothing about the
-join's progress is stored: every step asks the cluster whether it is already
-done. So you can stop a run at any point, or let it fail, and then run the
-same command again. Zones that finished in an earlier run are skipped, and the
+A join that stops partway can almost always be resumed. Every step asks the
+cluster whether it is already done, and the only thing the join records is
+that it has not finished: the setting `pgedge.join_pending` on each database
+the zone is joining, set before anything is created there and cleared once
+the zone replicates with every member both ways. It keeps a join that stopped
+in its last steps, when every subscription already exists, from being taken
+for a finished one. So you can stop a run at any point, or let it fail, and
+then run the same command again. Zones that finished in an earlier run are skipped, and the
 zone that was joining carries on from where it stopped.
 
 ### A Join That Can Be Resumed

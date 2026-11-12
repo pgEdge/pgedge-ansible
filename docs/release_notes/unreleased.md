@@ -83,8 +83,12 @@ built, so upgrade any older zone by hand before a join.
   can otherwise lag the snapshot by up to a second and apply those writes
   twice.
 
-  No progress is stored: a join that stops partway resumes when the same
-  command runs again. A failure that can be resumed keeps the slots and lists
+  A join that stops partway resumes when the same command runs again: every
+  step checks whether it is done. The only thing stored is that a join has
+  not finished, as the database setting `pgedge.join_pending` on the joining
+  zone, cleared once it replicates with every member both ways, so that a
+  join that stopped in its last steps, with every subscription in place, is
+  not taken for a finished one. A failure that can be resumed keeps the slots and lists
   each with the WAL it holds and the commands to drop it. A failure that
   cannot be resumed (a copy that died after it started, a slot that is gone,
   or a joining zone that was not empty) drops what the other zones held for
@@ -145,7 +149,8 @@ built, so upgrade any older zone by hand before a join.
   still subscribe to, refused and then joined again after `remove_zone`,
   `remove_zone` refused while another zone has not applied all of the zone's
   writes, `remove_zone` against a zone whose Postgres is stopped and then
-  again once it is back, `remove_zone` against a zone that is down, and on
+  again once it is back, a join left marked unfinished after every
+  subscription exists, `remove_zone` against a zone that is down, and on
   Ultra-HA reruns with the flag and after a switchover. `off` skips the job.
   Under act, which runs every job on one Docker host, the workflows run only
   the `test` job unless given `--input act_job=zone-join`, which runs only the

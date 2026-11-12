@@ -68,6 +68,12 @@
 #                 host answers: remove_zone cleans the other zones and leaves
 #                 zone 5's data alone. Once Postgres is back, a second run
 #                 detaches and resets it, and zone 5 joins again.
+#   resume-step10 [full] (simple-cluster) Zone 5's finished join of demo is
+#                 marked unfinished by hand, as a join that stopped in step 9
+#                 or 10 leaves it with every subscription in place. A run
+#                 without the flag refuses; the join command finishes it and
+#                 clears the marker. Verified, and a second run changes
+#                 nothing.
 #   remove-unreachable
 #                 [full] (simple-cluster) Zone 5's container stopped: remove_zone
 #                 cleans the other zones, and a second run changes nothing.
@@ -583,6 +589,33 @@ remove-pg-stopped)
   trickle start -e zone_join_trickle_zones=1,2,3,4
   deploy -e "$(join_flag 5)"
   verify
+  ;;
+
+resume-step10)
+  marker="SELECT count(*) FROM pg_db_role_setting r, unnest(r.setconfig) c
+           WHERE r.setdatabase = (SELECT oid FROM pg_database
+                                   WHERE datname = 'demo')
+             AND starts_with(c, 'pgedge.join_pending=')"
+
+  step "Mark zone 5's join of demo unfinished, as one stopped in step 10 leaves it"
+  psql_on "$(simple_host 5)" demo \
+    "ALTER DATABASE demo SET pgedge.join_pending = '5'"
+
+  step "Every subscription is in place, yet a run without the flag takes zone 5 for a zone still joining"
+  expect_failure resume-step10-gate \
+    "Zone 5 is not yet part of this cluster" \
+    "run this again with -e pgedge_join_zones=5" -- \
+    deploy
+
+  step "The join command finishes the join and clears the marker"
+  deploy -e "$(join_flag 5)"
+  left=$(psql_on "$(simple_host 5)" demo "$marker")
+  if [ "$left" != 0 ]; then
+    echo "ERROR: zone 5's demo still records a join that has not finished." >&2
+    exit 1
+  fi
+  verify
+  idempotent
   ;;
 
 remove-unreachable)
