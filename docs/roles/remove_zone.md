@@ -15,11 +15,11 @@ The role performs the following tasks on inventory hosts:
   data.
 - On every other zone that subscribes to the zone, if the zone can be
   reached, wait until it has applied every write the zone has committed.
-- On the zone's primary, if it can be reached, drop every subscription in each
-  database in `db_names`.
-- On every other zone's primary, for each database in `db_names`, drop the
-  subscriptions from the zone, the replication slots that served it, its
-  Spock node, and the replication progress kept for it.
+- For each database in `db_names` in turn: on every other zone's primary,
+  drop the subscriptions from the zone; then on the zone's primary, if it can
+  be reached, drop every subscription it has; then on every other zone's
+  primary, drop the replication slots that served the zone, its Spock node,
+  and the replication progress kept for it.
 - On the zone's primary, if it can be reached, drop each database in
   `db_names` that holds a Spock node, a subscription or tables of its own.
 

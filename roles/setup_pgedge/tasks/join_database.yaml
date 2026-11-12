@@ -554,6 +554,34 @@
     become: true
     become_user: postgres
 
+  # The bookmark from N in step 10 is only applied by a subscription that is
+  # streaming, so each member's subscription from N has to be replicating
+  # before it is set, as step 8 waits for N's.
+
+  - name: "Step 9: wait for every member's subscription from zone {{ pgedge_join_zone }} to replicate"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT st.status::text AS status
+          FROM spock.sub_show_status(%(sub)s) st
+      named_args:
+        sub: "sub_n{{ item }}_n{{ pgedge_join_zone }}"
+    loop: "{{ pgedge_join_members }}"
+    loop_control:
+      label: "zone {{ item }}"
+    register: pgedge_join_reverse_replicating
+    until: >-
+      pgedge_join_reverse_replicating.query_result[0].status | default('')
+      == 'replicating'
+    retries: "{{ pgedge_join_wait_retries | int }}"
+    delay: 5
+    changed_when: false
+    delegate_to: "{{ pgedge_zone_hosts[item | string] }}"
+    become: true
+    become_user: postgres
+
   # Step 10. Bookmarks both ways: one from N that every member applies, and
   # one from every member that N applies. Then N has to look like any other
   # member: an enabled, replicating subscription from every member, and every
@@ -663,7 +691,7 @@
         {%-   set _ = out.append('the wait gave up after ' ~ tries | max
                                  ~ ' tries') -%}
         {%- endif -%}
-        {{ out | join(' ') | regex_replace('\\s+', ' ') }}
+        {{ out | join(' ') | regex_replace('\s+', ' ') }}
 
   - name: Release what the other zones hold for zone {{ pgedge_join_zone }}
     include_tasks: join_release.yaml
@@ -674,7 +702,7 @@
       msg: >-
         Zone {{ pgedge_join_zone }} cannot finish joining
         {{ pgedge_join_db }}, and the join cannot be resumed:
-        {{ pgedge_join_fatal | regex_replace('\\s+', ' ') | trim }}. It failed at
+        {{ pgedge_join_fatal | regex_replace('\s+', ' ') | trim }}. It failed at
         "{{ pgedge_join_failed_task }}"{% if pgedge_join_failed_msg %}:
         {{ pgedge_join_failed_msg }}{% endif %}
         So that nothing keeps WAL for a join that cannot finish, zone

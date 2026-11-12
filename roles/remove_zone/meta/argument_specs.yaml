@@ -61,3 +61,12 @@ argument_specs:
         required: true
         description:
         - The database to clear it from.
+      remove_zone_detach_host:
+        type: "str"
+        default: ""
+        description:
+        - The host running the removed zone's primary, when it can be reached
+          and has Spock in I(remove_zone_db). Its own subscriptions there are
+          then dropped too, after the other zones have dropped theirs from it
+          and before the slots that served it are dropped. Empty leaves the
+          zone itself untouched.

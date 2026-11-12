@@ -18,14 +18,18 @@
 #    (catch_up.yaml). Nothing has been changed until this has passed for every
 #    database, so a zone that is behind stops the run with the cluster as it
 #    was.
-# 1. If the zone can be reached, its own subscriptions are dropped, which stops
-#    it reading from the other zones (detach_zone.yaml).
-# 2. Every other zone drops its subscriptions from the zone, the slots that
-#    served it, and its node (remaining_zones.yaml). This half never connects
-#    to the zone, so it runs whether the zone is reachable or not, and the
-#    join in setup_pgedge uses it on its own to release what a join that
-#    cannot be resumed was holding.
-# 3. If the zone can be reached, its databases are dropped
+# 1. Every other zone drops its subscriptions from the zone; then, if the zone
+#    can be reached, the zone drops its own, which stops it reading from the
+#    other zones; then every other zone drops the slots that served it, and
+#    its node (remaining_zones.yaml). One database is finished before the
+#    next is started, and in this order a run that stops anywhere leaves each
+#    database either as it was or with the other zones no longer subscribing
+#    to the zone, which the preflight recognizes as detached, so the next run
+#    goes on. Apart from the zone's own subscriptions this never connects to
+#    the zone, so it runs whether the zone is reachable or not, and the join
+#    in setup_pgedge uses it on its own to release what a join that cannot be
+#    resumed was holding.
+# 2. If the zone can be reached, its databases are dropped
 #    (reset_zone.yaml), and the next deployment run creates them again empty.
 #
 # The zone stays in the inventory throughout. Afterwards an ordinary
@@ -47,17 +51,19 @@
   - remove_zone_reachable | bool
   - inventory_hostname in remove_zone_answered
 
-- name: Detach zone {{ remove_zone }} from the other zones
-  include_tasks: detach_zone.yaml
-  when:
-  - remove_zone_reachable | bool
-  - inventory_hostname == remove_zone_target.host
-
 - name: Clear zone {{ remove_zone }} from the other zones
   include_tasks: remaining_zones.yaml
   loop: "{{ db_names }}"
   loop_control:
     loop_var: remove_zone_db
+  vars:
+    remove_zone_detach_host: >-
+      {{ remove_zone_target.host
+         if remove_zone_reachable | bool
+            and ((hostvars[remove_zone_target.host].pgedge_spock_state.dbs
+                  | default({}))[remove_zone_db] | default({})).spock_version
+                | default(none)
+         else '' }}
   when: inventory_hostname in remove_zone_answered
 
 - name: Reset zone {{ remove_zone }}'s databases

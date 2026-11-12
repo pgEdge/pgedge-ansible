@@ -138,8 +138,8 @@ ansible-playbook -i inventory.yaml playbook.yaml -e '{"pgedge_join_zones": [4, 5
 ```
 
 Don't write the list in brackets as a plain argument: Ansible passes
-`-e pgedge_join_zones=[4]` as the text `[4]`, which the run refuses as an
-unknown zone. Pass the setting on the command line rather than in the
+`-e pgedge_join_zones=[4]` as the text `[4]`, and the run stops at once with
+"Validation of arguments failed", since `[4]` is not a zone number. Pass the setting on the command line rather than in the
 inventory, where it would sit waiting for the next unrelated run. Leaving it
 on a later run does no harm: a zone that is already a member is reported and
 skipped.

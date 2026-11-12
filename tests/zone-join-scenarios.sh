@@ -37,9 +37,12 @@
 #                 finishes zone 5. Verified, then a second run changes nothing:
 #                 without the flag, and at full also with it.
 #   remove        (simple-cluster) basic only, as its last scenario: zone 5 is
-#                 removed while it runs, and nothing of it is left. At full,
-#                 resume-step4 and the scenarios after it cover removal.
-#   resume-step4  [full] (simple-cluster) Zone 5 removed, and joined again with its
+#                 removed while it runs, nothing of it is left, and zones 1
+#                 to 4 verify as a whole cluster holding every row zone 5
+#                 wrote. At full, resume-step4 and the scenarios after it
+#                 cover removal.
+#   resume-step4  [full] (simple-cluster) Zone 5 removed, zones 1 to 4 verified
+#                 as above, and zone 5 joined again with its
 #                 source's apply held back, so the join fails after step 3 and
 #                 says what it holds; the same command then finishes it.
 #   not-resumable [full] (simple-cluster) As resume-step4, but a table is created on
@@ -73,8 +76,9 @@
 #                 changes nothing. At full, so do a run with the flag and one
 #                 after a switchover in every zone.
 #   remove-ha     (ultra-ha) Zone 3 is removed while it runs, under the
-#                 trickle on zones 1 and 2, and nothing of it is left; a
-#                 second removal changes nothing. Run at both levels: no other
+#                 trickle on zones 1 and 2, nothing of it is left, and zones
+#                 1 and 2 verify as a whole cluster; a second removal changes
+#                 nothing. Run at both levels: no other
 #                 scenario removes an Ultra-HA zone.
 #
 # Interruptions use test playbooks and signals, never a role variable:
@@ -192,7 +196,7 @@ trickle() {
 
 verify() {
   trickle stop
-  play "$SCRIPT_DIR/verify/verify-zone-join.yml" "${WITH[@]}"
+  play "$SCRIPT_DIR/verify/verify-zone-join.yml" "${WITH[@]}" "$@"
 }
 
 idempotent() {
@@ -376,12 +380,19 @@ remove)
   step "Remove zone 5 while it runs, under the trickle"
   remove_zone 5
   removed 5
+
+  step "Zones 1 to 4 are still a whole cluster, with every row zone 5 wrote"
+  verify -e zone_join_verify_without=5
   ;;
 
 resume-step4)
   step "Remove zone 5"
   remove_zone 5
   removed 5
+
+  step "Zones 1 to 4 are still a whole cluster, with every row zone 5 wrote"
+  verify -e zone_join_verify_without=5
+  trickle start -e zone_join_trickle_zones=1,2,3,4
 
   step "Join zone 5 with its source's apply held: the join stops in step 4"
   hold start
@@ -617,8 +628,10 @@ remove-ha)
   step "Remove zone 3 while it runs, under the trickle on zones 1 and 2"
   trickle start -e zone_join_trickle_zones=1,2
   remove_zone 3
-  trickle stop
   removed 3
+
+  step "Zones 1 and 2 are still a whole cluster, with every row zone 3 wrote"
+  verify -e zone_join_verify_without=3
 
   step "A second removal changes nothing"
   "$SCRIPT_DIR/check-idempotence.sh" "$BASE_INVENTORY" "$REMOVE_PLAYBOOK" \

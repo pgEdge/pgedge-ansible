@@ -88,9 +88,7 @@ its empty databases. Nothing in Spock has changed.
 **Solution:** The message says which of the following applies:
 
 - **A listed zone is not a zone of this inventory.** Add the zone's hosts to
-  the inventory, or correct the list. A list written in brackets as a plain
-  argument, such as `-e pgedge_join_zones=[4]`, arrives as text and is
-  reported here; use `-e pgedge_join_zones=4`, `=4,5`, or a JSON argument.
+  the inventory, or correct the list.
 - **There is no running cluster to join.** No database in `db_names` holds
   data on any zone yet. A new cluster is built by an ordinary run: run again
   without the flag.
@@ -106,6 +104,12 @@ its empty databases. Nothing in Spock has changed.
 - **`pgedge_join_zones` and `pgedge_seed_zone` are both given.**
   `pgedge_seed_zone` is for recovery only. Run again with only
   `pgedge_join_zones`.
+
+A run that stops with "Validation of arguments failed" and says a
+`pgedge_join_zones` value cannot be converted to an int was given the list in
+brackets as a plain argument, such as `-e pgedge_join_zones=[4]`, which
+arrives as the text `[4]`. Use `-e pgedge_join_zones=4`, `=4,5`, or a JSON
+argument.
 
 ## Run Stops Because the Zones Are Not One Cluster
 

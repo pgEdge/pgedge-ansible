@@ -88,7 +88,9 @@ built, so upgrade any older zone by hand before a join.
   each with the WAL it holds and the commands to drop it. A failure that
   cannot be resumed (a copy that died after it started, a slot that is gone,
   or a joining zone that was not empty) drops what the other zones held for
-  the join, and says to run `remove_zone` and join again. A zone that the
+  the join and the joining zone's subscriptions from them, leaving any other
+  subscription it has for `remove_zone`, and says to run `remove_zone` and
+  join again. A zone that the
   other zones still subscribe to from an earlier membership, as after its host
   was rebuilt without `remove_zone`, is refused before anything is created,
   with the same advice. New
@@ -102,20 +104,24 @@ built, so upgrade any older zone by hand before a join.
   zone from a running cluster. It refuses to start without
   `-e remove_zone=<zone> -e remove_zone_confirm=true`, when another zone's
   primary cannot be reached or its Postgres is not running, or when the zone
-  holds the only complete copy of a database. When the zone can be reached,
-  it first sets a bookmark in each of its databases with `spock.sync_event()`
-  and waits, up to the new `remove_zone_wait_minutes` (10 by default), for
-  every zone that subscribes to it to apply it, so that no write the zone
-  committed is dropped with it; a zone that falls short stops the run with
-  nothing changed. It only asks Patroni which node leads each zone, and never
-  starts Patroni: a zone being removed whose Patroni or Postgres is stopped is
-  treated as one that cannot be reached. On every other zone it drops the subscriptions from the zone, the
-  replication slots that served it once they are idle, its Spock node and the
-  rows `spock.progress` kept for it, which Spock never removes. When the zone
-  can be reached, it also drops the zone's subscriptions and its databases in
-  `db_names`, which the next deployment run creates again empty. It is how a
-  join that cannot be resumed is started over, and how a zone is retired. See
-  [remove_zone](../roles/remove_zone.md). (EE-45)
+  holds the only complete copy of a database. When the zone can be reached, it first
+  sets a bookmark in each of its databases with `spock.sync_event()` and
+  waits, up to the new `remove_zone_wait_minutes` (10 by default), for every
+  zone that subscribes to it to apply it, so that no write the zone committed
+  is dropped with it; a zone that falls short stops the run with nothing
+  changed. It only asks Patroni which node leads each zone, and never starts
+  Patroni: a zone being removed whose Patroni or Postgres is stopped is
+  treated as one that cannot be reached. Then, one database at a time, every
+  other zone drops its subscriptions from the zone; the zone, when it can be
+  reached, drops its own; and every other zone drops the replication slots
+  that served it once they are idle, its Spock node and the rows
+  `spock.progress` kept for it, which Spock never removes. In that order, a
+  run that stops partway, such as at a slot still in use, is taken up by the
+  next one even with several databases. When the zone can be reached, its
+  databases in `db_names` are dropped last, and the next deployment run
+  creates them again empty. It is how a join that cannot be resumed is started
+  over, and how a zone is retired. See [remove_zone](../roles/remove_zone.md).
+  (EE-45)
 - The end-to-end tests can add zones to a deployed cluster: two more simple
   zones, or a third Ultra-HA zone with a replica and its own proxy, with two
   databases seeded with enough data for the copy to take a while. A writer
@@ -124,25 +130,27 @@ built, so upgrade any older zone by hand before a join.
   included, ends with the same rows, the full subscription mesh, no
   replication conflicts and no join slots left idle. The Simple Cluster and
   Ultra-HA workflows each gain a `zone-join` job, skipped with ColdFront,
-  which runs these joins on a cluster of its own beside the existing job.
-  Its `zone_join` input chooses how much it runs. At `basic`, the default,
-  zones 4 and 5 of a simple cluster join in one run, stopped while zone 5
-  copies and resumed, a run without the flag refuses, and `remove_zone`
-  removes a running zone; on Ultra-HA, zone 3 joins, a second run changes
-  nothing, and `remove_zone` then removes zone 3 while it runs. `full` adds refused joins on a new cluster and with a database
-  added, a join stopped after step 3 and resumed, a join refused because it
-  cannot be resumed and then reset with `remove_zone`, a copy that died
-  mid-data, tables created on every zone during and after the copy (which
-  reach every zone with AutoDDL on), a rebuilt zone the others still
-  subscribe to, refused and then joined again after `remove_zone`,
+  which runs these joins on a cluster of its own beside the existing job. Its
+  `zone_join` input chooses how much it runs. At `basic`, the default, zones 4
+  and 5 of a simple cluster join in one run, stopped while zone 5 copies and
+  resumed, a run without the flag refuses, and `remove_zone` removes a running
+  zone; on Ultra-HA, zone 3 joins, a second run changes nothing, and
+  `remove_zone` then removes zone 3 while it runs. After every removal of a
+  running zone, the zones that remain verify as a whole cluster that holds
+  every row the removed zone wrote. `full` adds refused joins on a new cluster
+  and with a database added, a join stopped after step 3 and resumed, a join
+  refused because it cannot be resumed and then reset with `remove_zone`, a
+  copy that died mid-data, tables created on every zone during and after the
+  copy (which reach every zone with AutoDDL on), a rebuilt zone the others
+  still subscribe to, refused and then joined again after `remove_zone`,
   `remove_zone` refused while another zone has not applied all of the zone's
   writes, `remove_zone` against a zone whose Postgres is stopped and then
-  again once it is back, `remove_zone` against a zone that is down, and on Ultra-HA reruns with the flag and after a switchover. `off`
-  skips the job. Under act, which runs every job on one Docker host, the
-  workflows run only the `test` job unless given `--input act_job=zone-join`,
-  which runs only the zone-join job. `tests/zone-join-scenarios.sh` runs each
-  scenario locally the same way, with `ZONE_JOIN_LEVEL` choosing the level.
-  (EE-45)
+  again once it is back, `remove_zone` against a zone that is down, and on
+  Ultra-HA reruns with the flag and after a switchover. `off` skips the job.
+  Under act, which runs every job on one Docker host, the workflows run only
+  the `test` job unless given `--input act_job=zone-join`, which runs only the
+  zone-join job. `tests/zone-join-scenarios.sh` runs each scenario locally the
+  same way, with `ZONE_JOIN_LEVEL` choosing the level. (EE-45)
 - A node added to the inventory of an Ultra-HA zone that already runs joins
   the zone when the deployment playbook runs again. Previously `setup_etcd`
   started the new node's etcd as though bootstrapping the zone from nothing,

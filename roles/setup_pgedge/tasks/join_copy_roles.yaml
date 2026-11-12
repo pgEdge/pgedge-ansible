@@ -111,7 +111,13 @@
   when: missing | length > 0
 
 # The copy logs nothing, since what it reads holds password hashes. Its errors
-# are shown here instead, with any password literal blanked out.
+# are shown here instead, with any password literal blanked out. psql shortens
+# a long statement it quotes as context with "...", which can cut a literal
+# before its closing quote, so a PASSWORD literal is blanked to its closing
+# quote or the end of the line, and anything shaped like a SCRAM or MD5 hash
+# is blanked wherever it appears. The patterns use single backslashes: in a
+# {{ }} expression inside a folded block, a doubled one reaches the regex
+# still doubled, and then matches nothing.
 
 - name: "Step 1: ensure the roles were copied"
   assert:
@@ -123,7 +129,9 @@
       {{ pgedge_join_zone }}:
       {{ (pgedge_join_roles_copy.stdout | default('')
           ~ ' ' ~ pgedge_join_roles_copy.stderr | default(''))
-         | regex_replace("(?i)password\\s+'[^']*'", "PASSWORD '***'")
+         | regex_replace("(?im)password\s+'[^'\n]*'?", "PASSWORD '***'")
+         | regex_replace("SCRAM-SHA-256[$][^\s']*", "***")
+         | regex_replace("(?i)md5[0-9a-f]{32}", "***")
          | trim | truncate(2000) }}
     quiet: true
 

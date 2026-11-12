@@ -4,8 +4,12 @@
 #
 # Inputs, set by whoever includes this file:
 #
-#   remove_zone     The number of the zone being removed (R below).
-#   remove_zone_db  The database to clear it from.
+#   remove_zone              The number of the zone being removed (R below).
+#   remove_zone_db           The database to clear it from.
+#   remove_zone_detach_host  Optional: R's primary, when R can be reached and
+#                            has Spock in the database. R's own subscriptions
+#                            there are then dropped as well, between steps 1
+#                            and 2.
 #
 # Every other zone's primary has to be known: in an HA cluster, each zone's
 # nodes must have run role_config's zone_primary tasks, which setup_pgedge and
@@ -22,8 +26,9 @@
 #       remove_zone: "{{ joining_zone }}"
 #       remove_zone_db: "{{ database }}"
 #
-# Nothing here connects to R itself, so it does the same whether R is running,
-# stopped or gone. On each other zone Z it removes, in this order:
+# Apart from that one step, nothing here connects to R itself, so it does the
+# same whether R is running, stopped or gone. On each other zone Z it removes,
+# in this order:
 #
 # 1. Every subscription on Z whose provider is R's node, edge<R>. Spock's
 #    sub_drop stops the subscription's apply worker, drops the subscription and
@@ -32,6 +37,21 @@
 #    the subscription's slot on R. That attempt connects to R, waiting up to
 #    Spock's 30-second connect timeout, and only warns when R cannot be
 #    reached: a slot left behind on R goes with R's databases when R is reset.
+#
+#    Then, given remove_zone_detach_host, R drops every subscription it has in
+#    the database. Each reads from a slot on another zone, and that slot stays
+#    in use for as long as the subscription's apply worker is connected;
+#    sub_drop stops the worker, so nothing of R's reads from the other zones
+#    any more and step 2 can drop their slots. sub_drop also tries to drop
+#    each slot itself, and only warns when Z's walsender has not let go yet.
+#    R's own node is not dropped: its database goes altogether once the other
+#    zones have let go of it (reset_zone.yaml).
+#
+#    The other zones go first so that a run stopped between the two leaves
+#    them no longer subscribing to R, which remove_zone's preflight takes for
+#    a database already detached. The other way round, R would subscribe to
+#    no one while the others still subscribed to it, which is how a zone still
+#    joining from R looks, and the preflight would refuse to go on.
 #
 # 2. The slot on Z that served R's subscription from Z, sub_nR_nZ. Spock names
 #    it from the database, the provider's node name and the subscription name,
@@ -143,6 +163,24 @@
   run_once: true
   become: true
   become_user: postgres
+
+- name: Drop zone {{ remove_zone }}'s own subscriptions in {{ remove_zone_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ remove_zone_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT s.sub_name::text AS sub_name, spock.sub_drop(s.sub_name)
+        FROM spock.subscription s
+  register: remove_zone_rz_own
+  changed_when: remove_zone_rz_own.rowcount > 0
+  # Ansible works out the delegated host before it evaluates when, and fails
+  # on an empty one even for a task that is then skipped.
+  delegate_to: "{{ remove_zone_detach_host | default('', true) or inventory_hostname }}"
+  run_once: true
+  become: true
+  become_user: postgres
+  when: remove_zone_detach_host | default('') | length > 0
 
 - name: Wait for the slots that served zone {{ remove_zone }} to fall idle
   community.postgresql.postgresql_query:

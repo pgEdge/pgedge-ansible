@@ -283,10 +283,11 @@
       {{ pgedge_cluster.nodeless | join(', ') }}
       {{ 'is' if pgedge_cluster.nodeless | length == 1 else 'are' }} in
       db_names but not yet in Spock on any zone. Adding a database and joining
-      a zone are separate changes, made in separate runs. Run this first
-      without pgedge_join_zones to add the database to the existing zones, then
-      again with it; or leave the database out of db_names until the join is
-      done.
+      a zone are separate changes, made in separate runs. Either leave the
+      database out of db_names until the join is done, or add it to the
+      existing zones first: take the joining zones' hosts out of the inventory,
+      run this without pgedge_join_zones, then put them back and run the join
+      again.
   run_once: true
   when:
   - pgedge_join_zones_given | length > 0

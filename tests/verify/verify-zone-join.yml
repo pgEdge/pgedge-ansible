@@ -27,6 +27,12 @@
 #     so the joined zone sends on what its source sends,
 #   - and in an HA cluster, every node of every zone streams from its zone's
 #     primary.
+#
+# After remove_zone, pass -e zone_join_verify_without=<N> to check the zones
+# that remain as the whole cluster: zone N's hosts stay in the inventory but
+# are left out of every check, and every other zone must have dropped it. The
+# rows the trickle wrote on zone N before it stopped still have to be on every
+# other zone, since remove_zone waits for them to arrive.
 
 # What the trickle writer recorded, from the client it ran on. A writer still
 # running would go on adding rows while the zones are compared.
@@ -96,12 +102,15 @@
     # How long a zone may take to apply another's sync event, in seconds. The
     # trickle has stopped, so this only covers a backlog left by a join.
     sync_timeout: 300
-    is_primary: "{{ inventory_hostname == zone_primary }}"
-    zones: "{{ zone_list | map('int') | sort }}"
+    without: "{{ zone_join_verify_without | default(0) | int }}"
+    checked: "{{ zone | int != without | int }}"
+    is_primary: "{{ checked | bool and inventory_hostname == zone_primary }}"
+    zones: "{{ zone_list | map('int') | reject('eq', without | int) | sort }}"
     other_zones: "{{ zones | reject('eq', zone | int) | list }}"
     zone_primaries: >-
       {% set found = {} %}
-      {%- for host in groups['pgedge'] %}
+      {%- for host in groups['pgedge']
+              if hostvars[host].zone | int != without | int %}
       {%-   set _ = found.update({hostvars[host].zone | int:
                                   hostvars[host].zone_primary}) %}
       {%- endfor %}{{ found }}
@@ -126,6 +135,7 @@
       name: role_config
       tasks_from: zone_primary
       public: true
+    when: checked | bool
 
   - name: Read this zone's own Spock node
     become_user: postgres
@@ -473,7 +483,9 @@
         | selectattr('role', 'ne', 'leader')
         | rejectattr('state', 'eq', 'streaming') | list | length == 0
     failed_when: false
-    when: is_ha_cluster | bool
+    when:
+    - is_ha_cluster | bool
+    - checked | bool
 
   - name: Assert every node of the zone streams from its primary
     vars:
@@ -490,4 +502,6 @@
         {{ zone }}, whose nodes are {{ nodes_in_zone }} and whose primary is
         {{ zone_primary }}. Every node should be there, the primary leading
         and the rest streaming from it.
-    when: is_ha_cluster | bool
+    when:
+    - is_ha_cluster | bool
+    - checked | bool
