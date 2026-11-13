@@ -82,6 +82,11 @@ rerun the same playbook against the whole inventory.
   in `docs/release_notes/unreleased.md` (full), tagged with its ticket
   (`EE-NN`) or PR (`#NN`). Change the role and configuration docs with the
   code.
+- Both Unreleased sections always exist, with empty `Added`, `Changed` and
+  `Fixed` headings after a release. A change adds its entries under those
+  headings and never creates, renames or removes the section or the page.
+  Only a release does that: it renames `unreleased.md` to `vX.Y.Z.md`, and
+  recreates an empty `unreleased.md` and Changelog section in the same PR.
 - The docs voice is plain declarative sentences with no marketing. Run
   `mkdocs build --strict` after changing docs.
 - `make install` builds the collection and installs it into
