@@ -98,35 +98,37 @@
     when: pgedge_client_key | length == 0
     no_log: true
 
-  # The same test the manager's status command makes: on RHEL a stanza with
-  # enabled=1, on Debian no "Enabled: no" line. pgedge-release ships the
-  # repositories disabled, so this also catches a package upgrade that put its
-  # disabled definition back. grep exits 1 when nothing matches; 2 means the
-  # file is missing or unreadable, which pgedge-release being installed rules
-  # out, so that fails.
-  - name: Look for the line that marks the pgEdge repositories enabled or disabled
+  # Looks for any repository the manager enables that is still disabled: on
+  # RHEL every stanza but the srpm one, which the manager leaves off; on Debian
+  # the single source. This is stricter than the manager's own status command,
+  # which on RHEL counts the repositories enabled when any stanza is, so a
+  # [pgedge] stanza disabled by hand beside an enabled [pgedge-noarch] would
+  # pass it. pgedge-release ships every stanza disabled, so this also catches
+  # a package upgrade that put its disabled definition back. The command exits
+  # 0 when it finds one, 1 when it does not, and 2 when the file is missing or
+  # unreadable, which pgedge-release being installed rules out, so that fails.
+  - name: Look for a pgEdge repository that is still disabled
     command: >-
-      grep -q {{ "'^enabled=1'" if ansible_os_family == 'RedHat' else "'^Enabled: no$'" }}
+      {{ "awk '/^[[]/ { s = $0 } s !~ /srpm/ && /^enabled=0/ { found = 1 } END { exit !found }'"
+         if ansible_os_family == 'RedHat' else "grep -q '^Enabled: no$'" }}
       {{ pgedge_repo_file }}
-    register: pgedge_repo_grep
+    register: pgedge_repo_disabled
     changed_when: false
-    failed_when: pgedge_repo_grep.rc > 1
+    failed_when: pgedge_repo_disabled.rc > 1
     check_mode: false
 
   # Running the manager rewrites the repository definition and refreshes the
   # package cache, so it runs only when there is something for it to do: a
-  # certificate or key that changed, or repositories it has not enabled yet.
-  # A second run against a host it has set up then changes nothing.
+  # certificate or key that changed, or a repository it has not enabled, which
+  # its install command enables along with all the others. A second run
+  # against a host it has set up then changes nothing.
   - name: Validate the certificate and enable the pgEdge repositories
     command: >-
       pgedge-subscription-manager install
       {{ pgedge_cert_dir }}/client.crt {{ pgedge_cert_dir }}/client.key --force
     register: pgedge_sm
-    vars:
-      pgedge_repos_enabled: >-
-        {{ (pgedge_repo_grep.rc == 0) == (ansible_os_family == 'RedHat') }}
     when: >-
-      not (pgedge_repos_enabled | bool)
+      pgedge_repo_disabled.rc == 0
       or pgedge_cert_inline is changed or pgedge_cert_file is changed
       or pgedge_key_inline is changed or pgedge_key_file is changed
 

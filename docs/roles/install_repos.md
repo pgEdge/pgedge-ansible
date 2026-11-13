@@ -94,8 +94,9 @@ and `/etc/pgedge` on Debian-based systems, then validated by
 key belongs to `root` with mode `0600` on RHEL-based systems, and to `_apt`
 with mode `0400` on Debian-based systems, where apt reads it as that user;
 these are the owner and mode the manager itself gives it. The role runs the
-manager only when the certificate or key changed or the repositories are not
-yet enabled, so a later run that changes neither reports nothing changed.
+manager only when the certificate or key changed or any repository the manager
+enables is still disabled, so a later run that changes neither reports nothing
+changed.
 
 ### Using Your Own Repository
 
