@@ -1,0 +1,521 @@
+---
+
+# Seeding a joining zone: giving it the source zone's roles, a Spock node, the
+# source's schema and data, and the source's replication sets. These are the
+# steps of a join that depend on how the zone gets its data, kept apart from
+# the ones that account for the other zones' writes, which do not:
+#
+#   pgedge_join_seed_step  roles    step 1, once per zone
+#                          node     step 2
+#                          copy     steps 5 and 6
+#                          repsets  step 7a
+#
+# Today the data comes from a logical copy: a Spock subscription to the source
+# that copies its schema and rows and then goes on replicating from it. A
+# later method -- a physical clone of the source on the same major release,
+# for instance -- would provide these same steps in a file of its own, chosen
+# where this one is included, and leave the rest of the join as it is.
+#
+# Runs on the joining zone's primary, with pgedge_join_zone and pgedge_join_db
+# set by the includer.
+
+- name: "Step 1: copy the roles"
+  include_tasks: join_copy_roles.yaml
+  when: pgedge_join_seed_step == 'roles'
+
+# Step 2: the joining zone's own node, as an ordinary run creates it in a
+# database that holds no data. Done when the node exists.
+
+- name: "Step 2: create zone {{ pgedge_join_zone }}'s Spock node in {{ pgedge_join_db }}"
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ pgedge_join_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: |-
+      SELECT spock.node_create(node_name := %(node_name)s, dsn := %(dsn)s)
+       WHERE NOT EXISTS (SELECT FROM spock.node WHERE node_name = %(node_name)s)
+    named_args:
+      node_name: "edge{{ pgedge_join_zone }}"
+      dsn: "{{ pgedge_zone_dsn }}"
+  vars:
+    pgedge_dsn_zone: "{{ pgedge_join_zone }}"
+    pgedge_dsn_db: "{{ pgedge_join_db }}"
+  register: pgedge_join_node
+  changed_when: pgedge_join_node.rowcount > 0
+  become: true
+  become_user: postgres
+  when: pgedge_join_seed_step == 'node'
+
+# Steps 5 and 6: the copy. By now each other member has a slot keeping every
+# write it makes from here on, and the source has applied every write those
+# members made before their slots began (steps 3 and 4). So the snapshot the
+# copy takes on the source holds everything the slots do not.
+
+- name: "Steps 5 and 6: copy zone {{ pgedge_join_source }} into zone {{ pgedge_join_zone }}"
+  when: pgedge_join_seed_step == 'copy'
+  vars:
+    copy_sub: "sub_n{{ pgedge_join_zone }}_n{{ pgedge_join_source }}"
+  block:
+  - include_tasks: join_read.yaml
+
+  # The copy subscription's slot on the source is created by the copy itself,
+  # and Spock's copy fails if one by that name is already there. A slot by
+  # that name without the subscription can only be left from a copy that was
+  # removed by hand; nothing else reads it.
+
+  - name: "Step 5: drop a stale copy slot on zone {{ pgedge_join_source }}"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT slot_name::text AS slot_name,
+               pg_drop_replication_slot(slot_name)
+          FROM pg_replication_slots
+         WHERE slot_name = %(slot)s AND NOT active
+      named_args:
+        slot: "{{ pgedge_join_slots[pgedge_join_source | string] }}"
+    register: pgedge_join_stale_copy_slot
+    changed_when: pgedge_join_stale_copy_slot.rowcount > 0
+    delegate_to: "{{ pgedge_zone_hosts[pgedge_join_source | string] }}"
+    become: true
+    become_user: postgres
+    when: copy_sub not in pgedge_join_subs
+
+  # Where each other member's writes stand in the copy. Spock's copy records,
+  # in this zone's spock.progress, how far the source had applied each other
+  # member when it took its snapshot, and step 7 starts each member's slot
+  # from there. Spock 5.0 reads that from the source's spock.progress table,
+  # which the source's apply workers write at most once a second, so it can
+  # trail the snapshot by the last second of writes. Those writes would then
+  # arrive twice: once in the copy, and again from the slot. (Spock's later
+  # releases read the exact position instead, from
+  # pg_replication_origin_status, while the source's apply workers are paused
+  # for the snapshot.)
+  #
+  # So the join does here what those releases do. It pauses the source's apply
+  # workers with Spock's own spock.pause_apply_workers(), reads the exact
+  # positions, and only then starts the copy. The copy pauses the workers again
+  # for its snapshot and resumes them after it, so nothing from the other
+  # members is applied on the source between the reading and the snapshot.
+  # The positions are kept in this zone's replication origins for its disabled
+  # subscriptions from those members, which are durable and which nothing else
+  # moves until step 7 does, and step 7 takes the later of them and Spock's
+  # own record.
+  #
+  # Every position read this way is one the snapshot already contains: if the
+  # pause cannot be had, or the workers resume early (Spock lets each go after
+  # spock.pause_timeout), the reading is simply from a little before the
+  # snapshot. So the worst case is Spock's own behaviour, never a skipped
+  # write. Only done when the copy has not started yet; once it has, the
+  # positions were recorded by the run that started it.
+
+  - name: "Step 5: pause zone {{ pgedge_join_source }}'s apply workers for the copy's snapshot"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: SELECT spock.pause_apply_workers()
+    register: pgedge_join_paused
+    failed_when: false
+    changed_when: false
+    delegate_to: "{{ pgedge_zone_hosts[pgedge_join_source | string] }}"
+    become: true
+    become_user: postgres
+    when:
+    - copy_sub not in pgedge_join_subs
+    - pgedge_join_others | length > 0
+
+  # The pause raises an error when the workers do not all reach a point
+  # between transactions within spock.pause_timeout. The join goes on without
+  # it, as described above, but the operator should know why the copy may
+  # bring conflicts.
+
+  - name: "Step 5: report that zone {{ pgedge_join_source }}'s apply workers could not be paused"
+    debug:
+      msg: >-
+        Zone {{ pgedge_join_source }}'s apply workers could not be paused in
+        {{ pgedge_join_db }} before the copy{{ why }}. The join goes on. Writes zone {{ pgedge_join_source }} applied from
+        the other zones just before the copy's snapshot may reach zone
+        {{ pgedge_join_zone }} twice, in the copy and again by replication.
+        On a table with a primary key or unique index, Spock resolves the
+        second as a conflict, such as insert_exists, and logs it in
+        spock.resolutions on zone {{ pgedge_join_zone }}. On a table with
+        neither, it becomes an extra row there: check such tables for
+        duplicate rows after the join.
+    vars:
+      why: >-
+        {{ (': ' ~ pgedge_join_paused.msg | trim)
+           if pgedge_join_paused.msg | default('') | trim else '' }}
+    when:
+    - pgedge_join_paused is not skipped
+    - pgedge_join_paused.query_result is not defined
+
+  - name: "Step 5: read how far zone {{ pgedge_join_source }} has applied each other member"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT coalesce(json_object_agg(substr(n.node_name, 5),
+                                        ros.remote_lsn::text), '{}'::json)
+               AS applied
+          FROM spock.subscription s
+          JOIN spock.node n ON n.node_id = s.sub_origin
+          JOIN pg_replication_origin o ON o.roname = s.sub_slot_name
+          JOIN pg_replication_origin_status ros ON ros.local_id = o.roident
+         WHERE n.node_name::text IN (
+                 SELECT 'edge' || json_array_elements_text(%(others)s::json))
+      named_args:
+        others: "{{ pgedge_join_others | map('string') | list | to_json }}"
+    register: pgedge_join_source_applied
+    changed_when: false
+    delegate_to: "{{ pgedge_zone_hosts[pgedge_join_source | string] }}"
+    become: true
+    become_user: postgres
+    when:
+    - copy_sub not in pgedge_join_subs
+    - pgedge_join_others | length > 0
+
+  # Recorded before the copy starts, so that a run stopped at any point after
+  # this already has the positions. The rerun finds the copy under way and
+  # reads nothing new, so a record made after starting the copy would be lost
+  # with it. A run stopped before the copy starts reads again on the rerun,
+  # from later positions, which only ever move the record forward.
+  #
+  # The positions go in the origins Spock created with those subscriptions in
+  # step 3. One that something has removed since is created again first, as
+  # step 7 would, so that the record can be kept.
+
+  - name: "Step 5: ensure zone {{ pgedge_join_zone }} has an origin for each other member"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT pg_replication_origin_create(%(slot)s)
+         WHERE NOT EXISTS (SELECT FROM pg_replication_origin
+                            WHERE roname = %(slot)s)
+      named_args:
+        slot: "{{ pgedge_join_slots[item.key] }}"
+    loop: >-
+      {{ ((pgedge_join_source_applied.query_result | default([{}]))[0].applied
+          | default({})) | dict2items }}
+    loop_control:
+      label: "zone {{ item.key }}"
+    register: pgedge_join_origin_ensured
+    changed_when: pgedge_join_origin_ensured.rowcount > 0
+    become: true
+    become_user: postgres
+    when:
+    - copy_sub not in pgedge_join_subs
+    - pgedge_join_others | length > 0
+
+  - name: "Step 5: record on zone {{ pgedge_join_zone }} how far its copy will have each other member"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT pg_replication_origin_advance(%(slot)s, %(lsn)s::pg_lsn)
+         WHERE coalesce((SELECT pg_replication_origin_progress(roname, false)
+                           FROM pg_replication_origin
+                          WHERE roname = %(slot)s),
+                        '0/0') < %(lsn)s::pg_lsn
+      named_args:
+        slot: "{{ pgedge_join_slots[item.key] }}"
+        lsn: "{{ item.value }}"
+    loop: >-
+      {{ ((pgedge_join_source_applied.query_result | default([{}]))[0].applied
+          | default({})) | dict2items }}
+    loop_control:
+      label: "zone {{ item.key }} at {{ item.value }}"
+    register: pgedge_join_recorded
+    changed_when: pgedge_join_recorded.rowcount > 0
+    become: true
+    become_user: postgres
+    when:
+    - copy_sub not in pgedge_join_subs
+    - pgedge_join_others | length > 0
+
+  # Spock's own copy: the structure from pg_dump run by this server against
+  # the source, then every table's rows, all from one snapshot of the source.
+  # It then carries on as this zone's subscription from the source. Recognised
+  # by its provider as well as its name, as the mesh's subscriptions are.
+
+  - name: "Step 5: start zone {{ pgedge_join_zone }}'s copy of zone {{ pgedge_join_source }}"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: |-
+        SELECT spock.sub_create(
+                 subscription_name := %(sub_name)s,
+                 provider_dsn := %(dsn)s,
+                 synchronize_structure := true,
+                 synchronize_data := true
+               )
+         WHERE NOT EXISTS (
+                 SELECT FROM spock.subscription s
+                   JOIN spock.node n ON n.node_id = s.sub_origin
+                  WHERE s.sub_name = %(sub_name)s
+                     OR n.node_name = %(provider)s
+               )
+      named_args:
+        sub_name: "{{ copy_sub }}"
+        provider: "edge{{ pgedge_join_source }}"
+        dsn: "{{ pgedge_zone_dsn }}"
+    vars:
+      pgedge_dsn_zone: "{{ pgedge_join_source }}"
+      pgedge_dsn_db: "{{ pgedge_join_db }}"
+    register: pgedge_join_copy
+    changed_when: pgedge_join_copy.rowcount > 0
+    become: true
+    become_user: postgres
+
+  # The same wait a recovery's seed copy uses, with the same limits. It ends at
+  # once if the copy has already finished, and fails at once if the copy can
+  # never finish (join_database.yaml's rescue tells those failures apart).
+
+  - name: "Step 5: wait for zone {{ pgedge_join_zone }} to finish copying zone {{ pgedge_join_source }}"
+    include_tasks: wait_for_copy.yaml
+    vars:
+      pgedge_copy_source: "zone {{ pgedge_join_source }}"
+      pgedge_copy_waits:
+      - db: "{{ pgedge_join_db }}"
+        sub: "{{ copy_sub }}"
+
+  # Step 6: whatever the source committed while the copy was being made
+  # reaches the joining zone through the same subscription, after it. A
+  # bookmark set on the source now and applied here shows that it has.
+
+  - name: "Step 6: wait for zone {{ pgedge_join_zone }} to catch up with zone {{ pgedge_join_source }}"
+    include_tasks: join_event.yaml
+    vars:
+      pgedge_event_zone: "{{ pgedge_join_source }}"
+      pgedge_event_waiters: ["{{ pgedge_join_zone }}"]
+      pgedge_event_why: "step 6, zone {{ pgedge_join_zone }} catches up with its source in {{ pgedge_join_db }}"
+
+# Step 7a: replication sets. Spock copies no replication set membership. On
+# the joining zone it comes from AutoDDL, which puts each table the structure
+# copy creates into a set by its own rule (a primary key or replica identity
+# into default, anything else into default_insert_only), not by what the
+# source has. A set the source added, a table moved between sets, a column list
+# or row filter would all be missing, and the joining zone would send on less,
+# or differently, than every other zone. So the source's sets and their tables
+# and sequences are added wherever the joining zone lacks them, the way Spock's
+# later add-node releases do (sync_repsets_from_source). Unlike those, nothing
+# is removed here: what the joining zone has beyond the source is reported,
+# not undone.
+#
+# Each statement selects only what is missing, so a rerun adds nothing. Done
+# when the two zones' sets match; a difference left afterwards, such as a
+# table the source added to a set while the join ran, is reported but does not
+# stop a join that is otherwise complete.
+
+- name: "Step 7a: mirror zone {{ pgedge_join_source }}'s replication sets onto zone {{ pgedge_join_zone }}"
+  when: pgedge_join_seed_step == 'repsets'
+  vars:
+    # Every replication set entry of the local node, as one line of text each,
+    # so two zones can be compared directly: the set with its actions, each
+    # table with its column list and row filter, and each sequence.
+    entries_sql: >-
+      SELECT coalesce(json_agg(e ORDER BY e), '[]'::json) FROM (
+        SELECT rs.set_name || ' [' || concat_ws(',',
+                 CASE WHEN rs.replicate_insert THEN 'insert' END,
+                 CASE WHEN rs.replicate_update THEN 'update' END,
+                 CASE WHEN rs.replicate_delete THEN 'delete' END,
+                 CASE WHEN rs.replicate_truncate THEN 'truncate' END) || ']'
+          FROM spock.replication_set rs
+          JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+        UNION ALL
+        SELECT rs.set_name || ' ' || quote_ident(n.nspname) || '.'
+               || quote_ident(c.relname)
+               || coalesce(' cols=' || rst.set_att_list::text, '')
+               || coalesce(' filter=' || pg_get_expr(rst.set_row_filter,
+                                                     rst.set_reloid), '')
+          FROM spock.replication_set_table rst
+          JOIN spock.replication_set rs ON rs.set_id = rst.set_id
+          JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+          JOIN pg_class c ON c.oid = rst.set_reloid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+        UNION ALL
+        SELECT rs.set_name || ' sequence ' || quote_ident(n.nspname) || '.'
+               || quote_ident(c.relname)
+          FROM spock.replication_set_seq rss
+          JOIN spock.replication_set rs ON rs.set_id = rss.set_id
+          JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+          JOIN pg_class c ON c.oid = rss.set_seqoid
+          JOIN pg_namespace n ON n.oid = c.relnamespace) AS entries(e)
+    local_set: >-
+      SELECT FROM spock.replication_set rs
+        JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+  block:
+  - name: "Step 7a: read zone {{ pgedge_join_source }}'s replication sets"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT
+          (SELECT coalesce(json_agg(json_build_object(
+                    'set_name', rs.set_name,
+                    'ins', rs.replicate_insert, 'upd', rs.replicate_update,
+                    'del', rs.replicate_delete,
+                    'trunc', rs.replicate_truncate)), '[]'::json)
+             FROM spock.replication_set rs
+             JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id) AS sets,
+          (SELECT coalesce(json_agg(json_build_object(
+                    'set_name', rs.set_name,
+                    'rel', quote_ident(n.nspname) || '.' || quote_ident(c.relname),
+                    'cols', rst.set_att_list,
+                    'filter', pg_get_expr(rst.set_row_filter,
+                                          rst.set_reloid))), '[]'::json)
+             FROM spock.replication_set_table rst
+             JOIN spock.replication_set rs ON rs.set_id = rst.set_id
+             JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+             JOIN pg_class c ON c.oid = rst.set_reloid
+             JOIN pg_namespace n ON n.oid = c.relnamespace) AS tables,
+          (SELECT coalesce(json_agg(json_build_object(
+                    'set_name', rs.set_name,
+                    'rel', quote_ident(n.nspname) || '.'
+                           || quote_ident(c.relname))), '[]'::json)
+             FROM spock.replication_set_seq rss
+             JOIN spock.replication_set rs ON rs.set_id = rss.set_id
+             JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+             JOIN pg_class c ON c.oid = rss.set_seqoid
+             JOIN pg_namespace n ON n.oid = c.relnamespace) AS seqs,
+          ({{ entries_sql }}) AS entries
+    register: pgedge_join_source_sets
+    changed_when: false
+    delegate_to: "{{ pgedge_zone_hosts[pgedge_join_source | string] }}"
+    become: true
+    become_user: postgres
+
+  - name: "Step 7a: create the replication sets zone {{ pgedge_join_zone }} lacks"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT s.set_name::text AS set_name,
+               spock.repset_create(s.set_name, s.ins, s.upd, s.del, s.trunc)
+          FROM json_to_recordset(%(sets)s::json)
+               AS s(set_name name, ins boolean, upd boolean, del boolean,
+                    trunc boolean)
+         WHERE NOT EXISTS ({{ local_set }} WHERE rs.set_name = s.set_name)
+      named_args:
+        sets: "{{ pgedge_join_source_sets.query_result[0].sets | to_json }}"
+    register: pgedge_join_sets_created
+    changed_when: pgedge_join_sets_created.rowcount > 0
+    become: true
+    become_user: postgres
+
+  - name: "Step 7a: give zone {{ pgedge_join_zone }}'s replication sets the source's actions"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT s.set_name::text AS set_name,
+               spock.repset_alter(s.set_name, s.ins, s.upd, s.del, s.trunc)
+          FROM json_to_recordset(%(sets)s::json)
+               AS s(set_name name, ins boolean, upd boolean, del boolean,
+                    trunc boolean)
+          JOIN spock.replication_set rs ON rs.set_name = s.set_name
+          JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+         WHERE (rs.replicate_insert, rs.replicate_update, rs.replicate_delete,
+                rs.replicate_truncate)
+               IS DISTINCT FROM (s.ins, s.upd, s.del, s.trunc)
+      named_args:
+        sets: "{{ pgedge_join_source_sets.query_result[0].sets | to_json }}"
+    register: pgedge_join_sets_altered
+    changed_when: pgedge_join_sets_altered.rowcount > 0
+    become: true
+    become_user: postgres
+
+  # A table the source replicates but the copy did not bring is left for the
+  # report below: it was created on the source after the copy's snapshot, and
+  # reaches this zone by DDL replication, with AutoDDL placing it.
+
+  - name: "Step 7a: add the tables zone {{ pgedge_join_zone }}'s replication sets lack"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT t.set_name::text AS set_name, t.rel,
+               spock.repset_add_table(set_name := t.set_name,
+                                      relation := to_regclass(t.rel),
+                                      synchronize_data := false,
+                                      columns := t.cols,
+                                      row_filter := t.filter,
+                                      include_partitions := false)
+          FROM json_to_recordset(%(tables)s::json)
+               AS t(set_name name, rel text, cols text[], filter text)
+         WHERE to_regclass(t.rel) IS NOT NULL
+           AND NOT EXISTS (
+                 SELECT FROM spock.replication_set_table rst
+                   JOIN spock.replication_set rs ON rs.set_id = rst.set_id
+                   JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+                  WHERE rs.set_name = t.set_name
+                    AND rst.set_reloid = to_regclass(t.rel))
+      named_args:
+        tables: "{{ pgedge_join_source_sets.query_result[0].tables | to_json }}"
+    register: pgedge_join_tables_added
+    changed_when: pgedge_join_tables_added.rowcount > 0
+    become: true
+    become_user: postgres
+
+  - name: "Step 7a: add the sequences zone {{ pgedge_join_zone }}'s replication sets lack"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT q.set_name::text AS set_name, q.rel,
+               spock.repset_add_seq(q.set_name, to_regclass(q.rel), false)
+          FROM json_to_recordset(%(seqs)s::json) AS q(set_name name, rel text)
+         WHERE to_regclass(q.rel) IS NOT NULL
+           AND NOT EXISTS (
+                 SELECT FROM spock.replication_set_seq rss
+                   JOIN spock.replication_set rs ON rs.set_id = rss.set_id
+                   JOIN spock.local_node ln ON rs.set_nodeid = ln.node_id
+                  WHERE rs.set_name = q.set_name
+                    AND rss.set_seqoid = to_regclass(q.rel))
+      named_args:
+        seqs: "{{ pgedge_join_source_sets.query_result[0].seqs | to_json }}"
+    register: pgedge_join_seqs_added
+    changed_when: pgedge_join_seqs_added.rowcount > 0
+    become: true
+    become_user: postgres
+
+  - name: "Step 7a: read zone {{ pgedge_join_zone }}'s replication sets"
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ pgedge_join_db }}"
+      login_unix_socket: /var/run/postgresql
+      query: "SELECT ({{ entries_sql }}) AS entries"
+    register: pgedge_join_own_sets
+    changed_when: false
+    become: true
+    become_user: postgres
+
+  - name: "Step 7a: report replication sets that still differ from zone {{ pgedge_join_source }}"
+    debug:
+      msg: >-
+        Zone {{ pgedge_join_zone }}'s replication sets in {{ pgedge_join_db }}
+        differ from zone {{ pgedge_join_source }}'s.
+        {% if source_only %}Only on zone {{ pgedge_join_source }}:
+        {{ source_only | join('; ') }}.{% endif %}
+        {% if own_only %}Only on zone {{ pgedge_join_zone }}:
+        {{ own_only | join('; ') }}.{% endif %}
+        The join goes on. If the source changed its sets while the join ran,
+        make the same change on zone {{ pgedge_join_zone }} with
+        spock.repset_add_table() or spock.repset_remove_table().
+    vars:
+      source_entries: "{{ pgedge_join_source_sets.query_result[0].entries }}"
+      own_entries: "{{ pgedge_join_own_sets.query_result[0].entries }}"
+      source_only: "{{ source_entries | reject('in', own_entries) | list }}"
+      own_only: "{{ own_entries | reject('in', source_entries) | list }}"
+    when: source_only | length > 0 or own_only | length > 0

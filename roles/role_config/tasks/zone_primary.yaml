@@ -32,6 +32,16 @@
 # first, so Patroni starts from a stopped data directory rather than finding
 # one it does not own.
 #
+# A caller that must change nothing, such as remove_zone's preflight, sets
+# zone_primary_read_only. Patroni is then never started, and a built zone with
+# no running leader, whether Patroni is stopped or runs without electing one,
+# records an empty zone_primary rather than stopping the run:
+# its primary cannot be known without starting something, and the caller
+# decides what an unknown primary means. Such a caller only reads, so the
+# primary need not be one of the play's hosts either: a follower's Patroni can
+# still name a leader whose host dropped out of the play, as when it was
+# unreachable at fact gathering, and the caller decides what that means too.
+#
 # patronictl shows Host as host:port once any member runs on a port other than
 # 5432 (or two members share a host), so the port is stripped before the name
 # is compared with the inventory. pipefail keeps a patronictl failure from
@@ -83,6 +93,7 @@
   - zone_primary_stopped | bool
   - zone_primary_configured.stat.exists
   - zone_primary_initialized.stat.exists
+  - not zone_primary_read_only | default(false) | bool
 
 - name: Start Patroni so the zone's members can elect a leader
   systemd_service:
@@ -96,6 +107,7 @@
   - zone_primary_stopped | bool
   - zone_primary_configured.stat.exists
   - zone_primary_initialized.stat.exists
+  - not zone_primary_read_only | default(false) | bool
 
 - name: Ask Patroni which node leads this zone
   shell: |-
@@ -119,12 +131,19 @@
   - zone_primary_patroni.status.ActiveState | default('') == 'active'
     or zone_primary_patroni_start is changed
 
+# A read-only caller also accepts no leader at all: a zone whose Patroni runs
+# but cannot elect one has no primary to name, and the caller decides what an
+# unknown primary means, as for a zone whose Patroni does not run. Patroni
+# failing to answer, or naming more than one leader or one outside the zone,
+# still stops the run.
+
 - name: Ensure Patroni reported exactly one leader among this zone's nodes
   assert:
     that:
     - zone_primary_leader.rc == 0
-    - zone_primary_leader.stdout_lines | length == 1
+    - zone_primary_leader.stdout_lines | length == 1 or none_allowed
     - zone_primary_leader.stdout | trim in nodes_in_zone
+      or (none_allowed and zone_primary_leader.stdout_lines | length == 0)
     fail_msg: >-
       Patroni cluster {{ patroni_scope }} should have one leader among
       {{ nodes_in_zone | join(', ') }}, but patronictl list reported
@@ -134,6 +153,8 @@
           if zone_primary_leader.stderr | default('') | trim else '' }}.
       Nothing can be written to the zone until it has a leader; see
       'patronictl list {{ patroni_scope }}' on {{ inventory_hostname }}.
+  vars:
+    none_allowed: "{{ zone_primary_read_only | default(false) | bool }}"
   when: zone_primary_leader is not skipped
 
 - name: Gather the leaders this zone's nodes reported
@@ -175,11 +196,14 @@
   when:
   - is_ha_cluster | bool
   - zone_primary_built | bool
+  - not zone_primary_read_only | default(false) | bool
 
 - name: Record which node runs this zone's primary
   set_fact:
     zone_primary: >-
       {{ zone_primary_leaders | first if zone_primary_leaders
+         else '' if is_ha_cluster | bool and zone_primary_built | bool
+                    and zone_primary_read_only | default(false) | bool
          else first_node_in_zone }}
 
 - name: Ensure this run includes the node that runs this zone's primary
@@ -191,3 +215,4 @@
       play's hosts, whether left out with --limit or failed earlier in the run.
       Everything written to the zone is written there. Run this again with
       {{ zone_primary }} included.
+  when: not zone_primary_read_only | default(false) | bool

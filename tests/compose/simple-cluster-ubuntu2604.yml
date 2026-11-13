@@ -38,6 +38,25 @@ services:
       pgedge-test:
         ipv4_address: 192.168.6.12
 
+  # Two zones the deployment leaves out. They join the running cluster
+  # afterwards, with tests/inventories/simple-zone-join.yml layered on, to check
+  # that a zone added to a cluster holding data copies it and misses no write
+  # made while it joins. Started with the rest so that adding them to the
+  # inventory is all a join test has to do.
+  n4:
+    <<: *common
+    hostname: n4
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.13
+
+  n5:
+    <<: *common
+    hostname: n5
+    networks:
+      pgedge-test:
+        ipv4_address: 192.168.6.14
+
   # A host in no deployment group, named by no pg_hba rule: the only vantage
   # point from which the access gates are observable. Its address is well clear
   # of the node range, and of 192.168.6.20 where the Consul overlay sits.

@@ -59,6 +59,7 @@ nav:
       - Tutorial - Deploying an Ultra-HA Cluster: ultra_ha.md
       - Customizing a Playbook: configure_playbook.md
   - Using the pgEdge Ansible Collection: usage.md
+  - Adding a Zone to a Running Cluster: add_zone.md
   - Recovering a Cluster from Backup: recovery.md
   - Configuration Reference:
       - Configuration Overview: configuration.md
@@ -92,6 +93,7 @@ nav:
       - setup_backrest: roles/setup_backrest.md
       - finalize_backrest: roles/finalize_backrest.md
       - wipe_cluster: roles/wipe_cluster.md
+      - remove_zone: roles/remove_zone.md
       - recover_postgres: roles/recover_postgres.md
       - install_lakekeeper: roles/install_lakekeeper.md
       - setup_lakekeeper: roles/setup_lakekeeper.md

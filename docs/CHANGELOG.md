@@ -12,6 +12,29 @@ in full.
 
 ### Added
 
+- A zone can be added to a cluster that already holds data, on simple and
+  Ultra-HA clusters, by listing its hosts in the inventory and running the
+  deployment playbook with `-e pgedge_join_zones=<zone>`. `setup_pgedge`
+  copies every database in `db_names` into the zone from an existing one
+  while the other zones keep taking writes, accounts for every write made
+  during the copy, and then completes the subscription mesh. A join that
+  stops partway resumes when the same command is run again, even after its
+  last subscription exists, because the zone records an unfinished join on
+  each database until it is done; one that cannot resume releases what it
+  held on the other zones. New
+  `pgedge_join_wait_minutes` limits the join's waits for bookmarks. (EE-45)
+- New `remove_zone` role and `sample-playbooks/remove-zone` playbook detach
+  one zone from a running cluster: every other zone drops its subscriptions,
+  replication slots, node and progress for the zone, and the zone's own
+  subscriptions and databases are dropped when it can be reached, once
+  every zone subscribing to it has applied all its writes. (EE-45)
+- The end-to-end tests can add zones to a deployed cluster that holds data,
+  under a steady trickle of writes on every existing zone, and verify that
+  every zone ends with the same rows and no replication conflicts. A new
+  `zone-join` job in the Simple Cluster and Ultra-HA workflows runs beside the
+  existing one. Its `zone_join` input is `basic` by default, covering joins,
+  an interrupted and resumed join, the gate and `remove_zone`, and `full`
+  adds every refused join, interruption and AutoDDL during a join. (EE-45)
 - A node added to the inventory of an Ultra-HA zone that already runs joins
   the zone when the deployment playbook runs again. Where the collection runs
   etcd, `setup_etcd` adds the node to the zone's etcd cluster as a learner,
@@ -22,7 +45,10 @@ in full.
   that node is not in the play or the zone's nodes disagree on it. A built
   zone whose Patroni is stopped everywhere has Patroni started so its members
   elect a leader, rather than taking the first node as primary.
-  `finalize_backrest` uses it in place of its own lookup. (EE-44)
+  `finalize_backrest` uses it in place of its own lookup. (EE-44) With
+  `zone_primary_read_only`, it never starts Patroni and leaves the primary of
+  such a zone, or of one whose Patroni runs without a leader, empty, for
+  `remove_zone`. (EE-45)
 - New `sizing_floor` task file in `role_config` reads back the worker and
   slot pool sizes each zone was last configured with, and the calculated
   sizes never go below them. (EE-44)
@@ -32,6 +58,20 @@ in full.
   a name listed there and in `db_names` both. (EE-44)
 - `init_server` refuses an inventory whose pgEdge nodes list different
   databases in `db_names` or `unmanaged_db_names`. (EE-44)
+
+### Changed
+
+- `setup_pgedge` reads every zone's Spock state before it creates anything,
+  and stops a run that would subscribe a zone to a cluster that already holds
+  data without copying that data, naming `pgedge_join_zones`. It also stops a
+  run whose zones are not one fully subscribed cluster, and recognizes an
+  existing subscription by the zone it comes from as well as by its name.
+  (EE-45)
+- `pgedge_seed_zone` is documented as recovery-only, and a run refuses it
+  together with `pgedge_join_zones`. (EE-45)
+- The playbook configuration guide states that running the playbooks with
+  `--limit` is not supported: every run should cover the whole inventory.
+  (EE-45)
 
 ### Fixed
 

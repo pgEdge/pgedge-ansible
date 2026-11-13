@@ -11,6 +11,15 @@ runs, including on an Ultra-HA cluster whose leaders Patroni has moved off each
 zone's first node. Removing a database from the list no longer shrinks the
 worker and slot pools the cluster may still need.
 
+A cluster that already holds data can now grow by a zone while it runs, on
+simple and Ultra-HA clusters alike. The new zone's hosts go in the inventory,
+and the deployment playbook runs with `-e pgedge_join_zones=<zone>`. The zone
+copies every database from an existing zone and receives every write the other
+zones make during the copy, with nothing lost or applied twice, while those
+zones keep taking writes. Before the copy, the run may restart the existing
+zones one node at a time to enlarge their worker and replication pools. A new
+`remove_zone` role takes a zone out of the cluster again. See [Adding a Zone to a Running Cluster](../add_zone.md).
+
 A zone in an Ultra-HA cluster can now grow while it runs. A node added to the
 inventory with an existing zone's number joins that zone as another replica the
 next time the deployment playbook runs.
@@ -25,14 +34,129 @@ Playbooks and inventories written for v2.1.0 need no changes, unless they set
 `db_names` to different lists on different pgEdge nodes. `init_server` now
 refuses that; set `db_names` once, on the `pgedge` group.
 
-A run whose `--limit` leaves out the node running a zone's primary now stops
-rather than skipping the writes to that zone. Include each zone's primary in
-the limit.
+Running the playbooks with `--limit` is not supported, and the
+[Execution Strategy](../configure_playbook.md#execution-strategy) section now
+says so. Every run should cover the whole inventory. A run whose `--limit`
+leaves out a zone's primary now stops rather than skipping the writes to that
+zone, and `setup_pgedge` stops unless it can read the Spock state of every
+zone. These checks are safeguards, not a supported way to limit a run.
+
+A run now stops, before it creates anything in Spock, when the inventory lists
+a zone that is not part of a cluster that already holds data. Previously such
+a run subscribed the zone without copying the data, and the zones disagreed
+from then on. Pass `-e pgedge_join_zones=<zone>` to join the zone, or take its
+hosts out of the inventory. A run also stops when the zones that are part of
+the cluster are not all subscribed to each other.
+
+`pgedge_seed_zone` is for recovery only, and a run refuses it together with
+`pgedge_join_zones`. The recovery playbook is unchanged.
+
+Joining a zone needs Spock 5.0.9 or later on every zone, and the joining zone
+may not run an older major or minor Spock release than any member. Running the
+deployment playbook again does not upgrade Spock on a zone that is already
+built, so upgrade any older zone by hand before a join.
 
 ## Changes
 
 ### Added
 
+- A zone can join a cluster that already holds data. Its hosts are added to
+  the inventory and the deployment playbook runs with
+  `-e pgedge_join_zones=<zone>`, or a comma-separated or JSON list of zones,
+  which join one at a time in the order given. Previously a zone added to a
+  running cluster was subscribed to the others without any of the data they
+  held, and the documentation said to add one only when activity was at a
+  minimum. `setup_pgedge` now follows Spock's zero-downtime add-node
+  procedure, in separate tasks that each check, resume and report on their own.
+  For each database, the joining zone copies an existing zone's roles, schema
+  and data; every other existing zone keeps the writes it makes from the start
+  of the join in a replication slot, which is moved to exactly the last of
+  those writes the copy already holds before the joining zone reads it. The
+  joining zone is given the source zone's replication sets, and every zone
+  then subscribes to every other. Before it changes anything, the join checks
+  each zone's Spock release, the `lolor` extension where the source replicates
+  its tables, the worker and slot pools for the larger cluster, that every
+  existing subscription is replicating, and that the joining zone holds
+  nothing a join would not have created. While each database's copy starts,
+  the source zone's apply workers pause for a few seconds, so that the
+  positions the join records match the copy's snapshot; Spock 5.0's own copy
+  can otherwise lag the snapshot by up to a second and apply those writes
+  twice. A pause that cannot be had is reported, and the join goes on with
+  Spock's own behaviour.
+
+  A join that stops partway resumes when the same command runs again: every
+  step checks whether it is done. The only thing stored is that a join has
+  not finished, as the database setting `pgedge.join_pending` on the joining
+  zone, cleared once it replicates with every member both ways, so that a
+  join that stopped in its last steps, with every subscription in place, is
+  not taken for a finished one. A failure that can be resumed keeps the slots and lists
+  each with the WAL it holds and the commands to drop it. A failure that
+  cannot be resumed (a copy that died after it started, a slot that is gone,
+  or a joining zone that was not empty) drops what the other zones held for
+  the join and the joining zone's subscriptions from them, leaving any other
+  subscription it has for `remove_zone`, and says to run `remove_zone` and
+  join again. A zone that the
+  other zones still subscribe to from an earlier membership, as after its host
+  was rebuilt without `remove_zone`, is refused before anything is created,
+  with the same advice. New
+  `pgedge_join_wait_minutes`, `30` by default, limits each wait for a
+  bookmark; the copy itself keeps the limits of `pgedge_seed_stall_minutes`
+  and `pgedge_seed_max_hours`. See
+  [Adding a Zone to a Running Cluster](../add_zone.md) and
+  [setup_pgedge](../roles/setup_pgedge.md#joining-a-zone-to-a-running-cluster).
+  (EE-45)
+- New `remove_zone` role, with `sample-playbooks/remove-zone`, detaches one
+  zone from a running cluster. It refuses to start without
+  `-e remove_zone=<zone> -e remove_zone_confirm=true`, when another zone's
+  primary cannot be reached or its Postgres is not running, or when the zone
+  holds the only complete copy of a database. When the zone can be reached, it first
+  sets a bookmark in each of its databases with `spock.sync_event()` and
+  waits, up to the new `remove_zone_wait_minutes` (10 by default), for every
+  zone that subscribes to it to apply it, so that no write the zone committed
+  is dropped with it; a zone that falls short stops the run with nothing
+  changed. It only asks Patroni which node leads each zone, and never starts
+  Patroni: a zone being removed whose Patroni or Postgres is stopped, or
+  whose Patroni has no leader, is treated as one that cannot be reached. Then, one database at a time, every
+  other zone drops its subscriptions from the zone; the zone, when it can be
+  reached, drops its own; and every other zone drops the replication slots
+  that served it once they are idle, its Spock node and the rows
+  `spock.progress` kept for it, which Spock never removes. In that order, a
+  run that stops partway, such as at a slot still in use, is taken up by the
+  next one even with several databases. When the zone can be reached, its
+  databases in `db_names` are dropped last, and the next deployment run
+  creates them again empty. It is how a join that cannot be resumed is started
+  over, and how a zone is retired. See [remove_zone](../roles/remove_zone.md).
+  (EE-45)
+- The end-to-end tests can add zones to a deployed cluster: two more simple
+  zones, or a third Ultra-HA zone with a replica and its own proxy, with two
+  databases seeded with enough data for the copy to take a while. A writer
+  inserts a row about once a second on every existing zone throughout, and
+  `tests/verify/verify-zone-join.yml` checks that every zone, the new ones
+  included, ends with the same rows, the full subscription mesh, no
+  replication conflicts and no join slots left idle. The Simple Cluster and
+  Ultra-HA workflows each gain a `zone-join` job, skipped with ColdFront,
+  which runs these joins on a cluster of its own beside the existing job. Its
+  `zone_join` input chooses how much it runs. At `basic`, the default, zones 4
+  and 5 of a simple cluster join in one run, stopped while zone 5 copies and
+  resumed, a run without the flag refuses, and `remove_zone` removes a running
+  zone; on Ultra-HA, zone 3 joins, a second run changes nothing, and
+  `remove_zone` then removes zone 3 while it runs. After every removal of a
+  running zone, the zones that remain verify as a whole cluster that holds
+  every row the removed zone wrote. `full` adds refused joins on a new cluster
+  and with a database added, a join stopped after step 3 and resumed, a join
+  refused because it cannot be resumed and then reset with `remove_zone`, a
+  copy that died mid-data, tables created on every zone during and after the
+  copy (which reach every zone with AutoDDL on), a rebuilt zone the others
+  still subscribe to, refused and then joined again after `remove_zone`,
+  `remove_zone` refused while another zone has not applied all of the zone's
+  writes, `remove_zone` against a zone whose Postgres is stopped and then
+  again once it is back, a join left marked unfinished after every
+  subscription exists, `remove_zone` against a zone that is down, and on
+  Ultra-HA reruns with the flag and after a switchover. `off` skips the job.
+  Under act, which runs every job on one Docker host, the workflows run only
+  the `test` job unless given `--input act_job=zone-join`, which runs only the
+  zone-join job. `tests/zone-join-scenarios.sh` runs each scenario locally the
+  same way, with `ZONE_JOIN_LEVEL` choosing the level. (EE-45)
 - A node added to the inventory of an Ultra-HA zone that already runs joins
   the zone when the deployment playbook runs again. Previously `setup_etcd`
   started the new node's etcd as though bootstrapping the zone from nothing,
@@ -70,7 +194,11 @@ the limit.
   leaves it out. `setup_postgres` and `setup_pgedge` use it to
   choose where to write, and `finalize_backrest` uses it in place of the
   lookup it kept to itself. See
-  [Zone Primary](../roles/role_config.md#zone-primary). (EE-44)
+  [Zone Primary](../roles/role_config.md#zone-primary). (EE-44) A caller
+  that must change nothing sets `zone_primary_read_only`: Patroni is then
+  never started, a built zone with no running leader, whether Patroni is
+  stopped or runs without one, records an empty `zone_primary`, and a primary outside the play's hosts is allowed, all
+  instead of stopping the run. `remove_zone` uses it. (EE-45)
 - New `sizing_floor` task file in `role_config` reads back the
   `max_worker_processes`, `max_replication_slots`, `max_wal_senders` and
   `max_active_replication_origins` each zone was last configured with, from
@@ -100,6 +228,30 @@ the limit.
   does not matter, and a node that leaves `db_names` unset counts as having
   its default. The refusal names each differing list and the nodes that hold
   it. (EE-44)
+
+### Changed
+
+- `setup_pgedge` reads every zone's Spock state, read-only, before it creates
+  anything. In a database that holds data on some zone, a zone with no Spock
+  node there is not yet part of the cluster, and a run without
+  `pgedge_join_zones` stops, naming the zone and the setting; a run with it
+  stops if a zone that is not a member is missing from the list, if no
+  database holds data yet, or if `db_names` holds a database that no zone has
+  in Spock yet, since adding a database and joining a zone are separate runs.
+  A run also stops when the zones with a node are not all subscribed to each
+  other, apart from a single zone partway through a join, and when a zone
+  cannot be asked. A recovery, with `pgedge_seed_zone` set, goes on as before.
+  See
+  [Why an Ordinary Run Refuses a New Zone](../add_zone.md#why-an-ordinary-run-refuses-a-new-zone).
+  (EE-45)
+- `setup_pgedge` recognizes an existing subscription by the zone it comes
+  from as well as by its name, so it never creates a second subscription from
+  the same zone. The node, the subscription mesh, the seed copy and the join
+  build every connection string the same way, and the wait for a seed copy is
+  shared with the join. (EE-45)
+- `pgedge_seed_zone` is documented as recovery-only, and a run refuses it
+  together with `pgedge_join_zones`. `pgedge_seed_stall_minutes` and
+  `pgedge_seed_max_hours` now govern a joining zone's copy as well. (EE-45)
 
 ### Fixed
 

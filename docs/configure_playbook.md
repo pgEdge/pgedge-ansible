@@ -86,7 +86,7 @@ in the Ultra-HA sample playbook.
 Every play that applies the collection's roles must use Ansible's default
 `linear` strategy, over all of the play's hosts at once. Do not set
 `strategy: free`, in a play or in `ansible.cfg`, and do not set `serial` on a
-play.
+play. Do not run the playbook with `--limit`.
 
 !!! danger "`free` strategy or `serial` plays may deploy an inoperable cluster"
     These roles coordinate the hosts of a play with each other, and depend on
@@ -103,6 +103,21 @@ play.
     Either can leave the cluster in an inconsistent state. Some steps may never
     complete, or may deploy partially in ways that pass health checks but are
     otherwise invalid.
+
+!!! danger "`--limit` is not supported"
+    The collection manages a cluster as a whole, and every run is meant to
+    cover every host in the inventory. Nearly everything it configures
+    depends on the full list of nodes. Running on a single proxy still needs
+    every node in that proxy's zone, and Spock needs every zone in the
+    cluster. A run limited to some hosts sees only part of the cluster and
+    acts on that part as though it were the whole.
+
+    Some checks stop a limited run when it leaves out a host they need, such
+    as a zone's primary. These checks are safeguards, not a supported way to
+    run part of a deployment. Even where a limited run might happen to work,
+    it is not a supported mode of operation. To change one host, change the
+    inventory or its variables and run the playbook against the whole
+    cluster; a run against a deployed cluster changes only what differs.
 
 Check mode (`--check`) is not supported. The roles avoid failing under it where
 they can, but a check-mode run does not predict what a real run would change:

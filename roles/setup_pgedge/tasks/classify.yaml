@@ -1,0 +1,356 @@
+---
+
+# Before anything is created, find out what the cluster already is.
+#
+# A zone added to the inventory of a cluster that already holds data cannot be
+# wired in the way a new cluster is. The plain subscriptions an ordinary run
+# creates stream changes forward from the moment they exist: they copy nothing
+# that was written before, so the new zone would start without the data every
+# other zone holds and go on disagreeing with them. Such a zone has to join, by
+# a procedure that copies the data and accounts for every write in flight, and
+# only the operator can ask for that, with pgedge_join_zones.
+#
+# So every zone's primary is asked, for every database in db_names, what Spock
+# has there: whether the zone's own node exists, whether there are tables
+# holding data, which subscriptions it has and from where, and whether one of
+# them is a copy. Nothing here writes. The answers are pooled into one picture
+# of the cluster, and the run goes on only if that picture is one it knows how
+# to handle. A zone whose primary cannot be asked fails the run: assuming it
+# empty would treat a running cluster as a new one, which is the very mistake
+# this exists to prevent.
+
+# The list is checked first, since that needs nothing from any database.
+
+- name: Ensure every zone in pgedge_join_zones is in the inventory
+  assert:
+    that:
+    - unknown | length == 0
+    fail_msg: >-
+      pgedge_join_zones names {{ unknown | join(', ') }}, which
+      {{ 'is not a zone' if unknown | length == 1 else 'are not zones' }} of
+      this inventory. Its zones are
+      {{ zone_list | map('int') | sort | join(', ') }}. Add the new zone's
+      hosts to the inventory, or correct the list.
+    quiet: true
+  vars:
+    unknown: >-
+      {{ pgedge_join_zones_given
+         | reject('in', zone_list | map('string') | list) | list }}
+  run_once: true
+  when: pgedge_join_zones_given | length > 0
+
+# pgedge_seed_zone is for a recovery, where one zone was restored and every
+# other zone is empty and stopped, so copying the restored zone loses nothing.
+# A join copies from a zone that keeps taking writes, which needs a different
+# procedure. Asked for both, the run cannot do what was meant by either.
+
+- name: Ensure pgedge_join_zones and pgedge_seed_zone are not both given
+  fail:
+    msg: >-
+      pgedge_join_zones and pgedge_seed_zone cannot be given together.
+      pgedge_seed_zone is for a recovery, which the recovery playbook sets on
+      its own; pgedge_join_zones adds zones to a cluster that is running. Run
+      again with only one of them.
+  run_once: true
+  when:
+  - pgedge_join_zones_given | length > 0
+  - pgedge_seed_zone | string > ''
+
+# Every zone's primary reads what Spock holds there: for each database in
+# db_names that exists, whether it has Spock and tables holding data, its own
+# node, its subscriptions and where they come from, and the copy subscription
+# with how far it has got. remove_zone's preflight reads the same, with the
+# same task file. Every other host records an empty state, so the only answers
+# pooled below are the ones this run's zone primaries gave just now.
+
+- name: Read each zone's Spock state on its primary
+  include_role:
+    name: role_config
+    tasks_from: spock_state
+  vars:
+    pgedge_spock_state_here: "{{ inventory_hostname == pgedge_zone_primary }}"
+
+# Now the whole cluster, from what each zone primary recorded. For each
+# database:
+#
+# - It is established when some zone has its node there and tables holding
+#   data. Only an established database needs a join. In any other one, every
+#   zone takes the ordinary path, which is also how a first deployment that
+#   stopped partway resumes: it has nodes and subscriptions but no data yet.
+#
+# - In an established database a zone is absent when it has no node. The zones
+#   that have one are members when every ordered pair of them is linked by a
+#   subscription. Enabled or not does not matter here: Spock disables a
+#   subscription on its own after some apply errors, and an ordinary run must
+#   not stop for that. A join checks that every subscription is enabled before
+#   it starts. When they are not, and every missing link involves
+#   the same zone, that zone is joining and the rest are members. Joins run one
+#   at a time, so any other shape was made outside this collection, and the run
+#   stops with the missing links listed rather than guess.
+#
+#   A join records its zone on each database it is joining, as the setting
+#   pgedge.join_pending, before it creates anything there, and clears it only
+#   once the zone replicates with every member both ways (join_database.yaml).
+#   A zone with a node whose database carries its own number is the zone
+#   joining, whatever its subscriptions look like: once a join has created
+#   every subscription, nothing else tells it from a member, and only the
+#   marker lets a join that stopped in its last steps be resumed. Every link
+#   missing then has to involve that zone, or the run stops as below.
+#
+#   Without a marker, as for a join started by an earlier release of this
+#   collection, the joining zone is inferred from the missing links. In a
+#   two-zone cluster both zones fit that description when one link is
+#   missing. The joining one is then the zone whose copy subscription exists,
+#   or failing that the one without data. Those two tie-breaks apply to two
+#   zones only. With three or more, a join's missing links all involve the
+#   joining zone until its last step, which the providers of the missing links
+#   settle, so two candidates there mean a link between members was dropped:
+#   taking one of them for a joining zone would send the operator to join a
+#   full member, and that join would fail and detach it.
+#
+# The result is one fact every host reads, built once.
+
+- name: Classify each zone in each database
+  set_fact:
+    pgedge_cluster: "{{ cluster_json | from_json }}"
+  vars:
+    zones: "{{ zone_list | map('int') | sort }}"
+    cluster_json: >-
+      {%- set zs = {} -%}
+      {%- for z in zones -%}
+      {%-   for h in ansible_play_hosts -%}
+      {%-     set st = hostvars[h].pgedge_spock_state | default({}) -%}
+      {%-     if st and st.zone | int == z and (z | string) not in zs -%}
+      {%-       set _ = zs.update({z | string: st}) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {%- set out = {'zones': zs, 'dbs': {}, 'established': [],
+                     'nodeless': [], 'incomplete': [], 'errors': [],
+                     'missing': zones | reject('in', zs.keys() | map('int') | list) | list} -%}
+      {%- for db in db_names -%}
+      {%-   set node_zones = [] -%}
+      {%-   set table_zones = [] -%}
+      {%-   set copy_zones = [] -%}
+      {%-   set providers = {} -%}
+      {%-   set marked = [] -%}
+      {%-   for z in zones -%}
+      {%-     set d = ((zs[z | string] | default({}))['dbs'] | default({}))[db] | default({}) -%}
+      {%-     if d.node | default(none) and d.join_pending | default(none)
+                 and d.join_pending | string == z | string -%}
+      {%-       set _ = marked.append(z) -%}
+      {%-     endif -%}
+      {%-     if d.node | default(none) -%}
+      {%-       if d.node != 'edge' ~ z -%}
+      {%-         set _ = out.errors.append('In ' ~ db ~ ', zone ' ~ z
+                      ~ "'s node is named " ~ d.node ~ ', not edge' ~ z
+                      ~ ', which this collection did not create.') -%}
+      {%-       endif -%}
+      {%-       set _ = node_zones.append(z) -%}
+      {%-       set _ = providers.update({z | string: d.subs | default([]) | map(attribute='provider') | list}) -%}
+      {%-       if d.has_user_tables | default(false) -%}{%- set _ = table_zones.append(z) -%}{%- endif -%}
+      {%-       if d.copy_sub | default(none) -%}{%- set _ = copy_zones.append(z) -%}{%- endif -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%-   set info = {'established': table_zones | length > 0,
+                        'node_zones': node_zones, 'members': [],
+                        'joining': [], 'absent': [], 'outside': [],
+                        'missing_links': []} -%}
+      {%-   if not node_zones -%}{%- set _ = out.nodeless.append(db) -%}{%- endif -%}
+      {%-   if info.established -%}
+      {%-     set _ = out.established.append(db) -%}
+      {%-     set missing = [] -%}
+      {%-     for a in node_zones -%}{%- for b in node_zones -%}
+      {%-       if a != b and ('edge' ~ b) not in providers[a | string] -%}
+      {%-         set _ = missing.append([a, b]) -%}
+      {%-       endif -%}
+      {%-     endfor -%}{%- endfor -%}
+      {%-     set cands = [] -%}
+      {%-     for x in node_zones -%}
+      {%-       if missing | reject('contains', x) | list | length == 0 -%}
+      {%-         set _ = cands.append(x) -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     set by_copy = cands | select('in', copy_zones) | list -%}
+      {%-     set no_data = cands | reject('in', table_zones) | list -%}
+      {#-       A copy's record stays after it finishes, so a zone that joined
+                earlier counts in by_copy too. A join that stopped in step 9,
+                with only a member that joined before it left to subscribe to
+                it, is the zone the missing subscriptions come from. -#}
+      {%-     set by_provider = [] -%}
+      {%-     for x in by_copy
+                if missing | map('last') | reject('eq', x) | list
+                   | length == 0 -%}
+      {%-       set _ = by_provider.append(x) -%}
+      {%-     endfor -%}
+      {%-     set joining = (marked if missing | reject('contains', marked[0])
+                                          | list | length == 0
+                               else none) if marked | length == 1
+                       else none if marked | length > 1
+                       else [] if not missing
+                       else cands if cands | length == 1
+                       else by_provider if by_provider | length == 1
+                       else by_copy if node_zones | length == 2
+                                       and by_copy | length == 1
+                       else no_data if node_zones | length == 2
+                                       and no_data | length == 1
+                       else none -%}
+      {%-     if joining is none -%}
+      {%-       set links = [] -%}
+      {%-       for p in missing -%}
+      {%-         set _ = links.append('zone ' ~ p[0] ~ ' has none from zone ' ~ p[1]) -%}
+      {%-       endfor -%}
+      {%-       set _ = out.errors.append('In ' ~ db
+                    ~ ', the zones with a Spock node ('
+                    ~ node_zones | join(', ') ~ ') are not one cluster with'
+                    ~ ' at most one zone joining it.'
+                    ~ ((' Subscriptions are missing: ' ~ links | join('; ') ~ '.')
+                       if links else '')
+                    ~ ((' ' ~ ('Zone ' if marked | length == 1 else 'Zones ')
+                        ~ marked | join(', ') ~ ' recorded a join that has not'
+                        ~ ' finished.') if marked else '')) -%}
+      {%-       set joining = [] -%}
+      {%-     endif -%}
+      {%-     set _ = info.update({'missing_links': missing, 'joining': joining,
+                     'members': node_zones | reject('in', joining) | list,
+                     'absent': zones | reject('in', node_zones) | list}) -%}
+      {%-     set _ = info.update({'outside': (info.absent + joining) | sort}) -%}
+      {%-     for z in info.outside -%}
+      {%-       if z not in out.incomplete -%}{%- set _ = out.incomplete.append(z) -%}{%- endif -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%-   set _ = out.dbs.update({db: info}) -%}
+      {%- endfor -%}
+      {%- set _ = out.update({'incomplete': out.incomplete | sort}) -%}
+      {{ out | to_json }}
+  run_once: true
+
+# Every zone has to have answered. One that did not -- its primary failed
+# earlier in this run, or could not be reached -- may hold data, and the
+# picture above would have counted it as empty.
+
+- name: Ensure every zone's Spock state was read
+  assert:
+    that:
+    - pgedge_cluster.missing | length == 0
+    fail_msg: >-
+      Spock's state could not be read in
+      {{ 'zone' if pgedge_cluster.missing | length == 1 else 'zones' }}
+      {{ pgedge_cluster.missing | join(', ') }}: none of this play's hosts
+      answered for {{ 'it' if pgedge_cluster.missing | length == 1
+      else 'them' }}. Without that, a zone that holds data could be taken for
+      an empty one, so nothing has been created in Spock. Make sure every
+      zone's primary is reachable and included in the run, and run this again.
+    quiet: true
+  run_once: true
+
+- name: Ensure every established database has a shape this run understands
+  assert:
+    that:
+    - pgedge_cluster.errors | length == 0
+    fail_msg: >-
+      {{ pgedge_cluster.errors | join(' ') }} Nothing has been created in
+      Spock. Each
+      zone of a cluster subscribes to every other one, and a zone added by
+      pgedge_join_zones is the only one that may be partway there. Repair the
+      subscriptions, or remove the zone that is out of step, and run this
+      again.
+    quiet: true
+  run_once: true
+
+# The gate. A recovery (pgedge_seed_zone) is exempt: there the restored zone is
+# the only one with a node and data, so every other zone looks absent, and the
+# seed copy is what fills them. That path goes on exactly as it always has.
+#
+# Otherwise, a zone that is absent from or partway into an established
+# database stops the run unless pgedge_join_zones names it, and naming a zone
+# when there is no running cluster to join stops it too.
+
+- name: Ensure no zone is left out of a cluster that holds data
+  fail:
+    msg: >-
+      {{ 'Zone' if one else 'Zones' }}
+      {{ pgedge_cluster.incomplete | join(', ') }}
+      {{ 'is' if one else 'are' }} not yet part of this cluster, which already
+      holds data in {{ pgedge_cluster.established | join(', ') }}. An ordinary
+      run would subscribe {{ 'it' if one else 'them' }} without copying that
+      data, and the zones would disagree from then on, so nothing has been
+      created in Spock. To join {{ 'it' if one else 'them' }}, run this again
+      with -e pgedge_join_zones={{ pgedge_cluster.incomplete | join(',') }}.
+  vars:
+    one: "{{ pgedge_cluster.incomplete | length == 1 }}"
+  run_once: true
+  when:
+  - pgedge_seed_zone | string == ''
+  - pgedge_join_zones_given | length == 0
+  - pgedge_cluster.incomplete | length > 0
+
+- name: Ensure there is a running cluster to join
+  fail:
+    msg: >-
+      pgedge_join_zones names {{ pgedge_join_zones_given | join(', ') }}, but
+      no database in db_names holds data on any zone with a Spock node, so
+      there is no running cluster to join. A new cluster is built by an
+      ordinary run: run this again without pgedge_join_zones.
+  run_once: true
+  when:
+  - pgedge_join_zones_given | length > 0
+  - pgedge_cluster.established | length == 0
+
+# One major change per run. A database new to db_names has no node anywhere
+# yet, so it would be created by the ordinary path in the same run as a join,
+# and the two have each been tested only alone.
+
+- name: Ensure no database is added to db_names in the same run as a join
+  fail:
+    msg: >-
+      {{ pgedge_cluster.nodeless | join(', ') }}
+      {{ 'is' if pgedge_cluster.nodeless | length == 1 else 'are' }} in
+      db_names but not yet in Spock on any zone. Adding a database and joining
+      a zone are separate changes, made in separate runs. Either leave the
+      database out of db_names until the join is done, or add it to the
+      existing zones first: take the joining zones' hosts out of the inventory,
+      run this without pgedge_join_zones, then put them back and run the join
+      again.
+  run_once: true
+  when:
+  - pgedge_join_zones_given | length > 0
+  - pgedge_cluster.nodeless | length > 0
+
+- name: Ensure every zone that has to join is named in pgedge_join_zones
+  fail:
+    msg: >-
+      {{ 'Zone' if one else 'Zones' }} {{ unlisted | join(', ') }}
+      {{ 'is' if one else 'are' }} not yet part of this cluster, which already
+      holds data in {{ pgedge_cluster.established | join(', ') }}, but
+      pgedge_join_zones names only {{ pgedge_join_zones_given | join(', ') }}.
+      Every zone outside a cluster that holds data has to join it, so nothing
+      has been created in Spock. Add {{ 'it' if one else 'them' }} to
+      pgedge_join_zones, or take {{ 'it' if one else 'them' }} out of the
+      inventory, and run this again.
+  vars:
+    unlisted: >-
+      {{ pgedge_cluster.incomplete | map('string')
+         | reject('in', pgedge_join_zones_given) | list }}
+    one: "{{ unlisted | length == 1 }}"
+  run_once: true
+  when:
+  - pgedge_join_zones_given | length > 0
+  - unlisted | length > 0
+
+- name: Report zones in pgedge_join_zones that are already members
+  debug:
+    msg: >-
+      {{ 'Zone' if already | length == 1 else 'Zones' }}
+      {{ already | join(', ') }} in pgedge_join_zones
+      {{ 'is' if already | length == 1 else 'are' }} already a member of every
+      database that holds data, and {{ 'is' if already | length == 1
+      else 'are' }} skipped.
+  vars:
+    already: >-
+      {{ pgedge_join_zones_given | map('int')
+         | reject('in', pgedge_cluster.incomplete) | list }}
+  run_once: true
+  when:
+  - pgedge_join_zones_given | length > 0
+  - already | length > 0

@@ -1,0 +1,152 @@
+---
+# Hold a zone's apply of the trickle back, or let it go, so that a join stops
+# right after step 3 with a failure it can resume from.
+#
+#   ansible-playbook tests/playbooks/zone-join-hold.yml \
+#     -i <the inventories the join runs with> \
+#     -e zone_join_hold=start [-e zone_join_hold_zone=1] [-e zone_join_hold_db=demo]
+#   ... -e zone_join_hold=stop
+#
+# Step 4 of a join sets a bookmark on every member other than the source and
+# waits for the source to apply it. The trickle writes to every member once a
+# second, so the source's apply worker for each of them always has a trickle
+# row in front of the bookmark. This takes a SHARE lock on zone_join_trickle on
+# the source's primary and keeps it, which every insert conflicts with: the
+# apply workers stop at their next trickle row, and the bookmark never arrives.
+# A join run with a short pgedge_join_wait_minutes then fails in step 4, after
+# its slots and disabled subscriptions exist, which is what a test of the
+# failure report and of resuming from there needs. Nothing in the role is
+# changed or told about it.
+#
+# The source is the lowest-numbered member, zone 1 here, unless the joining
+# zone already has a copy subscription. The lock is held by a psql session in
+# a transient systemd unit, so it outlives this playbook, for at most
+# zone_join_hold_minutes. The trickle's own inserts into that zone wait too,
+# and its writer retries them until the lock goes, so no row is lost.
+#
+# Stopping ends the session on the server, which releases the lock, and waits for the source
+# to be applying again: its subscriptions replicating and no session waiting
+# on the lock. Starting a hold that is already held, or stopping one that is
+# not, changes nothing.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    zone_join_hold: start
+    zone_join_hold_zone: 1
+    zone_join_hold_db: "{{ db_names | first }}"
+    zone_join_hold_minutes: 30
+    unit: zone-join-hold
+    psql: >-
+      {{ pg_path }}/bin/psql -X -h /var/run/postgresql -p {{ pg_port }}
+      -d {{ zone_join_hold_db }}
+    holds_here: >-
+      {{ zone | int == zone_join_hold_zone | int
+         and inventory_hostname == zone_primary }}
+
+  tasks:
+  - name: Ensure the action is start or stop
+    assert:
+      that:
+      - zone_join_hold in ['start', 'stop']
+      fail_msg: Pass -e zone_join_hold=start or -e zone_join_hold=stop.
+    run_once: true
+
+  - name: Find each zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+
+  - name: Check whether the hold is running
+    command: systemctl is-active {{ unit }}
+    register: hold_state
+    changed_when: false
+    failed_when: false
+    become: true
+    when: holds_here | bool
+
+  # A hold that ended on its own, or failed, leaves its transient unit behind,
+  # and systemd-run will not reuse the name until it is cleared.
+
+  - name: Take and keep a SHARE lock on zone_join_trickle
+    shell: >-
+      systemctl reset-failed {{ unit }} 2>/dev/null;
+      systemd-run --unit={{ unit }} --uid=postgres
+      --description="Hold zone {{ zone }}'s apply of zone_join_trickle"
+      {{ psql }} -v ON_ERROR_STOP=1
+      -c "SET application_name = 'zone_join_hold'"
+      -c "BEGIN"
+      -c "LOCK TABLE zone_join_trickle IN SHARE MODE"
+      -c "SELECT pg_sleep({{ zone_join_hold_minutes | int * 60 }})"
+    become: true
+    when:
+    - holds_here | bool
+    - zone_join_hold == 'start'
+    - hold_state.stdout | trim != 'active'
+
+  - name: Wait for the lock to be held
+    command: >-
+      {{ psql }} -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+        WHERE a.application_name = 'zone_join_hold' AND l.granted
+          AND l.relation = 'zone_join_trickle'::regclass
+          AND l.mode = 'ShareLock'"
+    register: held
+    until: held.stdout | trim == '1'
+    retries: 30
+    delay: 1
+    changed_when: false
+    become: true
+    become_user: postgres
+    when:
+    - holds_here | bool
+    - zone_join_hold == 'start'
+
+  # Ending psql is not enough: a backend inside pg_sleep does not notice its
+  # client has gone until the sleep ends, and keeps the lock until then. So the
+  # session is ended on the server, which also ends psql and its unit.
+
+  - name: End the session that holds the lock
+    command: >-
+      {{ psql }} -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
+        WHERE application_name = 'zone_join_hold'"
+    register: ended
+    changed_when: ended.stdout | trim != '0'
+    become: true
+    become_user: postgres
+    when:
+    - holds_here | bool
+    - zone_join_hold == 'stop'
+
+  - name: Stop the hold's unit
+    command: systemctl stop {{ unit }}
+    become: true
+    when:
+    - holds_here | bool
+    - zone_join_hold == 'stop'
+    - hold_state.stdout | trim == 'active'
+
+  # The apply workers that waited on the lock carry on by themselves; this
+  # waits until they have, so that the next step finds a zone that applies.
+
+  - name: Wait for nothing to be waiting on zone_join_trickle
+    command: >-
+      {{ psql }} -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT count(*) FROM pg_locks
+        WHERE relation = 'zone_join_trickle'::regclass AND NOT granted"
+    register: waiting
+    until: waiting.stdout | trim == '0'
+    retries: 60
+    delay: 1
+    changed_when: false
+    become: true
+    become_user: postgres
+    when:
+    - holds_here | bool
+    - zone_join_hold == 'stop'

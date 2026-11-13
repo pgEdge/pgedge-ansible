@@ -243,7 +243,11 @@ that replicates ten databases needs 64 workers and 42 slots.
 The calculation changes whenever the cluster does. Adding a zone or a database
 to `db_names` raises the values on every node, and the next run applies them.
 Every one of these parameters requires a restart, so `pg_allow_restart` decides
-whether the run restarts each node or leaves the restart pending.
+whether the run restarts each node or leaves the restart pending. A run that
+[joins a zone](../add_zone.md) checks the running values on every zone before
+it starts, and refuses while any zone still runs with smaller pools or has a
+restart pending; with `pg_allow_restart: false`, restart those zones yourself
+and run it again.
 
 The calculated values only ever go up. Each run reads back the values the
 zone was last configured with and uses whichever is larger, the formula's or

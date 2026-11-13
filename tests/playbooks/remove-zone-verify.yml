@@ -1,0 +1,211 @@
+---
+# Check that remove_zone left nothing behind.
+#
+# Run after the remove-zone sample playbook, with the same inventory and the
+# same -e remove_zone=<N>. It checks what the role promises:
+#
+#   - on every other zone's primary, in every database in db_names, there is
+#     no subscription from edge<N>, no node row for edge<N>, no replication
+#     slot that served zone N's subscription, and no replication origin left
+#     from this zone's subscription to zone N,
+#   - and, when zone N's primary answers, each of its databases in db_names is
+#     either gone or empty: no Spock node, no subscription and no tables of its
+#     own, and no replication slot in it. Pass
+#     -e remove_zone_verify_removed=false to check only the other zones, as
+#     after a join that could not be resumed released them: the joining zone
+#     itself keeps what it had until remove_zone resets it.
+#
+# Slot and origin names are asked of Spock's spock_gen_slot_name, as the role
+# does. Nothing here changes anything. Facts are not gathered up front, since
+# zone N may be down.
+
+- hosts: pgedge
+  gather_facts: false
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - role_config
+
+  tasks:
+  - name: Check which hosts can be reached
+    ping:
+    register: verify_ping
+    ignore_unreachable: true
+
+  - name: Gather facts on the hosts that answered
+    setup:
+    when: verify_ping is not unreachable
+
+  - name: Find the node that runs each zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+    when:
+    - is_ha_cluster | bool
+    - verify_ping is not unreachable
+
+  - name: Note this host's role in the check
+    set_fact:
+      verify_primary: >-
+        {{ verify_ping is not unreachable and inventory_hostname ==
+           (zone_primary if is_ha_cluster | bool else inventory_hostname) }}
+      verify_removed: "{{ zone | int == remove_zone | int }}"
+
+  # Every check below runs on a zone's primary, so a zone without one that
+  # answered would pass without being checked. Only zone N may be down.
+
+  - name: Ensure every other zone has a primary that answered
+    assert:
+      that:
+      - unchecked | length == 0
+      fail_msg: >-
+        No primary answered for {{ 'zone' if unchecked | length == 1
+        else 'zones' }} {{ unchecked | join(', ') }}, so what zone
+        {{ remove_zone }} left there cannot be checked.
+    vars:
+      unchecked: >-
+        {{ zone_list | map('int') | unique | reject('eq', remove_zone | int)
+           | reject('in', ansible_play_hosts | map('extract', hostvars)
+                          | selectattr('verify_primary', 'defined')
+                          | selectattr('verify_primary')
+                          | map(attribute='zone') | map('int') | list)
+           | sort | list }}
+    run_once: true
+
+  - name: Find which databases in db_names exist here
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: postgres
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT datname FROM pg_database
+         WHERE datname IN (SELECT json_array_elements_text(%(dbs)s::json))
+      named_args:
+        dbs: "{{ db_names | to_json }}"
+    register: verify_dbs
+    become: true
+    become_user: postgres
+    when: verify_primary | bool
+
+  - name: Ensure every other zone has its databases
+    assert:
+      that:
+      - verify_dbs.query_result | length == db_names | length
+      fail_msg: >-
+        Zone {{ zone }} is missing
+        {{ db_names | reject('in', verify_dbs.query_result
+                              | map(attribute='datname') | list) | join(', ') }}.
+    when:
+    - verify_primary | bool
+    - not verify_removed | bool
+
+  - name: Look for anything of zone {{ remove_zone }}'s on the other zones
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT
+          ARRAY(SELECT s.sub_name::text FROM spock.subscription s
+                  JOIN spock.node n ON n.node_id = s.sub_origin
+                 WHERE n.node_name = %(node)s) AS subs,
+          ARRAY(SELECT node_name::text FROM spock.node
+                 WHERE node_name = %(node)s) AS nodes,
+          ARRAY(SELECT slot_name::text FROM pg_replication_slots
+                 WHERE slot_name = spock.spock_gen_slot_name(
+                         %(db)s, %(here)s, %(their_sub)s)) AS slots,
+          ARRAY(SELECT roname::text FROM pg_replication_origin
+                 WHERE roname = spock.spock_gen_slot_name(
+                         %(db)s, %(node)s, %(our_sub)s)) AS origins,
+          ARRAY(SELECT p.remote_node_id::text FROM spock.progress p
+                 WHERE NOT EXISTS (SELECT FROM spock.node n
+                                    WHERE n.node_id = p.remote_node_id))
+            AS progress
+      named_args:
+        db: "{{ item }}"
+        node: "edge{{ remove_zone | int }}"
+        here: "edge{{ zone | int }}"
+        their_sub: "sub_n{{ remove_zone | int }}_n{{ zone | int }}"
+        our_sub: "sub_n{{ zone | int }}_n{{ remove_zone | int }}"
+    loop: "{{ db_names }}"
+    register: verify_left
+    become: true
+    become_user: postgres
+    when:
+    - verify_primary | bool
+    - not verify_removed | bool
+
+  - name: Ensure nothing of zone {{ remove_zone }}'s is left on the other zones
+    assert:
+      that:
+      - left | length == 0
+      fail_msg: "Zone {{ zone }} still has: {{ left | join('; ') }}"
+      success_msg: >-
+        Zone {{ zone }} holds no subscription, node, slot, origin or progress row for zone
+        {{ remove_zone }} in {{ db_names | join(', ') }}.
+    vars:
+      left: >-
+        {%- set out = [] -%}
+        {%- for r in verify_left.results -%}
+        {%-   for k in ['subs', 'nodes', 'slots', 'origins', 'progress'] -%}
+        {%-     for v in r.query_result[0][k] -%}
+        {%-       set _ = out.append(r.item ~ ' ' ~ (k if k == 'progress' else k[:-1]) ~ ' ' ~ v) -%}
+        {%-     endfor -%}
+        {%-   endfor -%}
+        {%- endfor -%}
+        {{ out }}
+    when:
+    - verify_primary | bool
+    - not verify_removed | bool
+
+  - name: Read what is left in zone {{ remove_zone }}'s own databases
+    community.postgresql.postgresql_query:
+      login_port: "{{ pg_port }}"
+      login_db: "{{ item }}"
+      login_unix_socket: /var/run/postgresql
+      query: >-
+        SELECT
+          (SELECT count(*) FROM spock.local_node) AS nodes,
+          (SELECT count(*) FROM spock.subscription) AS subs,
+          (SELECT count(*) FROM pg_replication_slots
+            WHERE database = current_database()) AS slots,
+          (SELECT count(*) FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relkind IN ('r', 'p')
+              AND n.nspname NOT IN ('information_schema', 'pg_catalog',
+                                    'pg_toast', 'spock')
+              AND NOT EXISTS (SELECT FROM pg_depend d
+                               WHERE d.classid = 'pg_class'::regclass
+                                 AND d.objid = c.oid
+                                 AND d.deptype = 'e')) AS tables
+    loop: "{{ verify_dbs.query_result | map(attribute='datname') | list }}"
+    register: verify_own
+    become: true
+    become_user: postgres
+    when:
+    - verify_primary | bool
+    - verify_removed | bool
+    - remove_zone_verify_removed | default(true) | bool
+
+  - name: Ensure zone {{ remove_zone }}'s databases are gone or empty
+    assert:
+      that:
+      - left | length == 0
+      fail_msg: "Zone {{ zone }} still has: {{ left | join('; ') }}"
+      success_msg: >-
+        Zone {{ zone }}'s databases in db_names are gone or empty.
+    vars:
+      left: >-
+        {%- set out = [] -%}
+        {%- for r in verify_own.results -%}
+        {%-   for k, v in r.query_result[0].items() if v | int > 0 -%}
+        {%-     set _ = out.append(r.item ~ ': ' ~ v ~ ' ' ~ k) -%}
+        {%-   endfor -%}
+        {%- endfor -%}
+        {{ out }}
+    when:
+    - verify_primary | bool
+    - verify_removed | bool
+    - remove_zone_verify_removed | default(true) | bool

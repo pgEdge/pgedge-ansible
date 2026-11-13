@@ -181,6 +181,15 @@ The task file also stops the run when the zone's primary is not one of the
 play's hosts, whether `--limit` left it out or it failed earlier in the run.
 Every write to the zone runs there, so a run without it would skip them.
 
+A caller that must change nothing sets `zone_primary_read_only: true` on the
+include. Patroni is then never started, and a built zone with no running
+leader, whether Patroni is stopped or runs without electing one, records an
+empty `zone_primary` instead of stopping the run. Nor does
+the run stop when the primary is not one of the play's hosts, as when a
+follower's Patroni names a leader whose host was unreachable. The caller
+decides what either case means. The `remove_zone` role includes it this way,
+and treats a primary that did not answer as unreachable.
+
 The `setup_postgres`, `setup_pgedge` and `finalize_backrest` roles include
 it.
 

@@ -1,0 +1,244 @@
+---
+
+# Nothing in this file changes anything. It decides whether the removal may go
+# ahead, and finds where each zone's Spock configuration lives.
+
+- name: Ensure the removal was asked for explicitly
+  assert:
+    that:
+    - remove_zone_confirm | bool
+    fail_msg: >-
+      This role detaches zone {{ remove_zone | default('(none given)') }} from
+      the cluster: every other zone drops its subscriptions from that zone,
+      the replication slots that served it and its node, and, if the zone can
+      be reached, its own subscriptions are dropped and its databases in
+      db_names are dropped with everything in them. Re-run with
+      -e remove_zone_confirm=true once that is what you mean to do.
+    quiet: true
+  run_once: true
+
+# The zone stays in the inventory until it has been removed: its number is
+# what every name in Spock is built from, and its hosts are where it is
+# detached and reset if they can be reached.
+
+- name: Ensure the zone to remove is a zone of this inventory
+  assert:
+    that:
+    - remove_zone is defined
+    - remove_zone | string is match('^[0-9]+$')
+    - remove_zone | int in zone_list | map('int') | list
+    fail_msg: >-
+      {{ problem }} Give the zone to remove with -e remove_zone=<N>, where N
+      is one of {{ zone_list | map('int') | sort | join(', ') }}. Keep the
+      zone's hosts in the inventory until the removal is done.
+    quiet: true
+  vars:
+    problem: >-
+      {{ 'remove_zone is ' ~ remove_zone ~ ', which is not a zone of this'
+         ~ ' inventory.' if remove_zone is defined
+         else 'remove_zone was not given.' }}
+  run_once: true
+
+# The zone being removed may be down: that is often why it is being removed.
+# Every other zone is cleaned whether or not it answers, so a host that cannot
+# be reached is noted rather than failing the run. ignore_unreachable keeps
+# such a host in the play; every later task is kept off it by asking whether
+# it answered here. A host that a playbook's own fact gathering already found
+# unreachable has left the play and never gets this far, and counts as not
+# answering too.
+#
+# Facts are then gathered on the hosts that answered, for the role_config
+# settings that depend on the operating system, unless the playbook gathered
+# them already.
+
+- name: Check which hosts can be reached
+  ping:
+  register: remove_zone_ping
+  ignore_unreachable: true
+
+- name: Gather facts on the hosts that answered
+  setup:
+  when:
+  - remove_zone_ping is not unreachable
+  - ansible_facts.os_family is not defined
+
+- name: Note which hosts answered
+  set_fact:
+    remove_zone_answered: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('remove_zone_ping', 'defined')
+         | rejectattr('remove_zone_ping', 'unreachable')
+         | map(attribute='inventory_hostname') | list }}
+  run_once: true
+
+# In an HA cluster, Spock's configuration lives in each zone's primary, which
+# after a failover need not be the zone's first node. Patroni is asked on every
+# node that answered. It is only asked: a zone whose Patroni is stopped on
+# every node is left stopped, and has no primary here. A zone whose Patroni
+# names a leader on a host that did not answer is treated the same. For the
+# zone being removed either means it cannot be reached; for any other zone,
+# the run stops below.
+
+- name: Find the node that runs each zone's primary
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
+  vars:
+    zone_primary_read_only: true
+  when:
+  - is_ha_cluster | bool
+  - inventory_hostname in remove_zone_answered
+
+# A host can answer while its Postgres is stopped, and Spock's state cannot be
+# read from it then. Each zone's primary is asked whether Postgres takes
+# connections, and one that does not counts as not answering: the zone being
+# removed is then cleared from the other zones only, with its own data left as
+# it is, and any other zone stops the run below. In an HA cluster a primary
+# found through Patroni is running, but a zone's Postgres can still refuse
+# connections for a moment, as during a restart.
+
+- name: Check whether Postgres takes connections on each zone's primary
+  community.postgresql.postgresql_ping:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+  register: remove_zone_pg
+  become: true
+  become_user: postgres
+  when:
+  - inventory_hostname in remove_zone_answered
+  - inventory_hostname == remove_zone_own_primary
+
+- name: Note which hosts answered with Postgres running
+  set_fact:
+    remove_zone_answered: >-
+      {{ remove_zone_answered | reject('in', down) | list }}
+  vars:
+    down: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('remove_zone_pg.is_available', 'defined')
+         | rejectattr('remove_zone_pg.is_available')
+         | map(attribute='inventory_hostname') | list }}
+  run_once: true
+
+# Every other zone has to be cleaned, or the cluster keeps subscriptions and
+# slots for a zone that is gone: a slot nobody reads holds back WAL on its zone
+# until the disk fills. So every other zone's primary must answer before
+# anything is changed.
+
+- name: Ensure every other zone can be reached
+  assert:
+    that:
+    - unreachable | length == 0
+    fail_msg: >-
+      Zone {{ remove_zone }} can only be removed when every other zone's
+      primary can be reached and its Postgres is running, since each holds
+      subscriptions and slots for it that have to be dropped. Not reachable,
+      or not running:
+      {{ unreachable | join(', ') }}. Nothing has been changed. Bring
+      {{ 'it' if unreachable | length == 1 else 'them' }} back, or remove
+      {{ 'that zone' if unreachable | length == 1 else 'those zones' }} first,
+      and run this again.
+    quiet: true
+  vars:
+    unreachable: >-
+      {%- set out = [] -%}
+      {%- for z in remove_zone_remaining -%}
+      {%-   if z.host == '' or z.host not in remove_zone_answered -%}
+      {%-     set _ = out.append('zone ' ~ z.zone
+                  ~ (' (' ~ z.host ~ ')' if z.host
+                     else ' (no running primary found)')) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+- name: Note whether zone {{ remove_zone }} itself can be reached
+  set_fact:
+    remove_zone_reachable: >-
+      {{ remove_zone_target.host != ''
+         and remove_zone_target.host in remove_zone_answered }}
+  run_once: true
+
+- name: Report that zone {{ remove_zone }} cannot be reached
+  debug:
+    msg: >-
+      Zone {{ remove_zone }}'s primary{{ primary }} cannot be reached, or its
+      Postgres is not running, so it is cleared from the other zones only. Its
+      own databases keep their Spock configuration and data. If it comes back
+      while it is still in the inventory, run this again to detach and reset
+      it as well; otherwise erase its hosts before they are used again.
+  vars:
+    primary: >-
+      {{ ' ' ~ remove_zone_target.host if remove_zone_target.host else '' }}
+  run_once: true
+  when: not remove_zone_reachable | bool
+
+# What each zone's primary has in Spock, read with the same task file
+# setup_pgedge classifies a cluster with: whether each database exists and has
+# Spock, whether it holds tables of its own, and, where Spock is installed, the
+# zone's own node, the nodes it subscribes to, and whether a copy of schema or
+# data is still under way. Only the zone being removed decides anything with
+# it here, but the other zones' answers are what that decision is checked
+# against. A host that did not answer the ping records an empty state.
+
+- name: Read the Spock state of each zone's primary
+  include_role:
+    name: role_config
+    tasks_from: spock_state
+  vars:
+    pgedge_spock_state_here: >-
+      {{ inventory_hostname == remove_zone_own_primary
+         and inventory_hostname in remove_zone_answered }}
+
+# Refuse when no other zone holds a complete copy of a database that the zone
+# holds data in: removing it would reset the last copy there is. Another zone
+# counts when it has its node and tables of its own, is not still copying
+# them, and either subscribes to the zone and is subscribed to by it -- an
+# ordinary member -- or no longer subscribes to it at all, as after an earlier
+# run that removed the zone while it was down. A zone partway through joining
+# from this one has a subscription from it and none back, and does not count.
+# When the zone cannot be reached, nothing of its own is touched, so there is
+# nothing to refuse.
+
+- name: Ensure another zone holds a complete copy of each database
+  assert:
+    that:
+    - sole | length == 0
+    fail_msg: >-
+      Zone {{ remove_zone }} holds the only complete copy of
+      {{ sole | join(', ') }}: no other zone has its own Spock node and a
+      finished copy of the data there, while either being fully subscribed
+      with zone {{ remove_zone }} or already detached from it. Removing it
+      would drop that copy, so nothing has been changed. Join another zone
+      first, or take a backup and use wipe_cluster if the cluster itself is to
+      go.
+    quiet: true
+  vars:
+    target: "{{ hostvars[remove_zone_target.host].pgedge_spock_state }}"
+    others: >-
+      {{ remove_zone_remaining | map(attribute='host')
+         | map('extract', hostvars) | selectattr('pgedge_spock_state', 'defined')
+         | map(attribute='pgedge_spock_state') | select | list }}
+    sole: >-
+      {%- set out = [] -%}
+      {%- for db, d in target.dbs.items() -%}
+      {%-   if d.node and d.has_user_tables -%}
+      {%-     set partners = [] -%}
+      {%-     for o in others -%}
+      {%-       set od = o.dbs[db] | default({}) -%}
+      {%-       set subscribed = remove_zone_node in od.subs | default([])
+                                     | map(attribute='provider') | list -%}
+      {%-       if od.node | default(none) and od.has_user_tables | default(false)
+                   and not od.copying | default(false)
+                   and (not subscribed or od.node in d.subs
+                                          | map(attribute='provider') | list) -%}
+      {%-         set _ = partners.append(o.zone) -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     if not partners -%}{%- set _ = out.append(db) -%}{%- endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+  when: remove_zone_reachable | bool

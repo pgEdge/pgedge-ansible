@@ -1,0 +1,507 @@
+---
+# Verify a cluster that a zone joined, or one about to have a zone join it:
+# every zone of the inventory is checked as a full member, so the same playbook
+# serves before a join, with the join layer left off, and after it, with the
+# layer on and the new zone among the zones checked. Run it once the trickle
+# writer has stopped (tests/playbooks/zone-join-trickle.yml -e
+# zone_join_trickle=stop), against the inventories the deployment ran with:
+#
+#   ansible-playbook tests/verify/verify-zone-join.yml \
+#     -i tests/inventories/simple-cluster.yml \
+#     -i tests/inventories/zone-join.yml [-i <join layer>]
+#
+# This checks what a join promises, in every database in db_names:
+#
+#   - each zone's own Spock node is edge<zone>, and it has an enabled,
+#     replicating subscription from every other zone, and only one from each,
+#   - every logical slot on a zone's primary is in use, one for each other
+#     zone, so a join left none behind holding WAL,
+#   - once a sync event from every zone has reached every other, every zone
+#     holds the same zone_join_trickle rows, and exactly the rows 1 to N for
+#     each zone the trickle wrote to, N being the last it recorded: nothing
+#     lost and nothing written twice,
+#   - every zone holds the same zone_join_seed rows,
+#   - Spock recorded no conflict and no apply error on either table, which a
+#     row applied twice would cause,
+#   - every zone has the same replication sets, with the same tables in them,
+#     so the joined zone sends on what its source sends,
+#   - and in an HA cluster, every node of every zone streams from its zone's
+#     primary.
+#
+# After remove_zone, pass -e zone_join_verify_without=<N> to check the zones
+# that remain as the whole cluster: zone N's hosts stay in the inventory but
+# are left out of every check, and every other zone must have dropped it. The
+# rows the trickle wrote on zone N before it stopped still have to be on every
+# other zone, since remove_zone waits for them to arrive.
+
+# What the trickle writer recorded, from the client it ran on. A writer still
+# running would go on adding rows while the zones are compared.
+
+- hosts: clients
+  become: true
+  any_errors_fatal: true
+
+  vars:
+    state_dir: /var/lib/zone-join-trickle
+
+  tasks:
+  - name: List any trickle writers still running
+    shell: >-
+      systemctl list-units --plain --no-legend --state=active
+      'zone-join-trickle-*' | awk '{print $1}'
+    register: running_writers
+    changed_when: false
+
+  - name: Assert the trickle has stopped
+    assert:
+      that:
+      - running_writers.stdout_lines | length == 0
+      fail_msg: >-
+        {{ running_writers.stdout_lines | join(', ') }} still running. Stop
+        them first with tests/playbooks/zone-join-trickle.yml
+        -e zone_join_trickle=stop.
+
+  - name: Find what each writer recorded
+    find:
+      paths: "{{ state_dir }}"
+      patterns: "*.last"
+    register: recorded_files
+
+  - name: Read what each writer recorded
+    slurp:
+      src: "{{ item.path }}"
+    register: recorded
+    loop: "{{ recorded_files.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  # As {database: {zone: last row}}, from files named <database>-zone<N>.last.
+
+  - name: Note the last row each writer recorded
+    set_fact:
+      trickle_recorded: >-
+        {% set found = {} %}
+        {%- for r in recorded.results %}
+        {%-   set name = r.item.path | basename
+                         | regex_replace('[.]last$', '') %}
+        {%-   set parts = name.split('-zone') %}
+        {%-   set db = parts[:-1] | join('-zone') %}
+        {%-   set z = parts | last | int %}
+        {%-   set _ = found.update({db: found.get(db, {})
+                         | combine({z: r.content | b64decode | trim | int})}) %}
+        {%- endfor %}{{ found }}
+
+- hosts: pgedge
+  become: true
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    # How long a zone may take to apply another's sync event, in seconds. The
+    # trickle has stopped, so this only covers a backlog left by a join.
+    sync_timeout: 300
+    without: "{{ zone_join_verify_without | default(0) | int }}"
+    checked: "{{ zone | int != without | int }}"
+    is_primary: "{{ checked | bool and inventory_hostname == zone_primary }}"
+    zones: "{{ zone_list | map('int') | reject('eq', without | int) | sort }}"
+    other_zones: "{{ zones | reject('eq', zone | int) | list }}"
+    zone_primaries: >-
+      {% set found = {} %}
+      {%- for host in groups['pgedge']
+              if hostvars[host].zone | int != without | int %}
+      {%-   set _ = found.update({hostvars[host].zone | int:
+                                  hostvars[host].zone_primary}) %}
+      {%- endfor %}{{ found }}
+    trickle_recorded: >-
+      {{ hostvars[groups['clients'] | default([]) | first | default('')]
+         .trickle_recorded | default({})
+         if groups['clients'] | default([]) | length > 0 else {} }}
+    # One row per (database, other zone) pair, for the loops below.
+    db_and_other_zones: "{{ db_names | product(other_zones) | list }}"
+
+  # role_config's defaults reach the play only once the first include_role has
+  # made them public, and this is evaluated for that very task too.
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version | default(17) }}/bin:/usr/lib/postgresql/{{ pg_version | default(17) }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  # Every check runs on the node that answers for its zone in Spock. In an HA
+  # zone the others are replicas, which follow it physically.
+
+  - name: Find each zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+    when: checked | bool
+
+  - name: Read this zone's own Spock node
+    become_user: postgres
+    command: >-
+      psql -d {{ item }} -X -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT n.node_name FROM spock.local_node l
+         JOIN spock.node n ON n.node_id = l.node_id"
+    register: local_node
+    changed_when: false
+    loop: "{{ db_names }}"
+    when: is_primary | bool
+
+  - name: Assert this zone's node is edge{{ zone }}
+    assert:
+      that:
+      - item.stdout | trim == 'edge' ~ zone
+      fail_msg: >-
+        {{ item.item }} on {{ inventory_hostname }} has the local node
+        "{{ item.stdout | trim }}", not edge{{ zone }}.
+    loop: "{{ local_node.results }}"
+    loop_control:
+      label: "{{ item.item | default('') }}"
+    when: is_primary | bool
+
+  # Waited for, since a deployment run that restarted Postgres leaves apply
+  # workers reconnecting for a while.
+
+  - name: Wait for a replicating subscription from every other zone
+    become_user: postgres
+    command: >-
+      psql -d {{ item }} -X -t -A -F '|' -v ON_ERROR_STOP=1 -c
+      "SELECT n.node_name, s.sub_name, s.sub_enabled, st.status
+         FROM spock.subscription s
+         JOIN spock.node n ON n.node_id = s.sub_origin
+         LEFT JOIN LATERAL spock.sub_show_status(s.sub_name) st ON true
+        ORDER BY n.node_name, s.sub_name"
+    register: subscriptions
+    until: >-
+      subscriptions.rc == 0 and
+      subscriptions.stdout_lines | map('split', '|') | map('first') | list
+        == other_zones | map('regex_replace', '^', 'edge') | sort and
+      subscriptions.stdout_lines | map('split', '|')
+        | rejectattr(2, 'eq', 't') | list | length == 0 and
+      subscriptions.stdout_lines | map('split', '|')
+        | rejectattr(3, 'eq', 'replicating') | list | length == 0
+    retries: 60
+    delay: 5
+    failed_when: false
+    changed_when: false
+    loop: "{{ db_names }}"
+    when: is_primary | bool
+
+  - name: Assert the zones are a full mesh
+    assert:
+      that:
+      - providers == expected
+      - rows | rejectattr(2, 'eq', 't') | list | length == 0
+      - rows | rejectattr(3, 'eq', 'replicating') | list | length == 0
+      fail_msg: >-
+        {{ item.item }} on {{ inventory_hostname }} (zone {{ zone }}) should
+        have one enabled, replicating subscription from each of
+        {{ expected | join(', ') }}, and has
+        {{ item.stdout_lines | join('; ') or 'none' }}
+        {{- (' (' ~ item.stderr | trim ~ ')') if item.stderr | default('') | trim else '' }}.
+    vars:
+      rows: "{{ item.stdout_lines | map('split', '|') | list }}"
+      providers: "{{ rows | map('first') | list }}"
+      expected: "{{ other_zones | map('regex_replace', '^', 'edge') | sort }}"
+    loop: "{{ subscriptions.results }}"
+    loop_control:
+      label: "{{ item.item | default('') }}"
+    when: is_primary | bool
+
+  # Each other zone's subscription holds one slot here, and its walsender is
+  # attached while it replicates. Anything more is a slot nothing consumes: one
+  # a join created and never released, or one a removed zone left, and it
+  # keeps WAL on this zone for as long as it exists.
+
+  - name: Wait for every logical slot here to be in use
+    become_user: postgres
+    command: >-
+      psql -d postgres -X -t -A -F '|' -v ON_ERROR_STOP=1 -c
+      "SELECT database, slot_name, active FROM pg_replication_slots
+        WHERE slot_type = 'logical' ORDER BY database, slot_name"
+    register: slots
+    until: >-
+      slots.rc == 0 and
+      slots.stdout_lines | map('split', '|') | rejectattr(2, 'eq', 't')
+        | list | length == 0
+    retries: 24
+    delay: 5
+    failed_when: false
+    changed_when: false
+    when: is_primary | bool
+
+  - name: Assert each other zone holds exactly one slot here, in use
+    assert:
+      that:
+      - rows | rejectattr(2, 'eq', 't') | list | length == 0
+      - rows | selectattr(0, 'in', db_names) | list | length
+        == db_names | length * other_zones | length
+      fail_msg: >-
+        {{ inventory_hostname }} (zone {{ zone }}) should hold one logical
+        slot, in use, per other zone in each of {{ db_names | join(', ') }}:
+        {{ db_names | length * other_zones | length }} in all. It holds
+        {{ slots.stdout_lines | join('; ') or 'none' }}.
+    vars:
+      rows: "{{ slots.stdout_lines | map('split', '|') | list }}"
+    when: is_primary | bool
+
+  # Settle: a sync event from every zone, waited for on every other. Once each
+  # has arrived, every zone has applied everything every other zone committed
+  # before it, and their tables can be compared.
+
+  - name: Mark this zone's WAL with a sync event
+    become_user: postgres
+    command: >-
+      psql -d {{ item }} -X -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT spock.sync_event()"
+    register: sync_events
+    changed_when: false
+    loop: "{{ db_names }}"
+    when: is_primary | bool
+
+  - name: Wait for every other zone's sync event to be applied here
+    become_user: postgres
+    command: >-
+      psql -d {{ item.0 }} -X -t -A -v ON_ERROR_STOP=1 -c
+      "CALL spock.wait_for_sync_event(NULL, 'edge{{ item.1 }}'::name,
+                                      '{{ lsn }}'::pg_lsn, {{ sync_timeout }})"
+    vars:
+      lsn: >-
+        {{ hostvars[zone_primaries[item.1]].sync_events.results
+           | selectattr('item', 'eq', item.0) | map(attribute='stdout')
+           | first | trim }}
+    register: sync_waits
+    changed_when: false
+    failed_when: sync_waits.rc != 0 or sync_waits.stdout | trim != 't'
+    loop: "{{ db_and_other_zones }}"
+    loop_control:
+      label: "{{ item.0 }} from zone {{ item.1 }}"
+    when: is_primary | bool
+
+  # The trickle's rows per zone they were written in, with a digest of their
+  # sequence numbers and timestamps: equal digests mean equal rows.
+
+  - name: Read the trickle's rows
+    become_user: postgres
+    command: >-
+      psql -d {{ item }} -X -t -A -F '|' -v ON_ERROR_STOP=1 -c
+      "SELECT origin_zone, count(*), min(seq), max(seq),
+              md5(string_agg(seq::text || '@' || extract(epoch FROM ts)::text,
+                             ',' ORDER BY seq))
+         FROM zone_join_trickle GROUP BY origin_zone ORDER BY origin_zone"
+    register: trickle_rows
+    changed_when: false
+    loop: "{{ db_names }}"
+    when: is_primary | bool
+
+  # Order-free, so it costs one pass over the table: a sum of a 64-bit hash of
+  # each row, which agrees between two zones only if they hold the same rows.
+
+  - name: Read the seed rows
+    become_user: postgres
+    command: >-
+      psql -d {{ item }} -X -t -A -F '|' -v ON_ERROR_STOP=1 -c
+      "SELECT count(*), coalesce(sum(hashtextextended(s::text, 0)), 0)
+         FROM zone_join_seed s"
+    register: seed_rows
+    changed_when: false
+    loop: "{{ db_names }}"
+    when: is_primary | bool
+
+  # A row applied to a zone that already has it is an insert_exists conflict
+  # in spock.resolutions, which the collection has Spock keep
+  # (spock.save_resolutions), or an apply error in spock.exception_log. Both
+  # tables are in Spock from 5.0.0 on.
+
+  - name: Read the conflicts and apply errors on the join tables
+    become_user: postgres
+    command: >-
+      psql -d {{ item }} -X -t -A -F '|' -v ON_ERROR_STOP=1 -c
+      "SELECT 'conflict', relname, conflict_type, count(*)
+         FROM spock.resolutions
+        WHERE relname IN ('public.zone_join_trickle', 'public.zone_join_seed')
+        GROUP BY relname, conflict_type
+       UNION ALL
+       SELECT 'error', table_schema || '.' || table_name, operation, count(*)
+         FROM spock.exception_log
+        WHERE table_name IN ('zone_join_trickle', 'zone_join_seed')
+        GROUP BY table_schema, table_name, operation"
+    register: conflicts
+    changed_when: false
+    loop: "{{ db_names }}"
+    when: is_primary | bool
+
+  - name: Assert Spock recorded no conflict or error on the join tables
+    assert:
+      that:
+      - item.stdout | trim | length == 0
+      fail_msg: >-
+        {{ item.item }} on {{ inventory_hostname }} (zone {{ zone }}) recorded
+        {{ item.stdout_lines | join('; ') }}. A row reached this zone twice,
+        or failed to apply.
+    loop: "{{ conflicts.results }}"
+    loop_control:
+      label: "{{ item.item | default('') }}"
+    when: is_primary | bool
+
+  # Each set with its flags, its tables (with any column list and row filter)
+  # and its sequences.
+
+  - name: Read the replication sets
+    become_user: postgres
+    command: >-
+      psql -d {{ item }} -X -t -A -F '|' -v ON_ERROR_STOP=1 -c
+      "SELECT rs.set_name, rs.replicate_insert, rs.replicate_update,
+              rs.replicate_delete, rs.replicate_truncate,
+              coalesce((SELECT string_agg(t.set_reloid::regclass::text
+                                 || coalesce(' (' || array_to_string(t.set_att_list, ',') || ')', '')
+                                 || coalesce(' WHERE ' || pg_get_expr(t.set_row_filter, t.set_reloid), ''),
+                                 ', ' ORDER BY t.set_reloid::regclass::text)
+                          FROM spock.replication_set_table t
+                         WHERE t.set_id = rs.set_id), ''),
+              coalesce((SELECT string_agg(q.set_seqoid::regclass::text, ', '
+                                          ORDER BY q.set_seqoid::regclass::text)
+                          FROM spock.replication_set_seq q
+                         WHERE q.set_id = rs.set_id), '')
+         FROM spock.replication_set rs
+         JOIN spock.local_node l ON l.node_id = rs.set_nodeid
+        ORDER BY rs.set_name"
+    register: repsets
+    changed_when: false
+    loop: "{{ db_names }}"
+    when: is_primary | bool
+
+  - name: Note what each zone holds
+    set_fact:
+      zone_join_state: >-
+        {% set found = {} %}
+        {%- for db in db_names %}
+        {%-   set _ = found.update({db: {
+                'trickle': trickle_rows.results | selectattr('item', 'eq', db)
+                           | map(attribute='stdout_lines') | first,
+                'seed': seed_rows.results | selectattr('item', 'eq', db)
+                        | map(attribute='stdout') | first | trim,
+                'repsets': repsets.results | selectattr('item', 'eq', db)
+                           | map(attribute='stdout_lines') | first}}) %}
+        {%- endfor %}{{ found }}
+    when: is_primary | bool
+
+  # Compared once, across the zones. The first zone stands for the cluster:
+  # before a join it is a member like any other, and after one it is the zone
+  # the joined zone copied from.
+
+  - name: Assert every zone holds the same rows and replication sets
+    assert:
+      that:
+      - differing | length == 0
+      fail_msg: >-
+        Zone {{ zones | first }} holds, in {{ item.0 }}, {{ item.1 }}
+        {{ reference }}; {{ differing | join('; ') }}.
+    vars:
+      reference: >-
+        {{ hostvars[zone_primaries[zones | first]].zone_join_state[item.0][item.1] }}
+      differing: >-
+        {% set found = [] %}
+        {%- for z in zones[1:] %}
+        {%-   set held = hostvars[zone_primaries[z]].zone_join_state[item.0][item.1] %}
+        {%-   if held != reference %}
+        {%-     set _ = found.append('zone ' ~ z ~ ' holds ' ~ held) %}
+        {%-   endif %}
+        {%- endfor %}{{ found }}
+    loop: "{{ db_names | product(['trickle', 'seed', 'repsets']) | list }}"
+    loop_control:
+      label: "{{ item.0 }} {{ item.1 }}"
+    run_once: true
+
+  - name: Assert the seed rows are there
+    assert:
+      that:
+      - seed.split('|')[0] | int > 0
+      fail_msg: >-
+        {{ item }} has no zone_join_seed rows. Run
+        tests/playbooks/zone-join-seed.yml before the join.
+    vars:
+      seed: "{{ hostvars[zone_primaries[zones | first]].zone_join_state[item].seed }}"
+    loop: "{{ db_names }}"
+    run_once: true
+
+  # The zones agree; now that they agree with the writer. A zone it wrote to
+  # holds exactly the rows 1 to the last it recorded. Any other zone's rows
+  # were written by nothing this test knows of.
+
+  - name: Assert the trickle's rows are exactly the rows it recorded
+    assert:
+      that:
+      - unexpected | length == 0
+      fail_msg: >-
+        In {{ item }}, the trickle recorded {{ recorded }} as the last row per
+        zone, and the zones hold (zone|rows|first|last|digest)
+        {{ held | join('; ') or 'none' }}: {{ unexpected | join('; ') }}.
+    vars:
+      recorded: "{{ trickle_recorded[item] | default({}) }}"
+      held: "{{ hostvars[zone_primaries[zones | first]].zone_join_state[item].trickle }}"
+      unexpected: >-
+        {% set found = [] %}
+        {%- set by_zone = {} %}
+        {%- for line in held %}
+        {%-   set f = line.split('|') %}
+        {%-   set _ = by_zone.update({f[0] | int: f}) %}
+        {%- endfor %}
+        {%- for z, last in recorded.items() if last | int > 0 %}
+        {%-   set f = by_zone.get(z | int) %}
+        {%-   if f is none %}
+        {%-     set _ = found.append('none of zone ' ~ z ~ "'s rows arrived") %}
+        {%-   elif f[1] | int != last | int or f[2] | int != 1
+                 or f[3] | int != last | int %}
+        {%-     set _ = found.append('zone ' ~ z ~ ' has ' ~ f[1] ~ ' rows, '
+                                     ~ f[2] ~ ' to ' ~ f[3] ~ ', not 1 to '
+                                     ~ last) %}
+        {%-   endif %}
+        {%- endfor %}
+        {%- for z in by_zone if z not in (recorded.keys() | map('int') | list) %}
+        {%-   set _ = found.append('zone ' ~ z ~ ' has rows the trickle did '
+                                   ~ 'not record writing') %}
+        {%- endfor %}{{ found }}
+    loop: "{{ db_names }}"
+    run_once: true
+
+  # In an HA cluster every node of a zone, the joined zone's included, has to
+  # be a copy of its zone's primary, streaming from it.
+
+  - name: Read Patroni's view of the zone
+    uri:
+      url: "http://127.0.0.1:8008/cluster"
+      return_content: true
+    register: patroni_cluster
+    retries: 30
+    delay: 2
+    until: >-
+      patroni_cluster.json is defined and
+      patroni_cluster.json.members | length == nodes_in_zone | length and
+      patroni_cluster.json.members
+        | selectattr('role', 'ne', 'leader')
+        | rejectattr('state', 'eq', 'streaming') | list | length == 0
+    failed_when: false
+    when:
+    - is_ha_cluster | bool
+    - checked | bool
+
+  - name: Assert every node of the zone streams from its primary
+    vars:
+      members: "{{ patroni_cluster.json.members | default([]) }}"
+    assert:
+      that:
+      - members | length == nodes_in_zone | length
+      - members | selectattr('role', 'eq', 'leader')
+                | map(attribute='host') | list == [zone_primary]
+      - members | selectattr('role', 'ne', 'leader')
+                | rejectattr('state', 'eq', 'streaming') | list | length == 0
+      fail_msg: >-
+        Patroni on {{ inventory_hostname }} reports {{ members }} for zone
+        {{ zone }}, whose nodes are {{ nodes_in_zone }} and whose primary is
+        {{ zone_primary }}. Every node should be there, the primary leading
+        and the rest streaming from it.
+    when:
+    - is_ha_cluster | bool
+    - checked | bool
