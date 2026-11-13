@@ -5,9 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v2.2.0
 
-The [release notes](release_notes/unreleased.md#changes) describe each change
+This release lets a running cluster change shape. A zone can join a cluster
+that already holds data while the other zones keep taking writes, and the new
+`remove_zone` role takes one out again. A node can join a running Ultra-HA
+zone, and databases added to `db_names` reach a running cluster. Running the
+deployment playbook again against a deployed cluster now changes nothing,
+even after Patroni has moved a zone's leader. `install_repos` installs the
+client certificate that pgEdge's package repositories now require. Hosts
+that install from those repositories need the certificate, and playbooks and
+inventories that set different `db_names` on different nodes need changes;
+see [Upgrading from v2.1.0](release_notes/v2.2.0.md#upgrading-from-v210).
+
+The [release notes](release_notes/v2.2.0.md#changes) describe each change
 in full.
 
 ### Added
@@ -58,6 +69,11 @@ in full.
   a name listed there and in `db_names` both. (EE-44)
 - `init_server` refuses an inventory whose pgEdge nodes list different
   databases in `db_names` or `unmanaged_db_names`. (EE-44)
+- `install_repos` installs a client certificate for pgEdge's package
+  repositories, given inline in `pgedge_client_cert` and `pgedge_client_key`
+  or as files in `pgedge_client_cert_src` and `pgedge_client_key_src`, and
+  `pgedge-subscription-manager` enables the repositories with it. Without
+  one, the repositories stay disabled and the role warns. (#59)
 
 ### Changed
 
@@ -72,6 +88,12 @@ in full.
 - The playbook configuration guide states that running the playbooks with
   `--limit` is not supported: every run should cover the whole inventory.
   (EE-45)
+- `install_repos` downloads `pgedge-release` and the RPM signing key from
+  `downloads.pgedge.com`, which needs no certificate, and installs `openssl`
+  on Debian-based systems. (#59)
+- The Simple Cluster and Ultra-HA workflows need the
+  `PGEDGE_REPO_CLIENT_CRT` and `PGEDGE_REPO_CLIENT_KEY` secrets, and stop
+  when either is empty. (#59)
 
 ### Fixed
 
