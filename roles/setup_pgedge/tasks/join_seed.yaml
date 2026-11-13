@@ -138,8 +138,11 @@
         {{ pgedge_join_db }} before the copy{{ why }}. The join goes on. Writes zone {{ pgedge_join_source }} applied from
         the other zones just before the copy's snapshot may reach zone
         {{ pgedge_join_zone }} twice, in the copy and again by replication.
-        Spock resolves each as a conflict, such as insert_exists, and logs it
-        in spock.resolutions on zone {{ pgedge_join_zone }}.
+        On a table with a primary key or unique index, Spock resolves the
+        second as a conflict, such as insert_exists, and logs it in
+        spock.resolutions on zone {{ pgedge_join_zone }}. On a table with
+        neither, it becomes an extra row there: check such tables for
+        duplicate rows after the join.
     vars:
       why: >-
         {{ (': ' ~ pgedge_join_paused.msg | trim)

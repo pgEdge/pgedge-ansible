@@ -237,9 +237,13 @@ it. The join changes them in the following ways:
   default) in any case. The source keeps taking its own writes during the
   pause; only applying the other zones' writes on the source waits, and it
   catches up afterwards. If the workers cannot all be paused within
-  `spock.pause_timeout`, the join says so and goes on: writes the source
-  applied just before the snapshot may then reach the new zone twice, which
-  Spock resolves as conflicts and logs in `spock.resolutions`.
+  `spock.pause_timeout`, the join says so and goes on. Then, or if the
+  workers are released before the copy's snapshot starts, writes the source
+  applied from the other zones in between may reach the new zone twice: once
+  in the copy and again by replication. On a table with a primary key or
+  unique index, Spock resolves the second as a conflict and logs it in
+  `spock.resolutions`. On a table with neither, it becomes an extra row on
+  the new zone, so check such tables for duplicate rows after the join.
 - **Load on the source.** The copy reads every table on the source zone, and
   its snapshot holds back vacuum there until the data is copied.
 
