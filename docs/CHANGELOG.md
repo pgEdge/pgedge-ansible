@@ -47,7 +47,8 @@ in full.
   elect a leader, rather than taking the first node as primary.
   `finalize_backrest` uses it in place of its own lookup. (EE-44) With
   `zone_primary_read_only`, it never starts Patroni and leaves the primary of
-  such a zone empty, for `remove_zone`. (EE-45)
+  such a zone, or of one whose Patroni runs without a leader, empty, for
+  `remove_zone`. (EE-45)
 - New `sizing_floor` task file in `role_config` reads back the worker and
   slot pool sizes each zone was last configured with, and the calculated
   sizes never go below them. (EE-44)

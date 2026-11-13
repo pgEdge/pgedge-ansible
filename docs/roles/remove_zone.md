@@ -198,9 +198,9 @@ and makes every change there. The replicas follow through physical
 replication, and Spock's slot synchronization removes the dropped slots from
 them, as long as `spock.drop_extra_slots` keeps its default of `on`. The zone counts as reachable when its primary is.
 The role only asks Patroni which node leads each zone. It never starts
-Patroni, so a zone whose Patroni is stopped on every node has no primary: the
-zone being removed is then treated as one that cannot be reached, and any
-other zone stops the run.
+Patroni, so a zone whose Patroni is stopped on every node, or runs without a
+leader, has no primary: the zone being removed is then treated as one that
+cannot be reached, and any other zone stops the run.
 
 ## Idempotency
 

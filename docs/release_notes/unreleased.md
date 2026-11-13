@@ -81,7 +81,8 @@ built, so upgrade any older zone by hand before a join.
   the source zone's apply workers pause for a few seconds, so that the
   positions the join records match the copy's snapshot; Spock 5.0's own copy
   can otherwise lag the snapshot by up to a second and apply those writes
-  twice.
+  twice. A pause that cannot be had is reported, and the join goes on with
+  Spock's own behaviour.
 
   A join that stops partway resumes when the same command runs again: every
   step checks whether it is done. The only thing stored is that a join has
@@ -114,8 +115,8 @@ built, so upgrade any older zone by hand before a join.
   zone that subscribes to it to apply it, so that no write the zone committed
   is dropped with it; a zone that falls short stops the run with nothing
   changed. It only asks Patroni which node leads each zone, and never starts
-  Patroni: a zone being removed whose Patroni or Postgres is stopped is
-  treated as one that cannot be reached. Then, one database at a time, every
+  Patroni: a zone being removed whose Patroni or Postgres is stopped, or
+  whose Patroni has no leader, is treated as one that cannot be reached. Then, one database at a time, every
   other zone drops its subscriptions from the zone; the zone, when it can be
   reached, drops its own; and every other zone drops the replication slots
   that served it once they are idle, its Spock node and the rows
@@ -195,8 +196,8 @@ built, so upgrade any older zone by hand before a join.
   lookup it kept to itself. See
   [Zone Primary](../roles/role_config.md#zone-primary). (EE-44) A caller
   that must change nothing sets `zone_primary_read_only`: Patroni is then
-  never started, a built zone with no running leader records an empty
-  `zone_primary`, and a primary outside the play's hosts is allowed, all
+  never started, a built zone with no running leader, whether Patroni is
+  stopped or runs without one, records an empty `zone_primary`, and a primary outside the play's hosts is allowed, all
   instead of stopping the run. `remove_zone` uses it. (EE-45)
 - New `sizing_floor` task file in `role_config` reads back the
   `max_worker_processes`, `max_replication_slots`, `max_wal_senders` and

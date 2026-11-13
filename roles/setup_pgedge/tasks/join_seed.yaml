@@ -126,6 +126,28 @@
     - copy_sub not in pgedge_join_subs
     - pgedge_join_others | length > 0
 
+  # The pause raises an error when the workers do not all reach a point
+  # between transactions within spock.pause_timeout. The join goes on without
+  # it, as described above, but the operator should know why the copy may
+  # bring conflicts.
+
+  - name: "Step 5: report that zone {{ pgedge_join_source }}'s apply workers could not be paused"
+    debug:
+      msg: >-
+        Zone {{ pgedge_join_source }}'s apply workers could not be paused in
+        {{ pgedge_join_db }} before the copy{{ why }}. The join goes on. Writes zone {{ pgedge_join_source }} applied from
+        the other zones just before the copy's snapshot may reach zone
+        {{ pgedge_join_zone }} twice, in the copy and again by replication.
+        Spock resolves each as a conflict, such as insert_exists, and logs it
+        in spock.resolutions on zone {{ pgedge_join_zone }}.
+    vars:
+      why: >-
+        {{ (': ' ~ pgedge_join_paused.msg | trim)
+           if pgedge_join_paused.msg | default('') | trim else '' }}
+    when:
+    - pgedge_join_paused is not skipped
+    - pgedge_join_paused.query_result is not defined
+
   - name: "Step 5: read how far zone {{ pgedge_join_source }} has applied each other member"
     community.postgresql.postgresql_query:
       login_port: "{{ pg_port }}"

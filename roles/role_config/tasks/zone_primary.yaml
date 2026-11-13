@@ -34,7 +34,8 @@
 #
 # A caller that must change nothing, such as remove_zone's preflight, sets
 # zone_primary_read_only. Patroni is then never started, and a built zone with
-# no running leader records an empty zone_primary rather than stopping the run:
+# no running leader, whether Patroni is stopped or runs without electing one,
+# records an empty zone_primary rather than stopping the run:
 # its primary cannot be known without starting something, and the caller
 # decides what an unknown primary means. Such a caller only reads, so the
 # primary need not be one of the play's hosts either: a follower's Patroni can
@@ -130,12 +131,19 @@
   - zone_primary_patroni.status.ActiveState | default('') == 'active'
     or zone_primary_patroni_start is changed
 
+# A read-only caller also accepts no leader at all: a zone whose Patroni runs
+# but cannot elect one has no primary to name, and the caller decides what an
+# unknown primary means, as for a zone whose Patroni does not run. Patroni
+# failing to answer, or naming more than one leader or one outside the zone,
+# still stops the run.
+
 - name: Ensure Patroni reported exactly one leader among this zone's nodes
   assert:
     that:
     - zone_primary_leader.rc == 0
-    - zone_primary_leader.stdout_lines | length == 1
+    - zone_primary_leader.stdout_lines | length == 1 or none_allowed
     - zone_primary_leader.stdout | trim in nodes_in_zone
+      or (none_allowed and zone_primary_leader.stdout_lines | length == 0)
     fail_msg: >-
       Patroni cluster {{ patroni_scope }} should have one leader among
       {{ nodes_in_zone | join(', ') }}, but patronictl list reported
@@ -145,6 +153,8 @@
           if zone_primary_leader.stderr | default('') | trim else '' }}.
       Nothing can be written to the zone until it has a leader; see
       'patronictl list {{ patroni_scope }}' on {{ inventory_hostname }}.
+  vars:
+    none_allowed: "{{ zone_primary_read_only | default(false) | bool }}"
   when: zone_primary_leader is not skipped
 
 - name: Gather the leaders this zone's nodes reported

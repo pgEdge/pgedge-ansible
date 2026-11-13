@@ -236,7 +236,10 @@ it. The join changes them in the following ways:
   and Spock releases the workers after `spock.pause_timeout` (10 seconds by
   default) in any case. The source keeps taking its own writes during the
   pause; only applying the other zones' writes on the source waits, and it
-  catches up afterwards.
+  catches up afterwards. If the workers cannot all be paused within
+  `spock.pause_timeout`, the join says so and goes on: writes the source
+  applied just before the snapshot may then reach the new zone twice, which
+  Spock resolves as conflicts and logs in `spock.resolutions`.
 - **Load on the source.** The copy reads every table on the source zone, and
   its snapshot holds back vacuum there until the data is copied.
 

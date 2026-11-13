@@ -183,7 +183,8 @@ Every write to the zone runs there, so a run without it would skip them.
 
 A caller that must change nothing sets `zone_primary_read_only: true` on the
 include. Patroni is then never started, and a built zone with no running
-leader records an empty `zone_primary` instead of stopping the run. Nor does
+leader, whether Patroni is stopped or runs without electing one, records an
+empty `zone_primary` instead of stopping the run. Nor does
 the run stop when the primary is not one of the play's hosts, as when a
 follower's Patroni names a leader whose host was unreachable. The caller
 decides what either case means. The `remove_zone` role includes it this way,
