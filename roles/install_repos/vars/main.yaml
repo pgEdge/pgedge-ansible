@@ -6,6 +6,18 @@ repo: "{{ repo_name if repo_name in ('release', 'staging', 'daily') else 'releas
 # family and the manager derives the same paths itself.
 pgedge_cert_dir: "{{ '/etc/pki/pgedge' if ansible_os_family == 'RedHat' else '/etc/pgedge' }}"
 
+# The owner and mode pgedge-subscription-manager gives the key. apt drops
+# privileges to _apt before fetching, so on Debian the key belongs to _apt;
+# dnf does not, so on RHEL it stays root's. Writing the key with anything else
+# would undo the manager's work on every run, and leave apt unable to read the
+# key until the manager ran again.
+pgedge_cert_key_owner: "{{ 'root' if ansible_os_family == 'RedHat' else '_apt' }}"
+pgedge_cert_key_mode: "{{ '0600' if ansible_os_family == 'RedHat' else '0400' }}"
+
+# The repository definition pgedge-release installs, and the line that the
+# manager's own status check takes to mean the repositories are enabled.
+pgedge_repo_file: "{{ '/etc/yum.repos.d/pgedge.repo' if ansible_os_family == 'RedHat' else '/etc/apt/sources.list.d/pgedge.sources' }}"
+
 # Everything below describes a repo_url of the site's own, in the repo_layout
 # it was given. pgEdge's own repository is defined by its pgedge-release
 # package instead, and none of this applies to it.

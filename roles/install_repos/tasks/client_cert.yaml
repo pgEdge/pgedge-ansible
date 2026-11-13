@@ -60,6 +60,7 @@
       owner: root
       group: root
       mode: '0644'
+    register: pgedge_cert_inline
     when: pgedge_client_cert | length > 0
     no_log: true
 
@@ -70,18 +71,19 @@
       owner: root
       group: root
       mode: '0644'
+    register: pgedge_cert_file
     when: pgedge_client_cert | length == 0
 
-  # Mode and ownership are left to pgedge-subscription-manager: apt drops
-  # privileges to _apt before fetching, so the key has to be readable by that
-  # user on Debian but root-only on RHEL.
+  # The key gets the owner and mode pgedge-subscription-manager would give it,
+  # so that a later run finds nothing to change; see vars/main.yaml.
   - name: Write the client key from a variable
     copy:
       content: "{{ pgedge_client_key | trim }}\n"
       dest: "{{ pgedge_cert_dir }}/client.key"
-      owner: root
+      owner: "{{ pgedge_cert_key_owner }}"
       group: root
-      mode: '0600'
+      mode: "{{ pgedge_cert_key_mode }}"
+    register: pgedge_key_inline
     when: pgedge_client_key | length > 0
     no_log: true
 
@@ -89,19 +91,46 @@
     copy:
       src: "{{ pgedge_client_key_src }}"
       dest: "{{ pgedge_cert_dir }}/client.key"
-      owner: root
+      owner: "{{ pgedge_cert_key_owner }}"
       group: root
-      mode: '0600'
+      mode: "{{ pgedge_cert_key_mode }}"
+    register: pgedge_key_file
     when: pgedge_client_key | length == 0
     no_log: true
 
+  # The same test the manager's status command makes: on RHEL a stanza with
+  # enabled=1, on Debian no "Enabled: no" line. pgedge-release ships the
+  # repositories disabled, so this also catches a package upgrade that put its
+  # disabled definition back. grep exits 1 when nothing matches; 2 means the
+  # file is missing or unreadable, which pgedge-release being installed rules
+  # out, so that fails.
+  - name: Look for the line that marks the pgEdge repositories enabled or disabled
+    command: >-
+      grep -q {{ "'^enabled=1'" if ansible_os_family == 'RedHat' else "'^Enabled: no$'" }}
+      {{ pgedge_repo_file }}
+    register: pgedge_repo_grep
+    changed_when: false
+    failed_when: pgedge_repo_grep.rc > 1
+    check_mode: false
+
+  # Running the manager rewrites the repository definition and refreshes the
+  # package cache, so it runs only when there is something for it to do: a
+  # certificate or key that changed, or repositories it has not enabled yet.
+  # A second run against a host it has set up then changes nothing.
   - name: Validate the certificate and enable the pgEdge repositories
     command: >-
       pgedge-subscription-manager install
       {{ pgedge_cert_dir }}/client.crt {{ pgedge_cert_dir }}/client.key --force
     register: pgedge_sm
-    changed_when: true
+    vars:
+      pgedge_repos_enabled: >-
+        {{ (pgedge_repo_grep.rc == 0) == (ansible_os_family == 'RedHat') }}
+    when: >-
+      not (pgedge_repos_enabled | bool)
+      or pgedge_cert_inline is changed or pgedge_cert_file is changed
+      or pgedge_key_inline is changed or pgedge_key_file is changed
 
   - name: Show what the subscription manager did
     debug:
       var: pgedge_sm.stdout_lines
+    when: pgedge_sm is not skipped

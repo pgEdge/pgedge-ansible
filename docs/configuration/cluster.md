@@ -124,6 +124,53 @@ repo_url: https://artifacts.example.com/pgedge-dnf
 repo_gpg_key: https://keys.example.com/pgedge-rsa.pub
 ```
 
+## pgedge_client_cert
+
+- Type: String
+- Default: (none)
+- Description: This parameter holds the PEM contents of the client
+  certificate that pgEdge's package repositories require: the certificate
+  followed by the certificate of its issuer. The `install_repos` role
+  installs it with `pgedge_client_key` and enables the repositories. Without
+  a certificate and its key, the repositories stay disabled and no pgEdge
+  package installs. Hosts that install from a `repo_url` of your own need no
+  certificate. This parameter takes precedence over
+  `pgedge_client_cert_src`. See
+  [Client Certificate for the pgEdge Repositories](../roles/install_repos.md#client-certificate-for-the-pgedge-repositories).
+
+## pgedge_client_key
+
+- Type: String
+- Default: (none)
+- Description: This parameter holds the PEM contents of the private key that
+  matches `pgedge_client_cert`. It takes precedence over
+  `pgedge_client_key_src`. Keep it in Ansible Vault or another secret store
+  rather than in a plain inventory.
+
+## pgedge_client_cert_src
+
+- Type: String
+- Default: (none)
+- Description: This parameter names a file on the Ansible controller that
+  holds the client certificate, for the `install_repos` role to copy to each
+  host in place of `pgedge_client_cert`.
+
+## pgedge_client_key_src
+
+- Type: String
+- Default: (none)
+- Description: This parameter names a file on the Ansible controller that
+  holds the private key, for the `install_repos` role to copy to each host in
+  place of `pgedge_client_key`.
+
+In the following example, the inventory points every host at a certificate
+and key on the controller:
+
+```yaml
+pgedge_client_cert_src: /etc/pgedge-ansible/client.crt
+pgedge_client_key_src: /etc/pgedge-ansible/client.key
+```
+
 ## db_names
 
 - Type: List
