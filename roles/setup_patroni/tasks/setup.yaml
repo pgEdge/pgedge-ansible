@@ -19,6 +19,14 @@
   become: true
   when: replica_from_backup | bool
 
+# The sizing in patroni.yml and the zone's store never drops beneath what the
+# zone was last configured with.
+
+- name: Read the pool sizes the zone was last configured with
+  include_role:
+    name: role_config
+    tasks_from: sizing_floor
+
 - name: Create configuration file for Patroni node
   template:
     src: templates/patroni.yml.j2
@@ -27,6 +35,7 @@
     owner: postgres
     group: postgres
   become: true
+  register: patroni_config
   # The file holds the superuser and replication passwords, and --diff would
   # print both.
   diff: false
@@ -51,6 +60,18 @@
   register: patroni_takeover
   when: inventory_hostname == first_node_in_zone
 
+# Starting Patroni on the first node bootstraps the zone only when the zone has
+# never been built. A first node that rejoins a built zone -- rebuilt, or just
+# stopped, after a failover moved the leader elsewhere -- starts as a replica
+# like any other member. zone_primary noted which kind of zone this is before
+# anything here wrote patroni.yml.
+
+- name: Note whether this run bootstrapped the zone
+  set_fact:
+    patroni_bootstrapped: >-
+      {{ patroni_takeover is changed
+         and not zone_primary_built | default(false) | bool }}
+
 - include_tasks: wait_for_primary.yaml
   when: inventory_hostname != first_node_in_zone
 
@@ -61,7 +82,27 @@
     enabled: true
     state: started
   become: true
+  register: patroni_joined
   when: inventory_hostname != first_node_in_zone
+
+# A running Patroni reads patroni.yml only when it starts or is told to reload,
+# and the file's local settings never pass through the zone's store. pg_hba is
+# the one that matters most: it names every database in db_names, so a database
+# added to a running zone stays closed to the other zones' subscriptions, which
+# arrive through the proxies, until Patroni rewrites pg_hba.conf from the new
+# file. A reload has it do that and reload Postgres, and flags anything that
+# needs a restart, which the restart steps below then see. A Patroni this run
+# started has read the file already.
+
+- name: Reload Patroni to apply its changed configuration
+  systemd_service:
+    name: "{{ patroni_service_name }}"
+    state: reloaded
+  become: true
+  when:
+  - patroni_config is changed
+  - patroni_takeover is not changed
+  - patroni_joined is not changed
 
 # Wait for Patroni to become ready before sending it commands.
 
@@ -81,21 +122,21 @@
 # pending members are only reported, which leaves the restarts to a separate
 # rolling-restart playbook or a maintenance window.
 #
-# A first node whose Patroni this run started is restarted regardless, and
-# whatever pg_allow_restart says: that restart is part of building the zone,
-# not a change to a running one. Patroni took over the Postgres setup_postgres
-# left running, configured only for running outside Patroni, and may not have
-# flagged it yet by the time it reports the member running. Stopping that
-# Postgres first and letting Patroni start it instead would avoid the restart,
-# but Patroni starts a stopped data directory with no leader as a replica and
-# promotes it, so every new zone would begin on timeline 2. Replicas need no
-# such care: Patroni starts their Postgres itself, with the zone's
-# configuration.
+# A first node whose Patroni this run started to bootstrap the zone is
+# restarted regardless, and whatever pg_allow_restart says: that restart is
+# part of building the zone, not a change to a running one. Patroni took over
+# the Postgres setup_postgres left running, configured only for running outside
+# Patroni, and may not have flagged it yet by the time it reports the member
+# running. Stopping that Postgres first and letting Patroni start it instead
+# would avoid the restart, but Patroni starts a stopped data directory with no
+# leader as a replica and promotes it, so every new zone would begin on
+# timeline 2. Replicas need no such care: Patroni starts their Postgres itself,
+# with the zone's configuration.
 
 - name: Find the members waiting on a restart
   include_tasks: pending_restart.yaml
   vars:
-    restart_regardless: "{{ patroni_takeover is changed }}"
+    restart_regardless: "{{ patroni_bootstrapped | bool }}"
 
 # Replicas go first. Raising a parameter such as max_worker_processes or
 # max_connections on the leader before its replicas leaves them unable to
@@ -124,7 +165,7 @@
   when:
   - restart_pending | bool
   - zone_leader | bool
-  - pg_allow_restart | bool or patroni_takeover is changed
+  - pg_allow_restart | bool or patroni_bootstrapped | bool
 
 # Lowering one of those parameters works the other way round. Patroni starts a
 # replica with the larger of the zone's value and the one in its control file,
@@ -172,4 +213,4 @@
   when:
   - restart_pending | bool
   - not pg_allow_restart | bool
-  - patroni_takeover is not changed
+  - not patroni_bootstrapped | bool

@@ -1,0 +1,85 @@
+---
+# Leave a node half-joined to its zone's etcd, as a deployment stopped partway
+# through the join would: added to the running cluster as a learner, and never
+# started or promoted. Run it with tests/inventories/ultra-ha-node-add.yml
+# layered on, before the deployment that adds the nodes it marks added_node.
+#
+# That deployment then finds this learner alongside a node new to the zone. etcd
+# allows a zone only one learner, so it has to finish this one before it can add
+# the other.
+#
+# Only meaningful where the collection deploys etcd; the caller skips it for any
+# other store.
+
+- hosts: pgedge
+  any_errors_fatal: true
+  become: true
+  gather_facts: false
+
+  vars:
+    nodes_in_zone: >-
+      {{ groups['pgedge'] | map('extract', hostvars)
+         | selectattr('zone', 'eq', zone)
+         | map(attribute='inventory_hostname') | list }}
+    # A member the zone already had, to change its membership through.
+    zone_member: >-
+      {{ nodes_in_zone | map('extract', hostvars)
+         | rejectattr('added_node', 'defined')
+         | map(attribute='inventory_hostname') | first }}
+    peer_url: "https://{{ inventory_hostname }}:2380"
+    etcdctl: >-
+      /usr/local/etcd/etcdctl
+      --endpoints=https://127.0.0.1:2379
+      --cacert=/etc/etcd/tls/ca.crt
+      --cert=/etc/etcd/tls/server.crt
+      --key=/etc/etcd/tls/server.key
+
+  tasks:
+  - name: Ensure the inventory marks a node to interrupt
+    assert:
+      that: >-
+        groups['pgedge'] | map('extract', hostvars)
+        | selectattr('interrupted_join', 'defined')
+        | selectattr('interrupted_join') | list | length > 0
+      fail_msg: >-
+        No pgEdge node is marked interrupted_join. Layer
+        tests/inventories/ultra-ha-node-add.yml onto the inventory.
+    run_once: true
+
+  - when: interrupted_join | default(false)
+    block:
+    - name: Read the zone's etcd membership
+      command: "{{ etcdctl }} member list -w json"
+      register: members_before
+      changed_when: false
+      delegate_to: "{{ zone_member }}"
+
+    # etcd has no use for the name until the member starts and publishes its
+    # own, so any will do.
+    - name: Add the node to its zone's etcd as a learner, and go no further
+      command: >-
+        {{ etcdctl }} member add interrupted --peer-urls={{ peer_url }}
+        --learner
+      delegate_to: "{{ zone_member }}"
+      when: >-
+        (members_before.stdout | from_json).members
+        | selectattr('peerURLs', 'contains', peer_url) | list | length == 0
+
+    - name: Read the zone's etcd membership with the learner in it
+      command: "{{ etcdctl }} member list -w json"
+      register: members_after
+      changed_when: false
+      delegate_to: "{{ zone_member }}"
+
+    - name: Assert the node is an unstarted learner
+      vars:
+        member: >-
+          {{ (members_after.stdout | from_json).members
+             | selectattr('peerURLs', 'contains', peer_url) | first }}
+      assert:
+        that:
+        - member.isLearner | default(false) | bool
+        - member.name | default('') | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} should be an unstarted learner in its zone's
+          etcd, but is {{ member }}.

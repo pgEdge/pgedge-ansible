@@ -67,9 +67,11 @@ does not pool omits them and is otherwise unchanged. See
 [Pooling Configuration](configuration/pooling.md).
 
 [`wipe_cluster`](roles/wipe_cluster.md) is not part of this sequence: it tears
-a cluster down so the sequence can run again. A recovery runs the same sequence
-with [`recover_postgres`](roles/recover_postgres.md) in place of
-`setup_postgres` and stops short of `finalize_backrest` until the result is
+a cluster down so the sequence can run again. Neither is
+[`remove_zone`](roles/remove_zone.md), which detaches one zone from a running
+cluster so that it can join again from scratch or be retired. A recovery runs
+the same sequence with [`recover_postgres`](roles/recover_postgres.md) in place
+of `setup_postgres` and stops short of `finalize_backrest` until the result is
 committed. It also sets up the backup servers before the pgEdge nodes, since the
 restore reads from them, and runs `setup_pgedge` with `pgedge_seed_zone` set to
 the restored zone. See [Recovering a Cluster from Backup](recovery.md).
@@ -120,6 +122,7 @@ The roles in this collection fall into six categories.
 |------|-------------|
 | [`recover_postgres`](roles/recover_postgres.md) | Builds the cluster's Postgres from a backup, in place of `setup_postgres`. |
 | [`wipe_cluster`](roles/wipe_cluster.md) | Tears down every cluster component except the backups, ahead of a redeployment or a recovery. |
+| [`remove_zone`](roles/remove_zone.md) | Detaches one zone from a running cluster, clearing it from every other zone and resetting its databases. |
 
 ### ColdFront Tiered Storage
 

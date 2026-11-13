@@ -1,0 +1,225 @@
+---
+# Tables created by DDL on the existing zones while a zone joins, and after it,
+# have to reach every zone, the joined one included, with their rows; and rows
+# the joined zone writes into them have to reach every other zone. This is the
+# test that settles whether a join can leave Spock's AutoDDL on (D12 in the
+# EE-45 spec), in three phases:
+#
+#   ansible-playbook tests/playbooks/zone-join-autoddl.yml \
+#     -i <the inventories the join runs with> \
+#     -e zone_join_autoddl=during -e zone_join_autoddl_zone=5
+#   ... -e zone_join_autoddl=after ...
+#   ... -e zone_join_autoddl=check ...
+#
+#   during  while the joining zone is copying (tests/playbooks/zone-join-wait.yml
+#           finds that moment): each member creates a table of its own,
+#           zj_autoddl_during_z<member>, and writes rows into it. The source's
+#           arrives on the joining zone through the copy subscription after
+#           the copy, and the others' through their slots, all after the
+#           snapshot the copy took.
+#   after   once the join has finished: the first member creates
+#           zj_autoddl_after and writes rows into it, and the joining zone
+#           writes rows of its own into every one of these tables.
+#   check   every zone holds every one of the tables, with the same rows: the
+#           members' rows and the joined zone's.
+#
+# All in the first database in db_names, the one whose copy is caught. Each
+# table has a primary key, so AutoDDL puts it in the default replication set,
+# which replicates updates and deletes too. Rows are only added where missing,
+# so a phase run again writes nothing new.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    zone_join_autoddl_db: "{{ db_names | first }}"
+    zone_join_autoddl_rows: 10
+    joining: "{{ zone_join_autoddl_zone | int }}"
+    # The inventory's zones, read from the hosts rather than from role_config,
+    # whose variables are not there until its first include.
+    inventory_zones: >-
+      {{ groups['pgedge'] | map('extract', hostvars) | map(attribute='zone') | map('int') | unique | list }}
+    members: "{{ inventory_zones | reject('eq', joining) | sort }}"
+    tables: >-
+      {{ members | map('regex_replace', '^', 'zj_autoddl_during_z') | list
+         + ['zj_autoddl_after'] }}
+    is_primary: "{{ inventory_hostname == zone_primary }}"
+    # Every zone's primary, for the comparison at the end.
+    zone_primaries: >-
+      {% set found = {} %}
+      {%- for host in groups['pgedge'] %}
+      {%-   set _ = found.update({hostvars[host].zone | int:
+                                  hostvars[host].zone_primary}) %}
+      {%- endfor %}{{ found }}
+    psql: >-
+      {{ pg_path }}/bin/psql -X -h /var/run/postgresql -p {{ pg_port }}
+      -d {{ zone_join_autoddl_db }} -t -A -v ON_ERROR_STOP=1
+    # Rows a zone writes are numbered from zone * 1000, so each zone's are its
+    # own and a row that arrived twice would collide.
+    insert: >-
+      INSERT INTO %s (id, origin_zone, note)
+      SELECT {{ zone | int }} * 1000 + i, {{ zone | int }}, md5(i::text)
+        FROM generate_series(1, {{ zone_join_autoddl_rows | int }}) AS i
+      ON CONFLICT (id) DO NOTHING
+
+  tasks:
+  - name: Ensure the phase and the joining zone are known
+    assert:
+      that:
+      - zone_join_autoddl | default('') in ['during', 'after', 'check']
+      - zone_join_autoddl_zone is defined
+      - zone_join_autoddl_zone | int in inventory_zones
+      fail_msg: >-
+        Pass -e zone_join_autoddl=during, after or check, and
+        -e zone_join_autoddl_zone=<the joining zone>.
+    run_once: true
+
+  - name: Find each zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+
+  - name: Create a table on each member during the join, and write to it
+    become: true
+    become_user: postgres
+    command: >-
+      {{ psql }}
+      -c "CREATE TABLE IF NOT EXISTS {{ table }} (
+            id bigint PRIMARY KEY, origin_zone int NOT NULL, note text)"
+      -c "{{ insert | format(table) }}"
+    vars:
+      table: "zj_autoddl_during_z{{ zone | int }}"
+    when:
+    - zone_join_autoddl == 'during'
+    - is_primary | bool
+    - zone | int in members
+
+  - name: Create a table on the first member after the join, and write to it
+    become: true
+    become_user: postgres
+    command: >-
+      {{ psql }}
+      -c "CREATE TABLE IF NOT EXISTS zj_autoddl_after (
+            id bigint PRIMARY KEY, origin_zone int NOT NULL, note text)"
+      -c "{{ insert | format('zj_autoddl_after') }}"
+    when:
+    - zone_join_autoddl == 'after'
+    - is_primary | bool
+    - zone | int == members | first
+
+  # The first member's table has to have reached the joined zone before the
+  # joined zone can write into it.
+
+  - name: Wait for every table to reach the joined zone
+    become: true
+    become_user: postgres
+    command: >-
+      {{ psql }} -c "SELECT count(*)
+                       FROM unnest('{{ '{' ~ tables | join(',') ~ '}' }}'::text[]) t
+                      WHERE to_regclass(t) IS NOT NULL"
+    register: arrived
+    until: arrived.stdout | trim | int == tables | length
+    retries: 60
+    delay: 2
+    changed_when: false
+    when:
+    - zone_join_autoddl in ['after', 'check']
+    - is_primary | bool
+
+  - name: Write rows on the joined zone into every table
+    become: true
+    become_user: postgres
+    command: >-
+      {{ psql }}
+      {% for table in tables %} -c "{{ insert | format(table) }}"{% endfor %}
+    when:
+    - zone_join_autoddl == 'after'
+    - is_primary | bool
+    - zone | int == joining
+
+  # Each zone's rows in every table, as a count per origin and a digest.
+  # Waited for until every origin's rows are there, since replication lags.
+
+  # table|origin|count for every table: its creator's rows, and the joined
+  # zone's. Kept as a fact so that the assertion after the wait compares
+  # against it too: running out of retries does not fail the read.
+
+  - name: Note the rows every zone should hold
+    set_fact:
+      autoddl_expected: >-
+        {% set out = [] %}
+        {%- for m in members %}
+        {%-   for z in [m, joining] | sort %}
+        {%-     set _ = out.append('zj_autoddl_during_z' ~ m ~ '|' ~ z ~ '|'
+                                   ~ zone_join_autoddl_rows) %}
+        {%-   endfor %}
+        {%- endfor %}
+        {%- for z in [members | first, joining] | sort %}
+        {%-   set _ = out.append('zj_autoddl_after|' ~ z ~ '|'
+                                 ~ zone_join_autoddl_rows) %}
+        {%- endfor %}{{ out | sort }}
+    when:
+    - zone_join_autoddl == 'check'
+    - is_primary | bool
+
+  - name: Read every table on every zone
+    become: true
+    become_user: postgres
+    command: >-
+      {{ psql }} -F '|' -c "{% for table in tables %}{{ ' UNION ALL ' if not loop.first }}SELECT '{{ table }}', origin_zone, count(*), md5(string_agg(id || ':' || note, ',' ORDER BY id)) FROM {{ table }} GROUP BY origin_zone{% endfor %} ORDER BY 1, 2"
+    register: autoddl_rows
+    until: >-
+      autoddl_rows.rc == 0 and
+      autoddl_rows.stdout_lines | length == autoddl_expected | length and
+      autoddl_rows.stdout_lines | map('split', '|')
+        | map('batch', 3) | map('first') | map('join', '|') | list
+        == autoddl_expected
+    retries: 60
+    delay: 2
+    failed_when: false
+    changed_when: false
+    when:
+    - zone_join_autoddl == 'check'
+    - is_primary | bool
+
+  - name: Assert every zone holds every table's rows
+    assert:
+      that:
+      - autoddl_rows.rc == 0
+      - autoddl_rows.stdout_lines | map('split', '|')
+          | map('batch', 3) | map('first') | map('join', '|') | list
+        == autoddl_expected
+      fail_msg: >-
+        Zone {{ zone }} ({{ inventory_hostname }}) holds, per table and
+        origin zone (table|origin|rows|digest):
+        {{ autoddl_rows.stdout_lines | join('; ') or 'nothing' }}
+        {{ autoddl_rows.stderr | default('') | trim }}.
+        Every table should have {{ zone_join_autoddl_rows }} rows from the
+        member that created it and {{ zone_join_autoddl_rows }} from zone
+        {{ joining }}.
+    when:
+    - zone_join_autoddl == 'check'
+    - is_primary | bool
+
+  - name: Assert the zones hold the same rows
+    assert:
+      that:
+      - differing | length == 0
+      fail_msg: >-
+        Zone {{ members | first }} holds
+        {{ hostvars[zone_primaries[members | first]].autoddl_rows.stdout_lines }};
+        {{ differing | join('; ') }}.
+    vars:
+      differing: >-
+        {% set found = [] %}
+        {%- set ref = hostvars[zone_primaries[members | first]].autoddl_rows.stdout_lines %}
+        {%- for z in zone_primaries if hostvars[zone_primaries[z]].autoddl_rows.stdout_lines != ref %}
+        {%-   set _ = found.append('zone ' ~ z ~ ' holds '
+                ~ hostvars[zone_primaries[z]].autoddl_rows.stdout_lines) %}
+        {%- endfor %}{{ found }}
+    run_once: true
+    when: zone_join_autoddl == 'check'

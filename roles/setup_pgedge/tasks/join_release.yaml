@@ -1,0 +1,64 @@
+---
+
+# Release what the other zones hold for a join of pgedge_join_zone (N) into
+# pgedge_join_db that cannot be resumed.
+#
+# A join holds a replication slot for N on every member: on the source for N's
+# copy, and on every other member for the writes N has yet to read. Each keeps
+# WAL until something reads it, and once the join cannot go on nothing ever
+# will, so they are dropped now rather than left to fill a disk. Anything a
+# member subscribes to from N goes too.
+#
+# First N stops reading. A slot is in use for as long as N's subscription is
+# connected to it -- the copy keeps the source's busy throughout -- and an
+# active slot cannot be dropped. So N's subscriptions in the database from the
+# members are dropped, as remove_zone's remaining_zones.yaml does when it can
+# reach the zone. Only those the join creates, sub_n<N>_n<M> from edge<M> for
+# each member M: a subscription the precheck found that the join would not
+# have created was not made by this run, and is left for remove_zone, which
+# asks for confirmation before it resets the zone. N may be down, which is
+# often why the join failed: then nothing is reading, and this step only
+# reports that it could not reach it.
+#
+# Then remove_zone's remaining_zones.yaml clears N from every other zone in
+# this database: subscriptions from N, the slots that served N once they are
+# idle, N's node row and the progress kept for it. It never connects to N.
+#
+# What is left on N itself -- its node, the tables it copied -- is for
+# remove_zone to reset, which the caller tells the operator to run. Runs once,
+# from whichever host includes it, and delegates to each zone's primary.
+
+- name: Stop zone {{ pgedge_join_zone }} reading from the others in {{ pgedge_join_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ pgedge_join_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT s.sub_name::text AS sub_name, spock.sub_drop(s.sub_name)
+        FROM spock.subscription s
+        JOIN spock.node n ON n.node_id = s.sub_origin
+       WHERE (s.sub_name::text, n.node_name::text) IN (
+               SELECT j->>0, j->>1 FROM json_array_elements(%(own)s::json) j)
+    named_args:
+      own: >-
+        {%- set out = [] -%}
+        {%- for m in pgedge_join_members -%}
+        {%-   set _ = out.append(['sub_n' ~ (pgedge_join_zone | int) ~ '_n' ~ m,
+                                  'edge' ~ m]) -%}
+        {%- endfor -%}
+        {{ out | to_json }}
+  register: pgedge_join_detached
+  changed_when: pgedge_join_detached.rowcount | default(0) > 0
+  ignore_errors: true
+  delegate_to: "{{ pgedge_zone_hosts[pgedge_join_zone | string] }}"
+  run_once: true
+  become: true
+  become_user: postgres
+
+- name: Clear zone {{ pgedge_join_zone }} from the other zones in {{ pgedge_join_db }}
+  include_role:
+    name: remove_zone
+    tasks_from: remaining_zones
+  vars:
+    remove_zone: "{{ pgedge_join_zone | int }}"
+    remove_zone_db: "{{ pgedge_join_db }}"

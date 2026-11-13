@@ -158,8 +158,10 @@ if [ -n "$REPO_LAYOUT" ]; then
   PROJECT_NAME="${PROJECT_NAME}-repo-${REPO_LAYOUT}"
 fi
 
-# Set by Step 8b when it stages the etcd authority for the reconfigure run.
+# Set by Step 8b when it stages the etcd authority for the reconfigure run,
+# and passed on to Step 10, which re-runs setup_patroni too.
 CA_VARS=""
+RECONFIGURE_VARS=()
 
 cleanup() {
   if [ -n "$CA_VARS" ]; then
@@ -295,14 +297,37 @@ ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
   "${EXTRA_VARS[@]}" \
   -v
 
-# Step 7b: A second consecutive run of the pooler roles must change nothing.
-echo "==> Step 7b: Checking the pooler roles are idempotent..."
+# Step 7b: A second consecutive run of the deployment must change nothing.
+echo "==> Step 7b: Checking a second deployment run changes nothing..."
 "$SCRIPT_DIR/check-idempotence.sh" \
   "$INVENTORY" \
   "$PLAYBOOK" \
   "${INVENTORY_ARGS[@]:2}" \
   --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
   "${EXTRA_VARS[@]}"
+
+# Step 7b2: Nor must one after a switchover, which leaves each zone's leader
+# somewhere other than its first node. The leaders go back afterwards, so the
+# steps below see the cluster as deployed.
+if [ "$SCENARIO" = "ultra-ha" ]; then
+  echo "==> Step 7b2: Checking a deployment run after a switchover changes nothing..."
+  move_leaders() {
+    ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+      "$SCRIPT_DIR/playbooks/move-leaders.yml" \
+      "${INVENTORY_ARGS[@]}" \
+      --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+      "${EXTRA_VARS[@]}" \
+      -e leaders_to="$1"
+  }
+  move_leaders second
+  "$SCRIPT_DIR/check-idempotence.sh" \
+    "$INVENTORY" \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]:2}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}"
+  move_leaders first
+fi
 
 # Step 7c: Everything was installed from the site's repository, nothing still
 # points at pgEdge's own servers, and re-applying install_repos changes nothing.
@@ -349,7 +374,6 @@ fi
 # does.
 if [ "$SCENARIO" = "simple-cluster" ] || [ "$SCENARIO" = "ultra-ha" ]; then
   echo "==> Step 8b: Checking changed Postgres parameters are applied..."
-  RECONFIGURE_VARS=()
   CA_DIR="$(dirname "$PLAYBOOK")/tls/etcd"
   if [ "$SCENARIO" = "ultra-ha" ] && [ "$DCS" = "etcd3" ] && \
      [ -f "$CA_DIR/ca.crt" ]; then
@@ -395,6 +419,66 @@ if [ "$SCENARIO" = "ultra-ha" ] && [ "$DCS" = "etcd3" ]; then
     --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
     "${EXTRA_VARS[@]}" \
     -v
+fi
+
+# Step 10: A database added to db_names reaches a running cluster; on Ultra-HA,
+# with each zone's leader first moved off its first node. Not with ColdFront:
+# mesh mode sets db_names as an extra variable, which no role variable can
+# extend.
+# Like Step 8b, setup_patroni signs against the authority staged by the
+# deployment.
+if [ "$COLDFRONT" = false ]; then
+  echo "==> Step 10: Checking a database added to db_names is applied..."
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/playbooks/db-add.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    "${RECONFIGURE_VARS[@]}" \
+    -v
+fi
+
+# Step 11: Nodes added to a running zone join it: listed in the inventory,
+# with the deployment run again. Their containers were started with the rest and
+# left out of the inventory until now. Where the collection runs etcd, one of
+# them is first left as a learner an interrupted join would leave, which the
+# deployment has to promote before it can add the other. Last, because the
+# cluster it leaves has two more nodes in zone 1 than the steps above expect.
+# Not with ColdFront, whose layer this has not been tried with.
+if [ "$SCENARIO" = "ultra-ha" ] && [ "$COLDFRONT" = false ]; then
+  echo "==> Step 11: Checking nodes added to a zone join it..."
+  NODE_ADD_ARGS=(-i "$SCRIPT_DIR/inventories/${SCENARIO}-node-add.yml")
+  if [ "$DCS" = "etcd3" ]; then
+    ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+      "$SCRIPT_DIR/playbooks/interrupt-node-add.yml" \
+      "${INVENTORY_ARGS[@]}" \
+      "${NODE_ADD_ARGS[@]}" \
+      --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+      "${EXTRA_VARS[@]}" \
+      -v
+  fi
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/verify/verify-node-add.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+  echo "==> Step 11b: Checking a deployment run after adding the nodes changes nothing..."
+  "$SCRIPT_DIR/check-idempotence.sh" \
+    "$INVENTORY" \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]:2}" \
+    "${NODE_ADD_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}"
 fi
 
 echo ""

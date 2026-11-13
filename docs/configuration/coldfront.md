@@ -222,7 +222,9 @@ database and extensions.
 - Description: Name of the additional database ColdFront's tiered
   storage lives in. Outside mesh mode it stays separate from the
   general-purpose databases the cluster lists in `db_names`; mesh mode
-  needs it listed there, which puts it into Spock.
+  needs it listed there, which puts it into Spock. Either way, the
+  [worker pool](postgres.md#worker-and-replication-sizing) counts the Spock
+  manager it gets, and `unmanaged_db_names` may not list it.
 
 ### coldfront_supported_pg_versions
 

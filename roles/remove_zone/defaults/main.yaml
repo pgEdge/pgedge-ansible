@@ -1,0 +1,20 @@
+---
+
+# This role detaches a zone from the cluster's Spock mesh and, when the zone
+# can be reached, drops its databases, and nothing about an inventory says
+# whether that is wanted. So it refuses to start until something says so
+# explicitly. Pass it on the command line -- -e remove_zone_confirm=true --
+# rather than writing it into an inventory, where it would sit waiting for the
+# next unrelated run.
+
+remove_zone_confirm: false
+
+# remove_zone, the number of the zone to remove, has no default: there is no
+# zone it would be safe to guess. It is given on the command line too, with
+# -e remove_zone=<N>.
+
+# How long, in minutes, to wait for each other zone to apply every write the
+# zone being removed has committed, before anything is changed. A wait that
+# runs out stops the run with nothing changed.
+
+remove_zone_wait_minutes: 10

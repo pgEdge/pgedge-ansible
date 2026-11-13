@@ -9,45 +9,52 @@
 # Ensure all pg_hba.conf lines are listed for the replication_user that will
 # handle all physical replication duties, and _only_ include hosts in the zone
 # This prevents unintended replication streams.
+#
+# These rules are what the replicas and proxies need before Patroni takes over.
+# Afterwards pg_hba.conf is Patroni's, rendered from patroni.yml, and an edit
+# here would only lie in wait for the next reload.
 
-- name: Allow replication user access between nodes in the same zone
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: host
-    users: "{{ replication_user }}"
-    databases: replication
-    method: scram-sha-256
-    source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
-  loop: "{{ nodes_in_zone }}"
-  become: true
-  become_user: postgres
+- block:
+  - name: Allow replication user access between nodes in the same zone
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: host
+      users: "{{ replication_user }}"
+      databases: replication
+      method: scram-sha-256
+      source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
+    loop: "{{ nodes_in_zone }}"
+    become: true
+    become_user: postgres
 
-# If the HA setup includes any proxy nodes, make sure those can also access
-# the node-to-node pgedge communication channels.
+  # If the HA setup includes any proxy nodes, make sure those can also access
+  # the node-to-node pgedge communication channels.
 
-- name: Allow pgedge node-to-node communication from user-specified proxy
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: host
-    users: "{{ pgedge_user }}"
-    databases: replication
-    method: scram-sha-256
-    source: "{{ proxy_node | ansible.utils.ipaddr('address') or lookup('dig', proxy_node) }}/32"
-  become: true
-  become_user: postgres
-  when: proxy_node | length > 0
+  - name: Allow pgedge node-to-node communication from user-specified proxy
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: host
+      users: "{{ pgedge_user }}"
+      databases: replication
+      method: scram-sha-256
+      source: "{{ proxy_node | ansible.utils.ipaddr('address') or lookup('dig', proxy_node) }}/32"
+    become: true
+    become_user: postgres
+    when: proxy_node | length > 0
 
-- name: Allow pgedge node-to-node communication from in-zone proxies
-  community.postgresql.postgresql_pg_hba:
-    dest: "{{ pg_config_dir }}/pg_hba.conf"
-    contype: host
-    users: "{{ pgedge_user }}"
-    databases: replication
-    method: scram-sha-256
-    source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
-  loop: "{{ proxies_in_zone }}"
-  become: true
-  become_user: postgres
+  - name: Allow pgedge node-to-node communication from in-zone proxies
+    community.postgresql.postgresql_pg_hba:
+      dest: "{{ pg_config_dir }}/pg_hba.conf"
+      contype: host
+      users: "{{ pgedge_user }}"
+      databases: replication
+      method: scram-sha-256
+      source: "{{ hostvars[item].ansible_default_ipv4.address }}/32"
+    loop: "{{ proxies_in_zone }}"
+    become: true
+    become_user: postgres
+
+  when: not patroni_manages_postgres | bool
 
 # At least the first time around, the Postgres instance must be started so we
 # can execute SQL queries and other operations where Postgres must be online.
@@ -59,13 +66,9 @@
     name: "{{ pg_service_name }}"
     state: started
     enabled: false
-  vars:
-    full_service_name: "{{ patroni_service_name }}.service"
-    patroni_state: >-
-      {{ ansible_facts.services[full_service_name]['state'] | default('') }}
   become: true
   when:
-  - patroni_state != 'running'
+  - not patroni_manages_postgres | bool
 
 # Create the requested physical replication user explicitly on the primary.
 # This used to be a call to the platform CLI, but is now managed directly by
@@ -81,22 +84,6 @@
     login_unix_socket: /var/run/postgresql
   become: true
   become_user: postgres
-
-# Make sure that the pgedge node communication user has an appropriate .pgpass
-# entry so the nodes can communicate with each other. This is technically
-# redundant to the file Patroni uses, but it's a good safeguard for one-off
-# operations such as pg_basebackup.
-
-- name: Ensure pgedge communication user can connect to cluster
-  lineinfile:
-    path: ~/.pgpass
-    line: "*:*:*:{{ replication_user }}:{{ replication_password }}"
-    create: true
-    mode: "0600"
-  become: true
-  become_user: postgres
-  # The line is a password, and --diff would print it.
-  diff: false
 
 # Include all other common steps for a standard Postgres node
 

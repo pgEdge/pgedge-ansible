@@ -81,11 +81,15 @@ When `is_ha_cluster` is `false`, the role performs the following steps:
 3. Write the Postgres configuration: the parameters the collection requires
    (such as port, listen addresses, `wal_level` and the archive commands), the
    collection's defaults, and the inventory's `pg_parameters`. See
-   [pg_parameters](../configuration/postgres.md#pg_parameters).
+   [pg_parameters](../configuration/postgres.md#pg_parameters). On a node that
+   is already running, the worker and slot pools never shrink beneath what it
+   uses; see [Sizing Floor](role_config.md#sizing-floor).
 4. Configure `pg_hba.conf` with least-privilege rules for all known users
-   and databases. Apply any additional rules from `custom_hba_rules`.
+   and databases. On a non-HA cluster with a backup repository, allow the
+   `backup_user` from the zone's backup hosts. Apply any additional rules from
+   `custom_hba_rules`.
 5. Start and enable the Postgres service. If the service was already running
-   and the configuration changed, reload it. If Postgres then reports
+   and the configuration or `pg_hba.conf` changed, reload it. If Postgres then reports
    parameters waiting on a restart, restart it, or report them when
    `pg_allow_restart` is `false`. Nodes restart one at a time, so the rest of
    the cluster stays available.
@@ -98,9 +102,12 @@ When `is_ha_cluster` is `false`, the role performs the following steps:
 When `is_ha_cluster` is `true`, the role performs all standalone setup tasks
 and additionally:
 
-- Designates the first node in each zone as the Patroni primary and stops
-  Postgres on that node after initial configuration (Patroni takes over
-  management).
+- Designates the zone's primary as the node that initializes Postgres and
+  creates the users, databases and extensions. On a new zone this is the
+  first node, which Patroni then bootstraps from. On a running zone it is
+  whichever node Patroni reports as leader, which after a failover is not the
+  first node, so a database added to `db_names` is created there. See
+  [Zone Primary](role_config.md#zone-primary).
 - Stops Postgres on all other nodes in the zone and clears the data
   directory so Patroni can rebuild them as streaming replicas.
 - Creates the Patroni `replication_user` and configures `pg_hba.conf`
@@ -108,7 +115,9 @@ and additionally:
 
 On the first node of an HA zone, this role writes only the parameters Postgres
 needs to run before Patroni takes over. Patroni keeps the rest of the
-configuration in its store, which `setup_patroni` maintains.
+configuration in its store, which `setup_patroni` maintains. Once Patroni runs
+a node, this role leaves its `postgresql.conf` and `pg_hba.conf` alone: Patroni
+rewrites both, and `setup_patroni` carries changes to them into the zone.
 
 !!! note "Shared Preload Libraries"
     A change to `shared_preload_libraries` only takes effect after a restart.

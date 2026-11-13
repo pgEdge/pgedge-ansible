@@ -1,0 +1,146 @@
+---
+# Wait until a joining zone's copy of its source has reached a chosen point,
+# so that a test can stop the join there. Nothing here changes anything.
+#
+#   ansible-playbook tests/playbooks/zone-join-wait.yml \
+#     -i <the inventories the join runs with> \
+#     -e zone_join_wait_zone=5 [-e zone_join_wait_db=demo] \
+#     [-e zone_join_wait_for=copying]
+#
+# zone_join_wait_for is one of:
+#
+#   copying  the copy subscription exists on the joining zone and has not
+#            finished: the join is between steps 5 and 6.
+#   data     the copy is in its data step (sync status d), the step Spock
+#            cannot resume from if its worker dies.
+#
+# A test starts the deployment in the background, runs this at once, and stops
+# the deployment as soon as it returns: the deployment is then at that point in
+# its join, and Spock carries on with the copy on its own. The seed table is
+# large enough that the copy of the first database in db_names takes tens of
+# seconds (13s for 3M rows on a fast host), and this is watching long before
+# the join gets there, so the window is wide: the watch is one shell loop on
+# the joining zone's primary, looking four times a second over the local
+# socket, not a task retried over SSH.
+#
+# It fails, and says what it saw, as soon as the copy is found finished (the
+# window was missed, and the test would otherwise stop a join that is not
+# where it thinks), when psql fails for any reason other than the database
+# having no Spock catalog yet (before the join's step 2), and at a wall-clock
+# deadline of zone_join_wait_minutes. A join that finished, failed or never
+# started is never taken for one that was caught.
+
+- hosts: pgedge
+  any_errors_fatal: true
+  gather_facts: false
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    zone_join_wait_for: copying
+    inventory_zones: >-
+      {{ groups['pgedge'] | map('extract', hostvars) | map(attribute='zone') | map('int') | unique | list }}
+
+  tasks:
+  - name: Ensure the zone and the point to wait for are known
+    assert:
+      that:
+      - zone_join_wait_zone is defined
+      - zone_join_wait_zone | int in inventory_zones
+      - zone_join_wait_for in ['copying', 'data']
+      fail_msg: >-
+        Pass -e zone_join_wait_zone=<a zone of the inventory> and, if not
+        copying, -e zone_join_wait_for=data.
+    run_once: true
+
+  # Only the joining zone's hosts have anything to look at. In an HA zone that
+  # is its primary, which is asked of Patroni like any other zone's.
+
+  - name: Group the joining zone's hosts
+    group_by:
+      key: zone_join_wait_target
+    when: zone | int == zone_join_wait_zone | int
+    changed_when: false
+
+- hosts: zone_join_wait_target
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    zone_join_wait_db: "{{ db_names | first }}"
+    zone_join_wait_for: copying
+    zone_join_wait_minutes: 20
+
+  tasks:
+  - name: Find the zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+
+  # Until the deployment gets there, the database may not exist yet (remove_zone
+  # drops it and setup_postgres creates it again) or have no Spock catalog;
+  # psql says so, and that, and only that, counts as not there yet. sync_status
+  # is a "char", which has to be cast before it can be joined to text.
+
+  - name: Wait for zone {{ zone_join_wait_zone }}'s copy to be {{ zone_join_wait_for }}
+    become: true
+    become_user: postgres
+    shell:
+      executable: /bin/bash
+      cmd: |
+        set -u
+        deadline=$(( $(date +%s) + {{ zone_join_wait_minutes | int * 60 }} ))
+        seen=nothing
+        while :; do
+          if out=$("{{ pg_path }}/bin/psql" -X -h /var/run/postgresql \
+                     -p {{ pg_port }} -d "$WAIT_DB" -t -A -v ON_ERROR_STOP=1 \
+                     -c "$PROBE" 2>&1); then
+            seen=$out
+            for entry in ${out//,/ }; do
+              status=${entry##*:}
+              if [[ $status =~ ^($WANTED)$ ]]; then
+                echo "$out"
+                exit 0
+              elif [ "$status" = r ]; then
+                echo "The copy had already finished ($out): the moment" \
+                     "was missed." >&2
+                exit 1
+              fi
+            done
+          elif ! grep -q 'database "[^"]*" does not exist\|schema "spock" does not exist\|relation "spock\.' <<<"$out"; then
+            echo "psql failed: $out" >&2
+            exit 1
+          fi
+          if [ "$(date +%s)" -ge "$deadline" ]; then
+            echo "Not {{ zone_join_wait_for }} within {{ zone_join_wait_minutes }}" \
+                 "minutes. Last seen (subscription:sync status): $seen" >&2
+            exit 1
+          fi
+          sleep 0.25
+        done
+    environment:
+      WAIT_DB: "{{ zone_join_wait_db }}"
+      PROBE: >-
+        SELECT coalesce(string_agg(s.sub_name || ':' || l.sync_status::text,
+                                   ','), 'none')
+          FROM spock.subscription s
+          JOIN spock.local_sync_status l ON l.sync_subid = s.sub_id
+         WHERE l.sync_nspname IS NULL AND l.sync_relname IS NULL
+           AND l.sync_kind = 'f'
+      WANTED: "{{ 'i|s|d|c|u' if zone_join_wait_for == 'copying' else 'd' }}"
+    register: copy_state
+    changed_when: false
+    async: "{{ zone_join_wait_minutes | int * 60 + 60 }}"
+    poll: 2
+    when: inventory_hostname == zone_primary
+
+  - name: Show where the copy was caught
+    debug:
+      msg: >-
+        Zone {{ zone_join_wait_zone }}'s copy in {{ zone_join_wait_db }} is
+        {{ copy_state.stdout | trim }} (subscription:sync status).
+    when: inventory_hostname == zone_primary

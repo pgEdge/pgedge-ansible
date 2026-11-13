@@ -19,8 +19,9 @@ The role performs the following tasks on inventory hosts:
   has described, and stop if none matches.
 - On an HA cluster, find each zone's Patroni leader, and stop if there is not
   exactly one among the zone's nodes.
-- Create the `backup_user` PostgreSQL role with `pg_checkpoint` privileges, and
-  for non-HA clusters add the matching `pg_hba.conf` entries.
+- Create the `backup_user` PostgreSQL role with `pg_checkpoint` privileges.
+  On non-HA clusters, `setup_postgres` writes the matching `pg_hba.conf`
+  entries; on HA clusters, Patroni does.
 - Create the repository stanza when the repository does not already have one.
 - For non-HA clusters, check that Postgres is using the PgBackRest
   `archive_command` that `setup_postgres` writes, and stop if it is not. HA
@@ -96,9 +97,12 @@ after a point-in-time recovery, the newest backups can lie on the timeline the
 recovery abandoned, past the point where the cluster branched away from it;
 PgBackRest restores the newest backup by default, and Postgres cannot follow
 the cluster's timeline from there. The role reads the cluster's timeline
-history from the zone's primary (a backup server asks the zone's first pgEdge
-node, since any member holds the same history), and takes a full backup when the
-newest backup ended after the cluster left its timeline. A failover never
+history from the zone's primary; a backup server, which has no Postgres of its
+own, queries that same primary. A replica will not do: its checkpoint moves to a
+new timeline only at its next restartpoint, so just after a failover it can
+still report the old timeline, and a backup already taken on the new one would
+look unrestorable. The role takes a full backup when the newest backup ended
+after the cluster left its timeline. A failover never
 causes one, because it branches after every existing backup.
 
 This is what makes the role the step that commits a recovery: see
@@ -110,9 +114,9 @@ the zone's primary drives them instead. A pgEdge node's `pgbackrest.conf` names
 only its own Postgres, so a replica cannot take a backup: PgBackRest stops with
 "unable to find primary cluster". On a non-HA cluster the primary is the zone's
 first node. On an HA cluster it is whichever node Patroni reports as leader,
-which after a failover is no longer the first node; the role asks
-`patronictl list` before it writes anything, and stops if the zone does not
-have exactly one leader among its nodes. The backup database user is created on
+which after a failover is no longer the first node; the role finds it through
+[Zone Primary](role_config.md#zone-primary) before it writes anything, and
+stops if the zone does not have exactly one leader among its nodes. The backup database user is created on
 the same node, since a replica is read-only.
 
 ### Repository Identity

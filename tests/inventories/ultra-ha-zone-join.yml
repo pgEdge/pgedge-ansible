@@ -1,0 +1,36 @@
+# Layered onto ultra-ha.yml and zone-join.yml, after the cluster is deployed
+# and holds data, to add zone 3 the way an operator would: by listing its hosts
+# in the inventory and running the deployment again with -e pgedge_join_zones.
+# Pass all of them, with the repository's layer as the deployment had it:
+#
+#   ansible-playbook -i tests/inventories/ultra-ha.yml \
+#                    -i tests/inventories/ultra-ha-ssh.yml \
+#                    -i tests/inventories/zone-join.yml \
+#                    -i tests/inventories/ultra-ha-zone-join.yml ...
+#
+# The hosts' containers are in every Ultra-HA compose file, so they are already
+# running when the cluster is first deployed without them.
+#
+# Two nodes, so the zone has a replica that has to follow its primary through
+# the join, and a proxy of its own, which the other zones subscribe through. No
+# backup server: with an SSH repository the zone then takes no backups, which
+# the join does not need. With an S3 repository the nodes need the object
+# store's CA, which tests/prepare-s3.sh installs on the hosts it is given.
+#
+# zone_join_new marks a zone this layer adds. The trickle writer leaves such a
+# zone alone, since nothing may write to a zone until its join finishes; pass
+# zone_join_trickle_zones to the writer to choose its zones yourself.
+
+pgedge:
+  hosts:
+    192.168.6.24:
+      zone: 3
+      zone_join_new: true
+    192.168.6.25:
+      zone: 3
+      zone_join_new: true
+
+haproxy:
+  hosts:
+    192.168.6.26:
+      zone: 3

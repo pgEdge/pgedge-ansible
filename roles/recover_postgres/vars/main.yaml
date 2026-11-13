@@ -45,7 +45,41 @@ recovery_log: "{{ pg_home }}/recover_postgres.log"
 # history written at promotion have to reach the repository, or no later
 # restore can follow the timeline this one creates.
 
+#
+# hot_standby is off while it replays. With it on, Postgres refuses to replay
+# past a record from a server whose max_worker_processes, max_wal_senders,
+# max_connections, max_prepared_transactions or max_locks_per_transaction was
+# larger than its own: it pauses if it is already accepting queries and
+# aborts if not. Those pools grow with the cluster, so the archive can carry
+# a size larger than the backup held. No inventory can name that size either,
+# because a database taken back out of db_names leaves no trace once the
+# cluster is wiped. The check exists only to size the structures hot standby
+# keeps for queries, and nothing queries the node until it is promoted. The
+# wait below asks only whether recovery has ended, which it can answer once
+# the node accepts connections.
+#
+# The pools are set to the sizes a deployment would give the zone, because
+# the configuration file may not carry them: on Debian it is the file
+# setup_postgres has just written, which leaves them at Postgres's defaults.
+# Of these, only the limit on replication origins is strictly needed:
+# max_replication_slots before Postgres 18, max_active_replication_origins
+# from it. Spock keeps an origin per subscription, the backup carries them
+# in pg_logical, and the WAL advances them. Postgres checks that limit at
+# startup and during replay whatever hot_standby says, and stops with
+# "could not find free replication state" when there are more than it allows.
+# Debian's default of 10 is fewer than three databases across five zones
+# need. The worker and walsender pools could stay short: until clean_spock
+# drops the subscriptions, a short pool only leaves some of Spock's apply
+# workers unstarted, and Patroni sets every pool when it takes the node over.
+# They are set all the same, to the values Patroni is about to give them,
+# rather than picked over one by one.
+
 recovery_postgres_options: >-
   -c config_file={{ pg_config_dir }}/postgresql.conf
+  -c hot_standby=off
+  {% for name in pg_calculated_parameters | sort
+       if name in pg_effective_parameters %}
+  -c {{ name }}={{ pg_effective_parameters[name] }}
+  {% endfor %}
   -c archive_mode=on
   -c 'archive_command=pgbackrest --stanza={{ backup_stanza }} archive-push %p'

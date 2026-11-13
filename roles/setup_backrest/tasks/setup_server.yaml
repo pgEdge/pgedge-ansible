@@ -21,12 +21,27 @@
   loop: "{{ nodes_in_zone }}"
   become: true
 
+# known_hosts compares one key per call, so each host is given exactly one:
+# its ed25519 key. A host in the inventory has its keys among the facts the
+# deployment gathered, which every run reads alike. Only a host outside the
+# inventory is scanned for it. Handing known_hosts every key ssh-keyscan
+# returned made the result depend on the order the keys arrived in, which
+# changes from one scan to the next, and a scan run by every fork at once can
+# be refused and return nothing.
+
 - name: Make sure backup targets are known SSH hosts
   known_hosts:
     name: "{{ item }}"
     state: present
-    key: "{{ lookup('pipe', 'ssh-keyscan {{ item }} | grep -v ''^\\#''') }}"
+    key: >-
+      {{ item ~ ' ssh-ed25519 ' ~ host_key if host_key
+         else lookup('pipe', 'ssh-keyscan -t ed25519 ' ~ (item | quote)
+                             ~ " | grep -v '^#'") }}
     hash_host: false
+  vars:
+    host_key: >-
+      {{ (hostvars[item] | default({})).ansible_ssh_host_key_ed25519_public
+         | default('') }}
   become: true
   become_user: "{{ backup_repo_user }}"
   loop: "{{ nodes_in_zone }}"
@@ -36,12 +51,10 @@
 # but needs to exist.
 
 - name: Ensure backup user can connect to Postgres
-  lineinfile:
-    path: ~/.pgpass
-    line: "*:*:*:{{ backup_user }}:{{ backup_password }}"
-    create: true
-    mode: "0600"
-  become: true
-  become_user: "{{ backup_repo_user }}"
-  # The line is a password, and --diff would print it.
-  diff: false
+  include_role:
+    name: role_config
+    tasks_from: pgpass_entry
+  vars:
+    pgpass_os_user: "{{ backup_repo_user }}"
+    pgpass_role: "{{ backup_user }}"
+    pgpass_password: "{{ backup_password }}"

@@ -1,0 +1,24 @@
+# Layered onto simple-cluster.yml and zone-join.yml, after the cluster is
+# deployed and holds data, to add zones 4 and 5 the way an operator would: by
+# listing their hosts in the inventory and running the deployment again with
+# -e pgedge_join_zones. Pass all three:
+#
+#   ansible-playbook -i tests/inventories/simple-cluster.yml \
+#                    -i tests/inventories/zone-join.yml \
+#                    -i tests/inventories/simple-zone-join.yml ...
+#
+# The hosts' containers are in every Simple compose file, so they are already
+# running when the cluster is first deployed without them.
+#
+# zone_join_new marks a zone this layer adds. The trickle writer leaves such a
+# zone alone, since nothing may write to a zone until its join finishes; pass
+# zone_join_trickle_zones to the writer to choose its zones yourself.
+
+pgedge:
+  hosts:
+    192.168.6.13:
+      zone: 4
+      zone_join_new: true
+    192.168.6.14:
+      zone: 5
+      zone_join_new: true

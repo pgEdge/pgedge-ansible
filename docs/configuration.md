@@ -78,7 +78,8 @@ access:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| db_names | [demo] | List of database names for the Spock cluster. At least one name is required. Any database in the list that does not already exist will be created and owned by db_user. |
+| db_names | [demo] | List of database names for the Spock cluster. At least one name is required. Any database in the list that does not already exist will be created and owned by db_user. A name added to a running cluster is created and added to Spock the next time the deployment playbook runs. A name removed is no longer managed, but the database is not dropped; see [Removing a database from db_names](configuration/cluster.md#removing-a-database-from-db_names). |
+| unmanaged_db_names | [] | Databases the collection does not manage but whose Spock workers and replication slots the calculated pool sizes must still count, such as one removed from db_names and kept replicating, or one created by hand. A sizing hint only; see [unmanaged_db_names](configuration/cluster.md#unmanaged_db_names). |
 | db_user | admin | Database superuser username. Must differ from the OS user running the installation. |
 | db_password | secret | Password for db_user. |
 | pgedge_user | pgedge | Internal user for node-to-node Spock connections. |
@@ -212,6 +213,11 @@ replication behavior:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | exception_behaviour | transdiscard | How Spock handles replication exceptions. Accepted values are discard, transdiscard, and sub_disable. See the [pgEdge exception documentation](https://docs.pgedge.com/platform/exception#spockexception_behaviour) for details. |
+| pgedge_join_zones | (none) | Zones to join to a cluster that already holds data, passed on the command line with `-e`. Without it, a run refuses a zone that is not yet part of such a cluster. See [Adding a Zone to a Running Cluster](add_zone.md). |
+| pgedge_join_wait_minutes | 30 | How long a join waits for a zone to apply a bookmark, and for a new subscription to start replicating. |
+| pgedge_seed_zone | (none) | For recovery only: the zone the other, empty zones copy their data from. The recovery playbook sets it. |
+| pgedge_seed_stall_minutes | 15 | Give up on a seed or join copy after it has made no progress for this long. |
+| pgedge_seed_max_hours | 24 | Longest a seed or join copy may take, for each database. |
 
 ## ColdFront Configuration Parameters
 

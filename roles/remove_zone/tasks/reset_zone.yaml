@@ -1,0 +1,86 @@
+---
+
+# On the primary of the zone being removed, when it can be reached, once every
+# other zone has dropped its subscriptions from it: drop each of its databases
+# in db_names that holds anything a join would trip over -- a Spock node, a
+# subscription, or tables of its own -- with everything in it. A join copies
+# the schema and the data into an empty database, and an empty database is
+# what a new deployment would have given the zone.
+#
+# Nothing here creates the database again. Every deployment run creates any
+# database in db_names that is missing, with the spock and snowflake
+# extensions (setup_postgres), and the run that joins the zone again does that
+# before the join starts. ColdFront's database, when it is in db_names, is
+# set up again the same way by setup_coldfront_db.
+#
+# A database that is already empty in that sense is left alone, which is also
+# what makes a second run change nothing, even after a deployment has created
+# the databases again.
+#
+# Postgres refuses to drop a database that a replication slot is being read
+# from. The other zones' subscriptions from this one have been dropped by now,
+# which stops their apply workers, so the walsenders here that served them are
+# on their way out; they are waited for. Slots that are not in use go with the
+# database. WITH (FORCE) disconnects everything else, including Spock's own
+# workers for the database.
+
+- name: Wait for the slots in zone {{ remove_zone }}'s databases to fall idle
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT r.slot_name::text AS slot_name, r.active_pid,
+             a.client_addr::text AS client_addr
+        FROM pg_replication_slots r
+        LEFT JOIN pg_stat_activity a ON a.pid = r.active_pid
+       WHERE r.active AND r.database = %(db)s
+    named_args:
+      db: "{{ item }}"
+  loop: "{{ remove_zone_reset_dbs }}"
+  register: remove_zone_own_active
+  until: remove_zone_own_active.rowcount | default(0) == 0
+  retries: 30
+  delay: 5
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- name: Ensure no slot in zone {{ remove_zone }}'s databases is still in use
+  assert:
+    that:
+    - busy | length == 0
+    fail_msg: >-
+      Zone {{ remove_zone }}'s databases cannot be dropped while replication
+      slots in them are being read: {{ busy | join('; ') }}. Every other
+      zone's subscriptions from zone {{ remove_zone }} have already been
+      dropped, so whatever is reading is outside this cluster's
+      configuration. Stop it and run this again.
+    quiet: true
+  vars:
+    busy: >-
+      {%- set out = [] -%}
+      {%- for r in remove_zone_own_active.results -%}
+      {%-   if r.query_result is not defined and not r.skipped | default(false) -%}
+      {%-     set _ = out.append(r.item ~ ' could not be asked about its slots: '
+                  ~ r.msg | default('no answer')) -%}
+      {%-   endif -%}
+      {%-   for s in r.query_result | default([]) -%}
+      {%-     set _ = out.append('slot ' ~ s.slot_name ~ ' in ' ~ r.item
+                  ~ ' by process ' ~ s.active_pid
+                  ~ (' from ' ~ s.client_addr if s.client_addr else '')) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Drop zone {{ remove_zone }}'s databases
+  community.postgresql.postgresql_db:
+    name: "{{ item }}"
+    state: absent
+    force: true
+    login_port: "{{ pg_port }}"
+    login_unix_socket: /var/run/postgresql
+  loop: "{{ remove_zone_reset_dbs }}"
+  become: true
+  become_user: postgres

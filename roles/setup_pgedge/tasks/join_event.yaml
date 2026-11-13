@@ -1,0 +1,70 @@
+---
+
+# Set a bookmark in one zone's change stream and wait for other zones to apply
+# it. This is how a join knows that every write a zone made up to some moment
+# has reached another zone, without stopping anyone writing.
+#
+# Inputs, set by the task that includes this file:
+#
+#   pgedge_event_zone     The zone the bookmark is set on.
+#   pgedge_event_waiters  The zones that must apply it, as a list.
+#   pgedge_event_why      What the wait is for, for the task names.
+#   pgedge_join_db        The database.
+#
+# spock.sync_event(true) commits a marker into the zone's WAL as part of a
+# transaction of its own, and returns where it is. Each subscriber applies it
+# in commit order, like any other transaction from that zone, and records the
+# position in spock.progress. Once a subscriber's progress from the zone
+# reaches the marker, it has applied every transaction the zone committed
+# before it. received_lsn is never used for this: it also moves on keepalive
+# messages, before anything has been applied.
+#
+# A fresh bookmark is set every time this runs, so a rerun never waits on one
+# an earlier run set and lost track of. Setting one changes nothing anyone
+# reads, so it is not reported as a change.
+#
+# Each zone's progress column is the one its own Spock release has
+# (pgedge_join_progress_columns). The wait gives up after
+# pgedge_join_wait_minutes, which fails the join in a way it can resume from.
+
+- name: Set a bookmark on zone {{ pgedge_event_zone }} ({{ pgedge_event_why }})
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ pgedge_join_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: SELECT spock.sync_event(true)::text AS lsn
+  register: pgedge_event
+  changed_when: false
+  delegate_to: "{{ pgedge_zone_hosts[pgedge_event_zone | string] }}"
+  become: true
+  become_user: postgres
+
+- name: Wait for the bookmark from zone {{ pgedge_event_zone }} to be applied ({{ pgedge_event_why }})
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ pgedge_join_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT coalesce(max(p.{{ column }})::text, 'none') AS applied,
+             coalesce(max(p.{{ column }}) >= %(lsn)s::pg_lsn, false) AS reached
+        FROM spock.progress p
+        JOIN spock.node n ON n.node_id = p.remote_node_id
+       WHERE p.node_id = (SELECT node_id FROM spock.node_info())
+         AND n.node_name = %(origin)s
+    named_args:
+      lsn: "{{ pgedge_event.query_result[0].lsn }}"
+      origin: "edge{{ pgedge_event_zone }}"
+  vars:
+    # One of two fixed names, chosen by this zone's Spock release; never input.
+    column: "{{ pgedge_join_progress_columns[item | string] }}"
+  loop: "{{ pgedge_event_waiters }}"
+  loop_control:
+    label: "zone {{ item }} applies zone {{ pgedge_event_zone }} up to {{ pgedge_event.query_result[0].lsn }}"
+  register: pgedge_event_wait
+  until: pgedge_event_wait.query_result[0].reached | default(false) | bool
+  retries: "{{ pgedge_join_wait_retries | int }}"
+  delay: 5
+  changed_when: false
+  delegate_to: "{{ pgedge_zone_hosts[item | string] }}"
+  become: true
+  become_user: postgres

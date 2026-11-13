@@ -1,0 +1,35 @@
+---
+
+# Read where the joining zone stands in pgedge_join_db: its subscriptions, by
+# name, with the node each comes from, whether it is enabled, its status, and
+# the sync status of the copy, if it has one. Steps decide from this whether
+# they still have work to do, so it is read again before each step that needs
+# it rather than carried over from an earlier one.
+
+- name: Read zone {{ pgedge_join_zone }}'s subscriptions in {{ pgedge_join_db }}
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ pgedge_join_db }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT coalesce(json_object_agg(s.sub_name, json_build_object(
+               'provider', n.node_name,
+               'enabled', s.sub_enabled,
+               'status', st.status,
+               'slot', s.sub_slot_name,
+               'sync', l.sync_status::text,
+               'sync_kind', l.sync_kind::text)), '{}'::json) AS subs
+        FROM spock.subscription s
+        JOIN spock.node n ON n.node_id = s.sub_origin
+        LEFT JOIN spock.local_sync_status l
+               ON l.sync_subid = s.sub_id
+              AND l.sync_nspname IS NULL AND l.sync_relname IS NULL
+        LEFT JOIN LATERAL spock.sub_show_status(s.sub_name) st ON true
+  register: pgedge_join_read
+  changed_when: false
+  become: true
+  become_user: postgres
+
+- name: Note zone {{ pgedge_join_zone }}'s subscriptions in {{ pgedge_join_db }}
+  set_fact:
+    pgedge_join_subs: "{{ pgedge_join_read.query_result[0].subs }}"

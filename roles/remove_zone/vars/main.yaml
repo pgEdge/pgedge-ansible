@@ -1,0 +1,96 @@
+---
+
+# The node that answers for this host's zone in Spock: the zone's primary in an
+# HA cluster, which role_config's zone_primary tasks find, and the host itself
+# in a simple cluster, where every zone is one node. The same rule as
+# setup_pgedge's pgedge_zone_primary.
+
+remove_zone_own_primary: >-
+  {{ zone_primary | default('') if is_ha_cluster | bool
+     else inventory_hostname }}
+
+# Every zone of the inventory with the host that answers for it in Spock, as a
+# list of {zone, host}, in zone order.
+#
+# In a simple cluster that is the zone's one node. In an HA cluster it is the
+# zone_primary its nodes recorded, and an empty host when none of them did:
+# every node of the zone was unreachable, so nobody could ask Patroni. Zones
+# are compared as numbers, since an inventory may give them either way.
+#
+# Built from hostvars, so it reads the same from any host, including from a
+# run_once block on a host in another zone.
+
+remove_zone_primaries: >-
+  {%- set out = [] -%}
+  {%- for z in zone_list | map('int') | unique | sort -%}
+  {%-   set nodes = [] -%}
+  {%-   for h in groups['pgedge'] -%}
+  {%-     if hostvars[h].zone | int == z -%}{%- set _ = nodes.append(h) -%}{%- endif -%}
+  {%-   endfor -%}
+  {%-   set leaders = [] -%}
+  {%-   for h in nodes -%}
+  {%-     set p = hostvars[h].zone_primary | default('') -%}
+  {%-     if p and p not in leaders -%}{%- set _ = leaders.append(p) -%}{%- endif -%}
+  {%-   endfor -%}
+  {%-   set _ = out.append({'zone': z,
+                            'host': (leaders | first | default(''))
+                                    if is_ha_cluster | bool
+                                    else nodes | first}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# The zones that stay, and the one that goes.
+
+remove_zone_remaining: >-
+  {{ remove_zone_primaries | rejectattr('zone', 'eq', remove_zone | int)
+     | list }}
+
+remove_zone_target: >-
+  {{ remove_zone_primaries | selectattr('zone', 'eq', remove_zone | int)
+     | first | default({'zone': remove_zone | int, 'host': ''}) }}
+
+# The names this zone has in Spock, as setup_pgedge gives them: its node is
+# edge<N>, and a subscription is sub_n<subscriber>_n<provider>.
+
+remove_zone_node: "edge{{ remove_zone | int }}"
+
+# The databases of the zone being removed that have to be dropped, in db_names
+# order: those that hold its Spock node, a subscription, or tables of its own,
+# going by what its primary reported before anything was changed. Read on that
+# primary, which recorded pgedge_spock_state.
+
+remove_zone_reset_dbs: >-
+  {%- set out = [] -%}
+  {%- for db in db_names -%}
+  {%-   set d = pgedge_spock_state.dbs[db] | default({}) -%}
+  {%-   if d.node | default(none) or d.subs | default([])
+           or d.has_user_tables | default(false) -%}
+  {%-     set _ = out.append(db) -%}
+  {%-   endif -%}
+  {%- endfor -%}
+  {{ out }}
+
+# The other zones that have to apply every write of the zone being removed in
+# remove_zone_db before anything is changed (catch_up.yaml): those whose
+# primary reported a subscription from it there, as {zone, host, version},
+# where version is that zone's Spock release in the database. Empty when the
+# zone being removed has no node of its own in the database, since then it has
+# nothing to send. Built from hostvars, so it reads the same from any host.
+
+remove_zone_cu_waiters: >-
+  {%- set out = [] -%}
+  {%- set t = hostvars[remove_zone_target.host].pgedge_spock_state
+              | default({}) if remove_zone_target.host else {} -%}
+  {%- if ((t.dbs | default({}))[remove_zone_db] | default({})).node
+         | default(none) -%}
+  {%-   for z in remove_zone_remaining -%}
+  {%-     set d = ((hostvars[z.host].pgedge_spock_state | default({})).dbs
+                   | default({}))[remove_zone_db] | default({}) -%}
+  {%-     if remove_zone_node in d.subs | default([])
+                                 | map(attribute='provider') | list -%}
+  {%-       set _ = out.append({'zone': z.zone, 'host': z.host,
+                                'version': d.spock_version | default(none)}) -%}
+  {%-     endif -%}
+  {%-   endfor -%}
+  {%- endif -%}
+  {{ out }}

@@ -90,9 +90,15 @@ This role uses the following parameters:
 The role restores `recovery_node` into the data directory `setup_postgres`
 built, then starts Postgres directly rather than through Patroni, archiving to
 the repository regardless of its configuration, so the WAL and timeline history
-written at promotion reach the repository. The role waits for the end of
-recovery for as long as Postgres keeps making progress, and gives up only when
-nothing has moved for `recovery_stall_minutes`.
+written at promotion reach the repository. It replays with `hot_standby` off
+and with the pool sizes a deployment would give the zone. With `hot_standby`
+on, Postgres stops replay at the first record from a server whose
+`max_worker_processes` or other shared pool was larger than its own, which any
+archive holds once the pools grow after the backup. With it off, Postgres does
+not compare them, and nothing needs to query the node before it is promoted.
+The role waits for the end of recovery for as long as Postgres keeps making
+progress, and gives up only when nothing has moved for
+`recovery_stall_minutes`.
 
 When `recovery_backup_set` is empty and `recovery_target_type` is empty or
 `immediate`, the role names the newest backup explicitly. PgBackRest's own

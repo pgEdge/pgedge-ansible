@@ -5,7 +5,7 @@
 # change is rewriting one of them, or fetching a key it already has.
 #
 # The caller checks the recap, the way tests/check-idempotence.sh does for the
-# pooler roles.
+# whole deployment.
 
 - hosts: pgedge:backup
   any_errors_fatal: true

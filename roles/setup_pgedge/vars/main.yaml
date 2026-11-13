@@ -6,26 +6,195 @@
 # - Otherwise ensures a subscription target even when there are no proxies.
 
 subscribe_target: >-
-  {{ proxy_node if proxy_node > '' 
+  {{ proxy_node if proxy_node > ''
      else proxies_in_zone | first if proxies_in_zone
      else first_node_in_zone }}
 
-# Where this zone connects to reach the seed zone, chosen the same way as every
-# other subscription target in this role: the seed zone's proxy_node, then its
-# first HAProxy, then its first pgEdge node.
+# Where a zone is reached, as a connection string, for a node's own entry and
+# for every subscription to it. The node, the mesh, the seed copy and the join
+# all build their connection strings here, so a subscription created by one of
+# them reaches a zone exactly where one created by any other would.
+#
+# A task sets pgedge_dsn_zone and pgedge_dsn_db in its own vars and reads
+# pgedge_zone_dsn:
+#
+# - In a simple cluster a zone is one node, reached directly on pg_port.
+# - In an HA cluster a zone is reached through its proxy on proxy_port, so a
+#   subscription follows the zone's leader wherever Patroni puts it. The proxy
+#   is the zone's proxy_node, then its first HAProxy, then its first pgEdge
+#   node. This zone's own entry uses subscribe_target above, which reads
+#   proxy_node from the host running it rather than from the zone's first node.
+#
+# The port is this host's, not the remote zone's, as it always has been: every
+# zone of a cluster is expected to listen on the same one.
 
-seed_first_node: >-
-  {{ groups['pgedge'] | map('extract', hostvars) |
-     selectattr('zone', 'eq', pgedge_seed_zone | int) |
-     map(attribute='inventory_hostname') | list | first | default('') }}
+pgedge_dsn_own: "{{ pgedge_dsn_zone | int == zone | int }}"
 
-seed_proxies: >-
-  {{ groups['haproxy'] | default([]) | map('extract', hostvars) |
-     selectattr('zone', 'eq', pgedge_seed_zone | int) |
-     map(attribute='inventory_hostname') | list }}
+# A zone is compared as a number on both sides, since an inventory may give a
+# host's zone as a string.
 
-seed_conn_target: >-
-  {{ hostvars[seed_first_node].proxy_node | default('')
-       if seed_first_node and hostvars[seed_first_node].proxy_node | default('')
-     else seed_proxies | first if seed_proxies
-     else seed_first_node }}
+pgedge_dsn_first_node: >-
+  {%- set out = [] -%}
+  {%- for h in groups['pgedge']
+        if hostvars[h].zone | default(1) | int == pgedge_dsn_zone | int -%}
+  {%-   set _ = out.append(h) -%}
+  {%- endfor -%}
+  {{ out | first | default('') }}
+
+pgedge_dsn_proxies: >-
+  {%- set out = [] -%}
+  {%- for h in groups['haproxy'] | default([])
+        if hostvars[h].zone | default(1) | int == pgedge_dsn_zone | int -%}
+  {%-   set _ = out.append(h) -%}
+  {%- endfor -%}
+  {{ out }}
+
+pgedge_dsn_proxy_node: >-
+  {{ hostvars[pgedge_dsn_first_node].proxy_node | default('')
+     if pgedge_dsn_first_node else '' }}
+
+pgedge_dsn_host: >-
+  {{ (subscribe_target if pgedge_dsn_own | bool
+      else pgedge_dsn_proxy_node if pgedge_dsn_proxy_node > ''
+      else pgedge_dsn_proxies | first if pgedge_dsn_proxies
+      else pgedge_dsn_first_node)
+     if is_ha_cluster | bool
+     else (inventory_hostname if pgedge_dsn_own | bool
+           else pgedge_dsn_first_node) }}
+
+pgedge_dsn_port: "{{ proxy_port if is_ha_cluster | bool else pg_port }}"
+
+pgedge_zone_dsn: >-
+  host={{ pgedge_dsn_host }} user={{ pgedge_user }}
+  dbname={{ pgedge_dsn_db }} port={{ pgedge_dsn_port }}
+
+# The node that answers for this host's zone in Spock: the zone's primary in an
+# HA cluster, which role_config's zone_primary tasks find, and the host itself
+# in a simple cluster, where every zone is one node.
+
+pgedge_zone_primary: "{{ zone_primary if is_ha_cluster | bool else inventory_hostname }}"
+
+# pgedge_join_zones as a list of zone numbers. Its argument spec checks a list
+# given as JSON, but a plain -e pgedge_join_zones=4 or =4,5 arrives as a string,
+# which the spec passes through unconverted. Both are read here as the same
+# list. Order is kept, since zones join in the order given, and repeats are
+# dropped. Entries that are not whole numbers are kept as given, for the
+# validation in classify.yaml to name.
+
+pgedge_join_zones_given: >-
+  {{ (pgedge_join_zones if pgedge_join_zones is sequence
+                           and pgedge_join_zones is not string
+      else (pgedge_join_zones | string).split(','))
+     | map('string') | map('trim') | reject('eq', '') | unique | list }}
+
+# What classify.yaml found decides two things for the rest of the role, and
+# neither applies in a recovery, where pgedge_seed_zone governs exactly as it
+# always has.
+#
+# The zones this run joins, in the order pgedge_join_zones gave them: the ones
+# named there that are absent from, or partway into, a database that holds
+# data. A named zone that is already a member everywhere is left out.
+
+pgedge_join_plan: >-
+  {{ [] if pgedge_seed_zone | string > ''
+     else pgedge_join_zones_given | map('int')
+          | select('in', pgedge_cluster.incomplete) | list }}
+
+# Whether the ordinary path may create Spock objects for a zone in a database.
+# In a database that holds data, a zone outside the cluster gets neither its
+# node nor any subscription to or from it here: the join creates those itself,
+# in the order that keeps every write accounted for. Everywhere else, and in a
+# recovery, the ordinary path runs as it always has. A task sets
+# pgedge_mesh_db and pgedge_mesh_zones in its own vars and reads this.
+
+pgedge_mesh_allowed: >-
+  {{ pgedge_seed_zone | string > ''
+     or pgedge_cluster.dbs[pgedge_mesh_db].outside
+        | intersect(pgedge_mesh_zones | map('int') | list) | length == 0 }}
+
+# What a join reads about the cluster, from what classify.yaml found. A task
+# sets pgedge_join_zone and pgedge_join_db in its own vars and reads these.
+#
+# The host that runs each zone's primary, by zone number as a string: the one
+# that answered for the zone in classify.yaml.
+
+pgedge_zone_hosts: >-
+  {%- set out = {} -%}
+  {%- for z, st in pgedge_cluster.zones.items() -%}
+  {%-   set _ = out.update({z | string: st.host}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# How each zone in pgedge_join_plan joins each database, as
+# {zone: {database: {members, source, others}}}, zones as strings. Read by the
+# checks before a join and by every step of it.
+#
+# - The databases are those that hold data and that the zone is not yet a
+#   member of. One it joined in an earlier run is left out.
+# - members: the zones it joins there, which are the members classify.yaml
+#   found and every zone that joins before it in this run. Joins run in the
+#   order of pgedge_join_plan, and each finishes all its databases before the
+#   next zone starts, so the earlier ones are members by then.
+# - source: the zone it copies from, S. A join that already started its copy
+#   keeps the source it started with, so the provider of an existing copy
+#   subscription wins. Otherwise it is the lowest-numbered zone that was a
+#   member before this run, whose state the checks before the join read; only
+#   if there is none, the lowest-numbered member.
+# - others: every other member, Z. Empty in a cluster of two zones.
+
+pgedge_join_layout: >-
+  {%- set out = {} -%}
+  {%- for n in pgedge_join_plan -%}
+  {%-   set dbs = {} -%}
+  {%-   for db in db_names
+          if db in pgedge_cluster.established
+             and n | int in pgedge_cluster.dbs[db].outside -%}
+  {%-     set members = (pgedge_cluster.dbs[db].members
+                         + pgedge_join_plan[:pgedge_join_plan.index(n)])
+                        | map('int') | unique | sort -%}
+  {%-     set st = pgedge_cluster.zones[n | string].dbs[db] | default({}) -%}
+  {%-     set copy = st.copy_sub | default(none) -%}
+  {%-     set before = pgedge_cluster.dbs[db].members | map('int') | sort -%}
+  {%-     set source = (copy.provider | regex_replace('^edge', '') | int)
+                       if copy else (before or members) | first -%}
+  {%-     set _ = dbs.update({db: {
+              'members': members, 'source': source,
+              'others': members | reject('eq', source) | list}}) -%}
+  {%-   endfor -%}
+  {%-   set _ = out.update({n | string: dbs}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# For the zone and database a task names in pgedge_join_zone and
+# pgedge_join_db: the databases the zone joins, in db_names order, and the
+# zones it joins, copies from, and takes the other writes from there.
+
+pgedge_join_dbs: >-
+  {{ db_names | select('in', pgedge_join_layout[pgedge_join_zone | string]
+                               | default({})) | list }}
+pgedge_join_members: >-
+  {{ pgedge_join_layout[pgedge_join_zone | string][pgedge_join_db].members }}
+pgedge_join_source: >-
+  {{ pgedge_join_layout[pgedge_join_zone | string][pgedge_join_db].source }}
+pgedge_join_others: >-
+  {{ pgedge_join_layout[pgedge_join_zone | string][pgedge_join_db].others }}
+
+# Where Spock records, on a node, the last position it applied from each other
+# node: spock.progress, in remote_lsn until Spock 6.0 and remote_commit_lsn
+# from it. Zones may run different Spock releases, so each zone's column comes
+# from its own version, by zone number as a string, in pgedge_join_db.
+
+pgedge_join_progress_columns: >-
+  {%- set out = {} -%}
+  {%- for z, st in pgedge_cluster.zones.items() -%}
+  {%-   set v = (st.dbs[pgedge_join_db] | default({})).spock_version
+               | default(none) -%}
+  {%-   set _ = out.update({z | string: 'remote_commit_lsn'
+                if v and v is version('6.0.0', '>=') else 'remote_lsn'}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# How many times a sync wait polls, five seconds apart, within
+# pgedge_join_wait_minutes.
+
+pgedge_join_wait_retries: "{{ (pgedge_join_wait_minutes | int * 12, 1) | max }}"

@@ -12,6 +12,123 @@ in full.
 
 ### Added
 
+- A zone can be added to a cluster that already holds data, on simple and
+  Ultra-HA clusters, by listing its hosts in the inventory and running the
+  deployment playbook with `-e pgedge_join_zones=<zone>`. `setup_pgedge`
+  copies every database in `db_names` into the zone from an existing one
+  while the other zones keep taking writes, accounts for every write made
+  during the copy, and then completes the subscription mesh. A join that
+  stops partway resumes when the same command is run again, even after its
+  last subscription exists, because the zone records an unfinished join on
+  each database until it is done; one that cannot resume releases what it
+  held on the other zones. New
+  `pgedge_join_wait_minutes` limits the join's waits for bookmarks. (EE-45)
+- New `remove_zone` role and `sample-playbooks/remove-zone` playbook detach
+  one zone from a running cluster: every other zone drops its subscriptions,
+  replication slots, node and progress for the zone, and the zone's own
+  subscriptions and databases are dropped when it can be reached, once
+  every zone subscribing to it has applied all its writes. (EE-45)
+- The end-to-end tests can add zones to a deployed cluster that holds data,
+  under a steady trickle of writes on every existing zone, and verify that
+  every zone ends with the same rows and no replication conflicts. A new
+  `zone-join` job in the Simple Cluster and Ultra-HA workflows runs beside the
+  existing one. Its `zone_join` input is `basic` by default, covering joins,
+  an interrupted and resumed join, the gate and `remove_zone`, and `full`
+  adds every refused join, interruption and AutoDDL during a join. (EE-45)
+- A node added to the inventory of an Ultra-HA zone that already runs joins
+  the zone when the deployment playbook runs again. Where the collection runs
+  etcd, `setup_etcd` adds the node to the zone's etcd cluster as a learner,
+  starts it, and promotes it once it has caught up, one node at a time.
+  (#67)
+- New `zone_primary` task file in `role_config` finds the node running each
+  zone's primary, for any role that writes to the zone, and stops the run if
+  that node is not in the play or the zone's nodes disagree on it. A built
+  zone whose Patroni is stopped everywhere has Patroni started so its members
+  elect a leader, rather than taking the first node as primary.
+  `finalize_backrest` uses it in place of its own lookup. (EE-44) With
+  `zone_primary_read_only`, it never starts Patroni and leaves the primary of
+  such a zone, or of one whose Patroni runs without a leader, empty, for
+  `remove_zone`. (EE-45)
+- New `sizing_floor` task file in `role_config` reads back the worker and
+  slot pool sizes each zone was last configured with, and the calculated
+  sizes never go below them. (EE-44)
+- New `unmanaged_db_names` parameter lists databases the collection does not
+  manage, such as one removed from `db_names` and kept replicating, so that
+  the worker and slot pools are sized for them as well. `init_server` refuses
+  a name listed there and in `db_names` both. (EE-44)
+- `init_server` refuses an inventory whose pgEdge nodes list different
+  databases in `db_names` or `unmanaged_db_names`. (EE-44)
+
+### Changed
+
+- `setup_pgedge` reads every zone's Spock state before it creates anything,
+  and stops a run that would subscribe a zone to a cluster that already holds
+  data without copying that data, naming `pgedge_join_zones`. It also stops a
+  run whose zones are not one fully subscribed cluster, and recognizes an
+  existing subscription by the zone it comes from as well as by its name.
+  (EE-45)
+- `pgedge_seed_zone` is documented as recovery-only, and a run refuses it
+  together with `pgedge_join_zones`. (EE-45)
+- The playbook configuration guide states that running the playbooks with
+  `--limit` is not supported: every run should cover the whole inventory.
+  (EE-45)
+
+### Fixed
+
+- The worker pool counts the Spock manager in `coldfront_db` where ColdFront
+  is enabled outside mesh mode, which it previously missed. (EE-44)
+- A database added to `db_names` reaches a running cluster. On Ultra-HA,
+  `setup_postgres` and `setup_pgedge` write to each zone's current leader
+  rather than its first node, and `setup_patroni` reloads Patroni so the new
+  `pg_hba` rules take effect. On a simple cluster, `setup_postgres` reloads
+  Postgres when `pg_hba.conf` changes. (EE-44)
+- `setup_patroni` no longer times out on a zone whose leader has moved off its
+  first node, and `setup_postgres` no longer rewrites the `pg_hba.conf` and
+  `postgresql.conf` of a node Patroni manages. (EE-44)
+- Removing a database from `db_names` no longer shrinks the calculated worker,
+  walsender, slot and origin pools, which now only ever grow unless
+  `pg_parameters` sets them. The documentation now lists what a database removed from `db_names` stops
+  getting from the collection, and says to retire the database before
+  removing its name, since Spock cannot drop a subscription's slot once
+  `pg_hba.conf` no longer admits it. (EE-44)
+- Running the deployment playbook again on a deployed cluster reports no
+  changes, including after Patroni has moved a zone's leader off its first
+  node. Tasks that reported a change they did not make now report none, and
+  the end-to-end tests run every deployment a second time, once with the
+  leaders moved, and fail on any change. In SSH mode, `known_hosts` entries
+  come from the gathered host keys rather than an `ssh-keyscan` whose order
+  varied between runs. (EE-49)
+- A changed `pgedge_password`, `replication_password` or `backup_password`
+  replaces the old `.pgpass` entry rather than being added after it, where
+  the old entry kept being used. Colons and backslashes in passwords are now
+  escaped there. (EE-49)
+- On a simple cluster with a backup repository, a second deployment run no
+  longer removes the backup server's `pg_hba.conf` rules and adds them back,
+  reloading Postgres twice and refusing the backup server in between. (EE-49)
+- After a failover, the backup server reads the timeline from the zone's
+  primary rather than its first node, so a rerun can no longer take an
+  unneeded full backup. The repository checks run on the zone's primary, so a
+  replica rebuilt from scratch is no longer mistaken for a new cluster beside
+  an existing repository, and Patroni forces a restart only on a zone it is
+  bootstrapping. (EE-49)
+- `recover_postgres` no longer pauses or aborts replay at WAL written after
+  the pools grew past the size the restored node started with. (EE-49)
+
+## v2.1.0
+
+This release adds ColdFront tiered storage, which keeps recent data in native
+Postgres partitions and archives older data to Apache Iceberg tables on
+S3-compatible storage, to simple and Ultra-HA clusters. It also lets
+`install_repos` use a mirror or caching proxy of the pgEdge package
+repository, and adds Debian 13, Ubuntu 24.04 and Ubuntu 26.04 to the
+compatibility list. Playbooks and inventories written for v2.0.0 need no
+changes; see [Upgrading from v2.0.0](release_notes/v2.1.0.md#upgrading-from-v200).
+
+The [release notes](release_notes/v2.1.0.md#changes) describe each change
+in full.
+
+### Added
+
 - New `install_coldfront` and `setup_coldfront` roles add ColdFront tiered
   storage to pgEdge Distributed Postgres nodes, and new `install_lakekeeper`
   and `setup_lakekeeper` roles build the Lakekeeper catalog it commits
@@ -46,6 +163,12 @@ in full.
   pgEdge servers' layout or that of a proposed pgEdge mirror procedure, in
   place of the `pgedge-release` package. `init_server` refuses settings the role would
   otherwise ignore. (EE-43)
+
+### Changed
+
+- The collection tarball no longer includes `galaxy.template.yml`, the
+  `Makefile` or `mkdocs.yml`, which an installed collection does not use.
+  (EE-48)
 
 ### Fixed
 

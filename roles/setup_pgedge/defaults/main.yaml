@@ -4,6 +4,10 @@
 # empty and have to copy it before they replicate with anything. Empty in an
 # ordinary deployment, where every zone starts empty and nothing is copied. The
 # recovery playbook sets it to the zone it restored. HA clusters only.
+#
+# This is for recovery, where no other zone holds data or takes writes while it
+# copies. Adding a zone to a cluster that is running is pgedge_join_zones'
+# job, and the role refuses the two together.
 
 pgedge_seed_zone: ""
 
@@ -14,3 +18,25 @@ pgedge_seed_zone: ""
 
 pgedge_seed_stall_minutes: 15
 pgedge_seed_max_hours: 24
+
+# The zones to join to a cluster that already holds data, as a list of zone
+# numbers. Empty in an ordinary deployment. Pass it on the command line rather
+# than keeping it in an inventory, as with wipe_confirm: it says what this run
+# is for, not what the cluster is.
+#
+# A zone added to the inventory of a running cluster does not join it on its
+# own. Without this list the run refuses to touch such a zone, naming it and
+# this setting, because the plain subscriptions an ordinary deployment creates
+# would leave the new zone without the data the others already hold. The list
+# is also what keeps a typo in the inventory from starting a join nobody asked
+# for: a zone joins only when it is both missing from the cluster and named
+# here.
+
+pgedge_join_zones: []
+
+# How long a join waits, in minutes, for each zone to reach a bookmark another
+# zone has set, the way it confirms that every write has arrived before moving
+# on. The bulk copy is governed by pgedge_seed_stall_minutes and
+# pgedge_seed_max_hours instead.
+
+pgedge_join_wait_minutes: 30

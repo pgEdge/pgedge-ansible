@@ -1,0 +1,218 @@
+---
+
+# Find the node running this zone's primary and record it as zone_primary on
+# every node of the zone. Anything that writes to a zone has to run there: a
+# replica is read-only, and in S3 mode its pgbackrest.conf names only its own
+# Postgres.
+#
+# A non-HA zone is one node, and that node is its primary. An HA zone's primary
+# is wherever Patroni last put it, which after a failover or switchover is not
+# the zone's first node, so Patroni is asked. Every node whose Patroni is
+# running asks, and the answers are pooled through hostvars, so a node new to
+# the zone still finds the leader. The nodes have to agree: two leaders means
+# the zone is changing under the run, by a switchover or failover started
+# outside it, and nothing can be written safely until it settles.
+#
+# The primary also has to be one of the play's hosts. Writes run there, and a
+# run that leaves it out, with --limit or because it failed earlier in the
+# play, would skip them without a word.
+#
+# Only a zone that has never been built has no leader to find: no node has a
+# patroni.yml, which setup_patroni writes before Patroni first starts. Its
+# first node is then the primary, the one setup_postgres initializes and
+# Patroni bootstraps from. A built zone whose Patroni is stopped on every node
+# is not that zone. Its leader is whichever member Patroni last promoted, and
+# after a failover that is not the first node, so assuming the first node
+# would send writes to a standby, and setup_postgres would start that
+# standby's Postgres outside Patroni to make them. Patroni is started instead
+# on every member that has a configuration and a data directory, and the
+# members elect a leader among themselves as they would after any outage. The
+# collection starts Patroni on every node anyway; this only does it before
+# anything asks which node leads. Postgres running outside Patroni is stopped
+# first, so Patroni starts from a stopped data directory rather than finding
+# one it does not own.
+#
+# A caller that must change nothing, such as remove_zone's preflight, sets
+# zone_primary_read_only. Patroni is then never started, and a built zone with
+# no running leader, whether Patroni is stopped or runs without electing one,
+# records an empty zone_primary rather than stopping the run:
+# its primary cannot be known without starting something, and the caller
+# decides what an unknown primary means. Such a caller only reads, so the
+# primary need not be one of the play's hosts either: a follower's Patroni can
+# still name a leader whose host dropped out of the play, as when it was
+# unreachable at fact gathering, and the caller decides what that means too.
+#
+# patronictl shows Host as host:port once any member runs on a port other than
+# 5432 (or two members share a host), so the port is stripped before the name
+# is compared with the inventory. pipefail keeps a patronictl failure from
+# passing as an empty list. A zone mid-election has no leader for a cycle or
+# two, and one whose members were all just started has to wait out its old
+# leader key first, which the retries cover.
+
+- name: Check whether Patroni is running on this node
+  systemd_service:
+    name: "{{ patroni_service_name }}"
+  register: zone_primary_patroni
+  become: true
+  when: is_ha_cluster | bool
+
+- name: Check whether Patroni has been configured on this node
+  stat:
+    path: "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+  register: zone_primary_configured
+  become: true
+  when: is_ha_cluster | bool
+
+- name: Check whether this node has a Postgres data directory
+  stat:
+    path: "{{ pg_data }}/PG_VERSION"
+  register: zone_primary_initialized
+  become: true
+  when: is_ha_cluster | bool
+
+- name: Note whether this zone was built and Patroni is stopped throughout it
+  set_fact:
+    zone_primary_built: >-
+      {{ nodes_in_zone | map('extract', hostvars)
+         | map(attribute='zone_primary_configured.stat.exists', default=false)
+         | select | list | length > 0 }}
+    zone_primary_stopped: >-
+      {{ nodes_in_zone | map('extract', hostvars)
+         | map(attribute='zone_primary_patroni.status.ActiveState', default='')
+         | select('eq', 'active') | list | length == 0 }}
+  when: is_ha_cluster | bool
+
+- name: Stop Postgres running outside Patroni before Patroni starts it
+  service:
+    name: "{{ pg_service_name }}"
+    state: stopped
+  become: true
+  when:
+  - is_ha_cluster | bool
+  - zone_primary_built | bool
+  - zone_primary_stopped | bool
+  - zone_primary_configured.stat.exists
+  - zone_primary_initialized.stat.exists
+  - not zone_primary_read_only | default(false) | bool
+
+- name: Start Patroni so the zone's members can elect a leader
+  systemd_service:
+    name: "{{ patroni_service_name }}"
+    state: started
+  register: zone_primary_patroni_start
+  become: true
+  when:
+  - is_ha_cluster | bool
+  - zone_primary_built | bool
+  - zone_primary_stopped | bool
+  - zone_primary_configured.stat.exists
+  - zone_primary_initialized.stat.exists
+  - not zone_primary_read_only | default(false) | bool
+
+- name: Ask Patroni which node leads this zone
+  shell: |-
+    set -o pipefail
+    {{ ctl }} list {{ patroni_scope }} -f json \
+        | jq -r '.[] | select(.Role == "Leader") | .Host | sub(":[0-9]+$"; "")'
+  args:
+    executable: /bin/bash
+  vars:
+    ctl: "patronictl -c {{ patroni_config_dir }}/{{ patroni_config_file }}"
+  register: zone_primary_leader
+  until: zone_primary_leader.stdout_lines | length == 1
+  retries: 24
+  delay: 5
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: postgres
+  when:
+  - is_ha_cluster | bool
+  - zone_primary_patroni.status.ActiveState | default('') == 'active'
+    or zone_primary_patroni_start is changed
+
+# A read-only caller also accepts no leader at all: a zone whose Patroni runs
+# but cannot elect one has no primary to name, and the caller decides what an
+# unknown primary means, as for a zone whose Patroni does not run. Patroni
+# failing to answer, or naming more than one leader or one outside the zone,
+# still stops the run.
+
+- name: Ensure Patroni reported exactly one leader among this zone's nodes
+  assert:
+    that:
+    - zone_primary_leader.rc == 0
+    - zone_primary_leader.stdout_lines | length == 1 or none_allowed
+    - zone_primary_leader.stdout | trim in nodes_in_zone
+      or (none_allowed and zone_primary_leader.stdout_lines | length == 0)
+    fail_msg: >-
+      Patroni cluster {{ patroni_scope }} should have one leader among
+      {{ nodes_in_zone | join(', ') }}, but patronictl list reported
+      {{ zone_primary_leader.stdout_lines | join(', ')
+         if zone_primary_leader.stdout_lines | default([]) else 'none' }}
+      {{- (': ' ~ zone_primary_leader.stderr | trim)
+          if zone_primary_leader.stderr | default('') | trim else '' }}.
+      Nothing can be written to the zone until it has a leader; see
+      'patronictl list {{ patroni_scope }}' on {{ inventory_hostname }}.
+  vars:
+    none_allowed: "{{ zone_primary_read_only | default(false) | bool }}"
+  when: zone_primary_leader is not skipped
+
+- name: Gather the leaders this zone's nodes reported
+  set_fact:
+    zone_primary_leaders: >-
+      {{ nodes_in_zone | map('extract', hostvars)
+         | map(attribute='zone_primary_leader.stdout_lines', default=[])
+         | flatten | map('trim') | unique | list }}
+
+- name: Ensure this zone's nodes agree on its leader
+  assert:
+    that:
+    - zone_primary_leaders | length <= 1
+    fail_msg: >-
+      The nodes of zone {{ zone }} disagree on its leader, reporting
+      {{ zone_primary_leaders | join(', ') }}. The zone is changing while this
+      runs, by a switchover or failover started elsewhere. Let it settle and
+      run this again.
+
+# A built zone that reached here without a leader had no member Patroni could
+# run: every node with a patroni.yml has lost its data directory, or none of
+# them is in the play. Its primary cannot be known, and guessing the first node
+# would build a new cluster beside whatever the zone's store still describes.
+
+- name: Ensure a built zone has a leader
+  assert:
+    that:
+    - zone_primary_leaders | length == 1
+    fail_msg: >-
+      Zone {{ zone }} has been built, since
+      {{ nodes_in_zone | map('extract', hostvars)
+         | selectattr('zone_primary_configured.stat.exists', 'defined')
+         | selectattr('zone_primary_configured.stat.exists')
+         | map(attribute='inventory_hostname') | join(', ') }} has a
+      {{ patroni_config_dir }}/{{ patroni_config_file }}, but Patroni runs on
+      none of its nodes, and none of this play's hosts in the zone has both
+      that file and a data directory in {{ pg_data }} to start it from. Start
+      Patroni on the zone's members, or restore them, and run this again.
+  when:
+  - is_ha_cluster | bool
+  - zone_primary_built | bool
+  - not zone_primary_read_only | default(false) | bool
+
+- name: Record which node runs this zone's primary
+  set_fact:
+    zone_primary: >-
+      {{ zone_primary_leaders | first if zone_primary_leaders
+         else '' if is_ha_cluster | bool and zone_primary_built | bool
+                    and zone_primary_read_only | default(false) | bool
+         else first_node_in_zone }}
+
+- name: Ensure this run includes the node that runs this zone's primary
+  assert:
+    that:
+    - zone_primary in ansible_play_hosts
+    fail_msg: >-
+      {{ zone_primary }} runs zone {{ zone }}'s primary, but is not among this
+      play's hosts, whether left out with --limit or failed earlier in the run.
+      Everything written to the zone is written there. Run this again with
+      {{ zone_primary }} included.
+  when: not zone_primary_read_only | default(false) | bool

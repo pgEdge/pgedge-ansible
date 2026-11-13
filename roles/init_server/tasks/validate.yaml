@@ -535,6 +535,99 @@
          | sort }}
   when: inventory_hostname in (groups.pgedge | default([]))
 
+# unmanaged_db_names tells the sizing about databases the collection does not
+# manage. A name in db_names, or one the collection creates for a component such
+# as ColdFront, would be both managed and not, and a list of anything but names
+# would be counted wrongly or fail mid-run.
+
+- name: Ensure unmanaged_db_names names no database the collection manages
+  assert:
+    that:
+    - is_list | bool
+    - unmanaged_db_names | reject('string') | list | length == 0
+    - in_both | length == 0
+    fail_msg: >-
+      unmanaged_db_names must be a list of database names, none of them in
+      db_names or created by the collection for a component it sets up: a
+      database is either managed by the collection or not.
+      {{ 'Already managed: ' ~ in_both | join(', ') ~ '.' if in_both else '' }}
+  vars:
+    is_list: >-
+      {{ unmanaged_db_names is sequence and unmanaged_db_names is not string
+         and unmanaged_db_names is not mapping }}
+    in_both: >-
+      {{ unmanaged_db_names | select('string')
+         | intersect(db_names + pg_internal_dbs) | list
+         if is_list | bool else [] }}
+  when: inventory_hostname in (groups.pgedge | default([]))
+
+# db_names and unmanaged_db_names describe the cluster, not a node. Spock
+# subscribes each database in db_names to the same database on every other node,
+# so a node with a different list subscribes to databases its peers never
+# create, or never subscribes to ones they do. A database outside db_names that
+# replicates exists on every node just the same, and the pools it needs are
+# sized from unmanaged_db_names, so every node must count it.
+#
+# Ansible cannot say where a variable was set, only what each host ends up
+# with, so the agreement is checked on the values. hostvars leaves out role
+# defaults, which would make a node that does not set db_names look as though
+# it had none, so each node records what it resolved before the comparison.
+# Each list is compared as a set, since order changes nothing, and a value
+# that is not a list is compared as it stands; the task above refuses it.
+
+- name: Record the database lists each pgEdge node resolves
+  set_fact:
+    init_server_db_lists:
+      db_names: "{{ lists.db_names }}"
+      unmanaged_db_names: "{{ lists.unmanaged_db_names }}"
+  vars:
+    lists: >-
+      {% set found = {} %}
+      {%- for name, given in {'db_names': db_names,
+                              'unmanaged_db_names': unmanaged_db_names}.items() %}
+      {%-   if given is sequence and given is not string
+             and given is not mapping %}
+      {%-     set _ = found.update({name: given | select('string') | unique
+                                          | sort | list}) %}
+      {%-   else %}
+      {%-     set _ = found.update({name: given | string}) %}
+      {%-   endif %}
+      {%- endfor %}{{ found }}
+  when: inventory_hostname in (groups.pgedge | default([]))
+
+- name: Ensure every pgEdge node agrees on db_names and unmanaged_db_names
+  assert:
+    that:
+    - by_value.db_names | length <= 1
+    - by_value.unmanaged_db_names | length <= 1
+    fail_msg: >-
+      db_names and unmanaged_db_names must be the same on every pgEdge node:
+      Spock replicates each database between all of them, and every node's
+      worker and slot pools are sized for every database. Set both on the
+      'pgedge' group.
+      {%- for name, values in by_value.items() if values | length > 1 %}
+      {{ name }} differs:
+      {%- for value, hosts in values.items() %}
+      {{ value }} on {{ hosts | join(', ') }}
+      {{- ';' if not loop.last else '.' }}
+      {%- endfor %}{% endfor %}
+  vars:
+    # Each list, as text, mapped to the nodes that resolved it. A node that
+    # failed an earlier check has recorded nothing and is left out.
+    by_value: >-
+      {% set found = {'db_names': {}, 'unmanaged_db_names': {}} %}
+      {%- for host in groups['pgedge'] | default([]) %}
+      {%-   set lists = hostvars[host].init_server_db_lists | default(none) %}
+      {%-   if lists is not none %}
+      {%-     for name in found %}
+      {%-       set key = lists[name] | string %}
+      {%-       set _ = found[name].update(
+                  {key: found[name][key] | default([]) + [host]}) %}
+      {%-     endfor %}
+      {%-   endif %}
+      {%- endfor %}{{ found }}
+  run_once: true
+
 # The collection sizes Spock's worker, walsender, slot and origin pools from the
 # inventory (pg_sized_parameters in role_config). pg_parameters may raise them,
 # but a value below the calculation, or a null that falls back to Postgres's own
@@ -550,22 +643,13 @@
     fail_msg: >-
       pg_parameters on {{ inventory_hostname }} sets
       {{ undersized | join('; ') }}. The collection calculates these from the
-      zones, db_names, the zone's standbys and max_parallel_workers, and a
-      smaller pool keeps Spock from starting the workers it needs. Raise them,
+      zones, db_names, unmanaged_db_names, the zone's standbys and
+      max_parallel_workers, and a smaller pool keeps Spock from starting the
+      workers it needs. Raise them,
       or remove them from pg_parameters to use the calculated values. See
       "Worker and Replication Sizing" in the Postgres configuration docs.
   vars:
-    undersized: >-
-      {% set found = [] %}
-      {%- for name, sized in pg_sized_parameters.items()
-            if name in pg_user_parameters %}
-      {%-   set given = pg_user_parameters[name] %}
-      {%-   if given is none or given | int < sized %}
-      {%-     set _ = found.append(name ~ ' to '
-                ~ ('null' if given is none else given)
-                ~ ' where the cluster needs at least ' ~ sized) %}
-      {%-   endif %}
-      {%- endfor %}{{ found }}
+    undersized: "{{ pg_undersized_parameters }}"
   when: inventory_hostname in (groups.pgedge | default([]))
 
 # An HA zone keeps one Postgres configuration, in Patroni's store, for every

@@ -34,7 +34,7 @@ a plain copy of the files, or a clone made without its tags. Fetch the tags with
 `git fetch --tags`, or name the version yourself:
 
 ```bash
-make install VERSION=2.0.0
+make install VERSION=2.1.0
 ```
 
 ## SSH Connection Failure

@@ -1,0 +1,391 @@
+---
+
+# Before a join changes anything, check everything that would stop it partway
+# for a reason known now. A join holds replication slots on the other zones
+# while it runs, so a failure an hour into a copy costs WAL on every zone and an
+# operator's time; one found here costs neither. Each failure names the zones,
+# the databases and the fix.
+
+# Spock's add-node procedure needs 5.0.9 on every node, for the subscription it
+# creates disabled and the apply pause around the copy. The joining zone may run
+# a newer Spock than the members -- that is how a join moves a cluster onto a
+# newer release -- but never an older one, which may not understand what the
+# members send. Every database in db_names must be on every zone with Spock in
+# it: setup_postgres creates them, so one missing means that did not finish.
+
+- name: Ensure every zone runs a Spock release that can join or be joined
+  assert:
+    that:
+    - problems | length == 0
+    fail_msg: >-
+      A zone cannot join yet: {{ problems | join(' ') }} Nothing has been
+      created for the joining {{ 'zone' if pgedge_join_plan | length == 1
+      else 'zones' }}.
+    quiet: true
+  vars:
+    problems: >-
+      {%- set out = [] -%}
+      {%- for z, st in pgedge_cluster.zones.items() -%}
+      {%-   for db in db_names -%}
+      {%-     set v = (st.dbs[db] | default({})).spock_version | default(none) -%}
+      {%-     if not v -%}
+      {%-       set _ = out.append('Zone ' ~ z ~ ' has no database ' ~ db
+                    ~ ' with the spock extension in it; a deployment run'
+                    ~ ' without pgedge_join_zones creates it.') -%}
+      {%-     elif v is version('5.0.9', '<') -%}
+      {%-       set _ = out.append('Zone ' ~ z ~ ' runs Spock ' ~ v ~ ' in '
+                    ~ db ~ ', older than 5.0.9, the oldest that can take part'
+                    ~ ' in a join. Upgrade its packages, restart Postgres'
+                    ~ ' so that it loads the new Spock library, and run'
+                    ~ ' ALTER EXTENSION spock UPDATE in each database.') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {%- for n in pgedge_join_plan -%}
+      {%-   for db in db_names -%}
+      {%-     set nv = (pgedge_cluster.zones[n | string].dbs[db]
+                        | default({})).spock_version | default(none) -%}
+      {%-     for m in ((pgedge_join_layout[n | string] | default({}))[db]
+                        | default({})).members | default([]) -%}
+      {%-       set mv = (pgedge_cluster.zones[m | string].dbs[db]
+                          | default({})).spock_version | default(none) -%}
+      {%-       if nv and mv and (nv.split('.')[:2] | join('.'))
+                   is version(mv.split('.')[:2] | join('.'), '<') -%}
+      {%-         set _ = out.append('Zone ' ~ n ~ ' runs Spock ' ~ nv ~ ' in '
+                      ~ db ~ ', older than ' ~ mv ~ ' on zone ' ~ m
+                      ~ '. A joining zone may run a newer release than the'
+                      ~ ' members, never an older major or minor one.') -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out | unique }}
+  run_once: true
+
+# Large objects stored by lolor are kept in lolor's own tables, which Spock
+# replicates like any other once they are in a replication set. A joining zone
+# without the extension would receive rows for tables whose functions it lacks.
+
+- name: Find whether each zone replicates lolor's tables
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT EXISTS (
+               SELECT FROM spock.replication_set_table t
+                 JOIN spock.replication_set s ON s.set_id = t.set_id
+                 JOIN spock.local_node l ON l.node_id = s.set_nodeid
+                 JOIN pg_class c ON c.oid = t.set_reloid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'lolor') AS replicated,
+             EXISTS (SELECT FROM pg_extension
+                      WHERE extname = 'lolor') AS installed
+  loop: "{{ pgedge_cluster.established }}"
+  register: pgedge_join_lolor
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: inventory_hostname == pgedge_zone_primary
+
+- name: Ensure every joining zone has lolor where its source replicates it
+  assert:
+    that:
+    - problems | length == 0
+    fail_msg: >-
+      {{ problems | join(' ') }} Install the lolor extension in
+      {{ 'that database' if problems | length == 1 else 'those databases' }}
+      on the joining zone, and run this again. Nothing has been created for it.
+    quiet: true
+  vars:
+    lolor: >-
+      {%- set out = {} -%}
+      {%- for h in ansible_play_hosts -%}
+      {%-   for r in hostvars[h].pgedge_join_lolor.results | default([])
+                    | selectattr('query_result', 'defined') -%}
+      {%-     set _ = out.update({hostvars[h].zone ~ '/' ~ r.item:
+                                    r.query_result[0]}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    problems: >-
+      {%- set out = [] -%}
+      {%- for n in pgedge_join_plan -%}
+      {%-   for db, l in pgedge_join_layout[n | string].items() -%}
+      {%-     set s = l.source -%}
+      {%-     if (lolor[s ~ '/' ~ db] | default({})).replicated | default(false)
+               and not (lolor[n ~ '/' ~ db] | default({})).installed
+                       | default(false) -%}
+      {%-       set _ = out.append('Zone ' ~ s ~ ', which zone ' ~ n
+                    ~ ' copies ' ~ db ~ ' from, replicates lolor tables, but'
+                    ~ ' zone ' ~ n ~ ' does not have the lolor extension'
+                    ~ ' there.') -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+# A join adds a subscription and a slot to every member, and its copy takes a
+# worker on the source, so every member needs the pools role_config now sizes
+# for the larger cluster. Earlier in this run init_server raised the
+# configured sizes and, where pg_allow_restart allows, restarted the zones into
+# them. Here the running values are read back: a zone still on the smaller
+# pools would run out of slots or workers partway through the join.
+
+- name: Read the running sizes of the pools a join draws on
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: postgres
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT name, setting::bigint AS setting, pending_restart
+        FROM pg_settings
+       WHERE name IN (SELECT json_array_elements_text(%(names)s::json))
+    named_args:
+      names: "{{ pg_sized_parameters.keys() | list | to_json }}"
+  register: pgedge_join_sizing
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: inventory_hostname == pgedge_zone_primary
+
+- name: Note which pools are smaller than the cluster needs
+  set_fact:
+    pgedge_join_undersized: >-
+      {%- set out = [] -%}
+      {%- for r in pgedge_join_sizing.query_result -%}
+      {%-   if r.pending_restart -%}
+      {%-     set _ = out.append(r.name ~ ' has a change waiting for a'
+                  ~ ' restart') -%}
+      {%-   elif r.setting | int < pg_sized_parameters[r.name] | int -%}
+      {%-     set _ = out.append(r.name ~ ' is ' ~ r.setting ~ ', below the '
+                  ~ pg_sized_parameters[r.name] ~ ' it needs') -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: inventory_hostname == pgedge_zone_primary
+
+- name: Ensure every zone's pools are large enough for the join
+  assert:
+    that:
+    - problems | length == 0
+    fail_msg: >-
+      {{ problems | join(' ') }}
+      {{ 'pg_allow_restart is false, so the zones were not restarted into
+      the larger sizes this run configured. Restart them, one at a time, then
+      run this again.' if not pg_allow_restart | bool else 'Restart them, one
+      at a time, then run this again.' }} Nothing has been created for the
+      joining {{ 'zone' if pgedge_join_plan | length == 1 else 'zones' }}.
+    quiet: true
+  vars:
+    problems: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts
+            if hostvars[h].pgedge_join_undersized | default([]) -%}
+      {%-   set _ = out.append('On zone ' ~ hostvars[h].zone ~ ' (' ~ h ~ '), '
+                ~ hostvars[h].pgedge_join_undersized | join('; ') ~ '.') -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+# A join waits for bookmarks to travel between the members, so every
+# subscription among them has to be replicating. Spock disables a subscription
+# on its own after some apply errors, and one that stays down would only be
+# found partway through. The deployment's rolling restart earlier in this run
+# restarts the apply workers, so they are given five minutes to come back.
+# Subscriptions from a joining zone are left out: the join itself creates them
+# and waits for them.
+
+- name: Wait for every subscription among the members to be replicating
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT s.sub_name::text AS sub_name, n.node_name::text AS provider,
+             s.sub_enabled AS enabled, st.status::text AS status
+        FROM spock.subscription s
+        JOIN spock.node n ON n.node_id = s.sub_origin
+        LEFT JOIN LATERAL spock.sub_show_status(s.sub_name) st ON true
+       WHERE n.node_name::text NOT IN (
+               SELECT 'edge' || json_array_elements_text(%(joining)s::json))
+         AND NOT (s.sub_enabled AND st.status = 'replicating')
+    named_args:
+      joining: "{{ pgedge_join_plan | to_json }}"
+  loop: >-
+    {{ db_names | select('in', pgedge_cluster.zones[zone | string].dbs.keys())
+       | list }}
+  register: pgedge_join_subs_ready
+  until: pgedge_join_subs_ready.rowcount | default(0) == 0
+  retries: 30
+  delay: 10
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: postgres
+  when:
+  - inventory_hostname == pgedge_zone_primary
+  - zone | int not in pgedge_join_plan
+
+- name: Ensure every subscription among the members is replicating
+  assert:
+    that:
+    - problems | length == 0
+    fail_msg: >-
+      A zone cannot join while the members do not all replicate:
+      {{ problems | join('; ') }}. Find the cause in those zones' Postgres
+      logs, fix it and enable the subscription again
+      (SELECT spock.sub_enable('<name>', true)), then run this again. Nothing
+      has been created for the joining {{ 'zone' if pgedge_join_plan | length
+      == 1 else 'zones' }}.
+    quiet: true
+  vars:
+    problems: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts -%}
+      {%-   for r in hostvars[h].pgedge_join_subs_ready.results | default([]) -%}
+      {%-     if r.msg | default('') and r.query_result is not defined -%}
+      {%-       set _ = out.append('zone ' ~ hostvars[h].zone ~ ' could not be'
+                    ~ ' asked about ' ~ r.item ~ ': ' ~ r.msg) -%}
+      {%-     endif -%}
+      {%-     for s in r.query_result | default([]) -%}
+      {%-       set _ = out.append('on zone ' ~ hostvars[h].zone ~ ', ' ~ s.sub_name
+                    ~ ' in ' ~ r.item ~ ' is '
+                    ~ ((s.status | default('unknown', true))
+                       if s.enabled else 'disabled')) -%}
+      {%-     endfor -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+# A member that still subscribes to a joining zone that has no node yet is
+# holding on to an earlier copy of that zone: one whose host was rebuilt, or
+# whose databases were dropped, without remove_zone clearing it from the
+# others. The join creates each member's subscription from the zone in step 9
+# only if none from it is there, so the old one would stand in for the new,
+# reading from a slot that no longer exists, and the join would wait for it
+# in step 10 until it gave up, every time it was run. A join that has started
+# has created the zone's node already, so this never stops one being resumed.
+
+- name: Ensure no member still subscribes to an earlier copy of a joining zone
+  fail:
+    msg: >-
+      {% for d in stale %}Zone {{ d.zone }} has no Spock node in {{ d.db }},
+      but {{ d.subs | join(', ') }} still
+      {{ 'subscribes' if d.subs | length == 1 else 'subscribe' }} to it, left
+      from when it was last part of the cluster. {% endfor %}Nothing has been
+      created for the joining {{ 'zone' if zones | length == 1 else 'zones' }}.
+      Run the remove_zone playbook with
+      {% for z in zones %}-e remove_zone={{ z }} {% endfor %}-e
+      remove_zone_confirm=true to clear {{ 'it' if zones | length == 1
+      else 'them, one zone at a time,' }} from the other zones, then run this
+      again with -e pgedge_join_zones={{ pgedge_join_plan | join(',') }}.
+  vars:
+    stale: >-
+      {%- set out = [] -%}
+      {%- for n in pgedge_join_plan -%}
+      {%-   for db, l in pgedge_join_layout[n | string].items()
+              if not (pgedge_cluster.zones[n | string].dbs[db]
+                      | default({})).node | default(none) -%}
+      {%-     set subs = [] -%}
+      {%-     for m in l.members -%}
+      {%-       for s in (pgedge_cluster.zones[m | string].dbs[db]
+                          | default({})).subs | default([])
+                if s.provider == 'edge' ~ n -%}
+      {%-         set _ = subs.append(s.name ~ ' on zone ' ~ m) -%}
+      {%-       endfor -%}
+      {%-     endfor -%}
+      {%-     if subs -%}
+      {%-       set _ = out.append({'zone': n | int, 'db': db, 'subs': subs}) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    zones: "{{ stale | map(attribute='zone') | unique | list }}"
+  run_once: true
+  when: stale | length > 0
+
+# Last, where each joining zone stands in each database it joins. It may be
+# empty, with no node, no subscription and no tables, and the join starts from
+# the beginning. It may hold what an earlier run of this join left: its node,
+# subscriptions from the members under the names this join gives them, and,
+# once its copy has started, the copied tables. The join resumes from there.
+#
+# Anything else -- tables it did not copy, a subscription the join would not
+# have created, a copy from a zone that is not a member -- was put there some
+# other way, and copying the cluster's data on top of it would leave the zone
+# different from the others. That cannot be resumed. What an earlier run
+# holds on the other zones for it is of no further use, so it is released now
+# (join_release.yaml), and the run stops with the way to start again.
+
+- name: Note any joining zone that holds what a join would not have created
+  set_fact:
+    pgedge_join_dirty: >-
+      {%- set out = [] -%}
+      {%- for n in pgedge_join_plan -%}
+      {%-   for db, l in pgedge_join_layout[n | string].items() -%}
+      {%-     set st = pgedge_cluster.zones[n | string].dbs[db] | default({}) -%}
+      {%-     set members = l.members -%}
+      {%-     set allowed = [] -%}
+      {%-     for m in members -%}
+      {%-       set _ = allowed.append('sub_n' ~ n ~ '_n' ~ m ~ '/edge' ~ m) -%}
+      {%-     endfor -%}
+      {%-     set why = [] -%}
+      {%-     set foreign = [] -%}
+      {%-     for s in st.subs | default([]) -%}
+      {%-       if (s.name ~ '/' ~ s.provider) not in allowed -%}
+      {%-         set _ = foreign.append(s.name ~ ' from ' ~ s.provider) -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     if foreign -%}
+      {%-       set _ = why.append('it has subscriptions this join does not'
+                    ~ ' create (' ~ foreign | join(', ') ~ ')') -%}
+      {%-     endif -%}
+      {%-     if st.copy_sub | default(none) and (st.copy_sub.name ~ '/'
+                 ~ st.copy_sub.provider) not in allowed -%}
+      {%-       set _ = why.append('it copied from ' ~ st.copy_sub.provider
+                    ~ ', which is not a member') -%}
+      {%-     endif -%}
+      {%-     if st.has_user_tables | default(false)
+                 and not st.copy_sub | default(none) -%}
+      {%-       set _ = why.append('it holds tables the join did not copy') -%}
+      {%-     endif -%}
+      {%-     if why -%}
+      {%-       set _ = out.append({'zone': n | int, 'db': db,
+                                    'why': why | join(', and ')}) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+- name: Release what the other zones hold for a join that cannot resume
+  include_tasks: join_release.yaml
+  loop: "{{ pgedge_join_dirty }}"
+  loop_control:
+    loop_var: pgedge_join_release
+  vars:
+    pgedge_join_zone: "{{ pgedge_join_release.zone }}"
+    pgedge_join_db: "{{ pgedge_join_release.db }}"
+
+- name: Stop, since a joining zone holds what a join would not have created
+  fail:
+    msg: >-
+      {% for d in pgedge_join_dirty %}Zone {{ d.zone }} cannot join
+      {{ d.db }}: {{ d.why }}. {% endfor %}A join copies the cluster's data
+      into an empty database, and cannot resume on top of anything else. Every
+      other zone has dropped the subscriptions, replication slots and node it
+      held for {{ 'that zone' if zones | length == 1 else 'those zones' }} in
+      {{ 'that database' if dbs | length == 1 else 'those databases' }}. Run
+      the remove_zone playbook with
+      {% for z in zones %}-e remove_zone={{ z }} {% endfor %}-e
+      remove_zone_confirm=true to reset {{ 'it' if zones | length == 1
+      else 'them, one zone at a time' }}, then run this again with
+      -e pgedge_join_zones={{ pgedge_join_plan | join(',') }}.
+  vars:
+    zones: "{{ pgedge_join_dirty | map(attribute='zone') | unique | list }}"
+    dbs: "{{ pgedge_join_dirty | map(attribute='db') | unique | list }}"
+  run_once: true
+  when: pgedge_join_dirty | length > 0

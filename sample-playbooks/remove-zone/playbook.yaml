@@ -1,0 +1,36 @@
+# Detach one zone from a running pgEdge cluster.
+#
+# Every other zone drops its subscriptions from the zone, the replication slots
+# that served it and its Spock node, in every database in db_names. If the
+# zone's primary can be reached, the zone's own subscriptions are dropped and
+# its databases in db_names are dropped with everything in them; the next
+# deployment run creates them again, empty. If it cannot be reached, only the
+# other zones are cleaned, which is enough for the cluster to carry on without
+# it.
+#
+# Run it with the inventory the cluster was deployed with, the zone still in
+# it:
+#
+#   ansible-playbook playbook.yaml -i ../simple-cluster/inventory.yaml \
+#     -e remove_zone=3 -e remove_zone_confirm=true
+#
+# Then either take the zone's hosts out of the inventory, or join it again by
+# running the deployment playbook with -e pgedge_join_zones=3. An ordinary
+# deployment run refuses to go on while a removed zone is still in the
+# inventory.
+#
+# Facts are not gathered up front, because the zone being removed may be down
+# and that must not stop the run. The role gathers them on the hosts that
+# answer.
+#
+# CHECK the README for how these roles work
+---
+
+- hosts: pgedge
+  gather_facts: false
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - remove_zone

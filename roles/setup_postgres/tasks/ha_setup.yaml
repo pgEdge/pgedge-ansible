@@ -11,28 +11,55 @@
     enabled: false
   become: true
 
+# main.yaml has already found the zone's primary, and a built zone whose
+# Patroni was stopped everywhere has had it started so its members could elect
+# that leader, which is why whether Patroni manages this node is only asked
+# now.
+
 - name: Populate service facts to check for required services
   ansible.builtin.service_facts:
+
+# Once Patroni runs a node, it owns that node's postgresql.conf and pg_hba.conf
+# and rewrites them from patroni.yml and the zone's store. prep_instance writes
+# both only while the node runs outside Patroni.
+
+- name: Note whether Patroni manages Postgres on this node
+  set_fact:
+    patroni_manages_postgres: >-
+      {{ ansible_facts.services[patroni_service_name ~ '.service'].state
+         | default('') == 'running' }}
 
 - name: Ensure Postgres isn't running during setup
   service:
     name: "{{ pg_service_name }}"
     state: stopped
-  vars:
-    full_service_name: "{{ patroni_service_name }}.service"
-    patroni_state: >-
-      {{ ansible_facts.services[full_service_name]['state'] | default('') }}
   become: true
   when:
-  -  patroni_state != 'running'
+  - not patroni_manages_postgres | bool
+
+# The replication user's .pgpass entry. Patroni keeps a password file of its
+# own, so this one is a safeguard for one-off operations such as pg_basebackup.
+# Every node gets it, not only the primary that creates the user, so that the
+# entry does not depend on which node Patroni leads with: written only on the
+# primary, it would appear on each node the first time a failover made that
+# node the leader.
+
+- name: Ensure the replication user can connect to the cluster
+  include_role:
+    name: role_config
+    tasks_from: pgpass_entry
+  vars:
+    pgpass_os_user: postgres
+    pgpass_role: "{{ replication_user }}"
+    pgpass_password: "{{ replication_password }}"
 
 # Primary and replicas diverge at this point and have different bootstrap
 # procedures.
 
 - include_tasks: primary_setup.yaml
   when:
-  - inventory_hostname == first_node_in_zone
+  - inventory_hostname == zone_primary
 
 - include_tasks: replica_setup.yaml
   when:
-  - inventory_hostname != first_node_in_zone
+  - inventory_hostname != zone_primary

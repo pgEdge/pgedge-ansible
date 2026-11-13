@@ -82,9 +82,34 @@ on:
           - both
           - latest
           - lsn
+      zone_join:
+        description: >-
+          The zone-join job: a cluster of its own that zone 3, two nodes and a
+          proxy, joins while it takes writes. basic verifies the join and a
+          rerun; full adds a rerun with the flag and one after a switchover.
+          Not with ColdFront.
+        type: choice
+        required: false
+        default: basic
+        options:
+          - "off"
+          - basic
+          - full
+      act_job:
+        description: >-
+          Under act only: which job to run. act runs every job on one Docker
+          host, and the jobs' clusters share a compose project and addresses,
+          so only one may run at a time. Ignored on GitHub, which runs both.
+        type: choice
+        required: false
+        default: test
+        options:
+          - test
+          - zone-join
 
 jobs:
   test:
+    if: ${{ github.actor != 'nektos/act' || inputs.act_job == 'test' }}
     name: >-
       Ultra-HA - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}${{
       inputs.coldfront && ' - coldfront' || '' }}${{
@@ -177,7 +202,7 @@ jobs:
 
       - name: Wait for SSH
         run: |
-          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }}; do
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.22 192.168.6.23 192.168.6.30 ${{ inputs.coldfront && '192.168.6.32' || '' }}; do
             ready=0
             for i in $(seq 1 30); do
               ssh -i tests/.ssh/id_ed25519 \
@@ -243,7 +268,7 @@ jobs:
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS $REPO_ARGS $CERT_ARGS
 
-      - name: Check the pooler roles are idempotent
+      - name: Check a second deployment run changes nothing
         run: |
           tests/check-idempotence.sh \
             tests/inventories/ultra-ha.yml \
@@ -252,6 +277,29 @@ jobs:
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
             $DCS_VARS $REPO_ARGS $CERT_ARGS
+
+      # A switchover leaves each zone's leader somewhere other than its first
+      # node, and a deployment run after one must change nothing either. The
+      # leaders go back afterwards, so the steps below see the cluster as
+      # deployed.
+      - name: Check a deployment run after a switchover changes nothing
+        run: |
+          move_leaders() {
+            ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+              tests/playbooks/move-leaders.yml \
+              -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+              --private-key tests/.ssh/id_ed25519 \
+              $DCS_VARS -e leaders_to="$1"
+          }
+          move_leaders second
+          tests/check-idempotence.sh \
+            tests/inventories/ultra-ha.yml \
+            tests/playbooks/ultra-ha.yml \
+            $BACKUP_ARGS $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }} \
+            $DCS_VARS $REPO_ARGS
+          move_leaders first
 
       - name: Check packages came from the site's repository
         if: inputs.repo != 'pgedge'
@@ -298,7 +346,21 @@ jobs:
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
             --private-key tests/.ssh/id_ed25519
 
-      # Last, because it wipes the cluster the steps above just verified.
+      # After the verification, because it moves each zone's leader off its
+      # first node before adding the database, and before the recovery, which
+      # it leaves the cluster as deployed for. Not with ColdFront, whose mesh
+      # mode sets db_names as an extra variable that no role variable can
+      # extend.
+      - name: Check a database added to db_names is applied
+        if: ${{ !inputs.coldfront }}
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/db-add.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
+
+      # After the steps above, because it wipes the cluster they just verified.
       # The deployment is what produces the backups this restores from, so the
       # two belong in one job against one set of containers rather than a job
       # that would have to build a cluster of its own to have anything to
@@ -332,6 +394,45 @@ jobs:
               "$pass" -- $REPO_ARGS $CERT_ARGS
           done
 
+      # After the recovery, which wipes and rebuilds the cluster from the base
+      # inventory: a node joined before it would be left out of the wipe,
+      # still a member of an etcd its zone had erased. The nodes' containers
+      # were started with the rest and left out of the inventory until now.
+      # Where the collection runs etcd, one of them is first left as a learner
+      # an interrupted join would leave, which the deployment has to promote
+      # before it can add the other. Not with ColdFront, whose layer this has
+      # not been tried with.
+      - name: Check nodes added to a zone join it
+        if: ${{ !inputs.coldfront }}
+        env:
+          NODE_ADD_ARGS: -i tests/inventories/ultra-ha-node-add.yml
+        run: |
+          if [ "${{ matrix.dcs }}" = etcd3 ]; then
+            ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+              tests/playbooks/interrupt-node-add.yml \
+              -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \
+              --private-key tests/.ssh/id_ed25519 \
+              $DCS_VARS
+          fi
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/ultra-ha.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }} \
+            $DCS_VARS $REPO_ARGS
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/verify/verify-node-add.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
+          tests/check-idempotence.sh \
+            tests/inventories/ultra-ha.yml \
+            tests/playbooks/ultra-ha.yml \
+            $BACKUP_ARGS $NODE_ADD_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }} \
+            $DCS_VARS $REPO_ARGS
+
       - name: Show container logs on failure
         if: failure()
         run: docker compose -p e2e $COMPOSE_ARGS logs
@@ -357,6 +458,181 @@ jobs:
               || true
             echo "::endgroup::"
           done
+
+      - name: Teardown
+        if: always()
+        run: docker compose -p e2e $COMPOSE_ARGS down -v --remove-orphans
+
+  # Joining a zone to a cluster that already holds data and keeps taking
+  # writes: zone 3, a primary with a replica and a proxy of its own, joins
+  # zones 1 and 2, so the join's slot advance goes through Patroni-managed
+  # primaries and the subscriptions through proxies. A job of its own, because
+  # the cluster it builds is not the one above: tests/inventories/zone-join.yml
+  # is layered on from its first deployment, so the verify playbooks above do
+  # not hold for it, and verify-zone-join.yml is its verifier.
+  #
+  # Beside the job above on GitHub, where each job has a runner of its own.
+  # Under act, whose actor is nektos/act, every job shares one Docker host,
+  # and both jobs use the same compose project and fixed addresses, so the
+  # act_job input runs one or the other, never both.
+  #
+  # The scenarios are tests/zone-join-scenarios.sh's, which documents them.
+  # Not with ColdFront, whose layer the join has not been tried with.
+  zone-join:
+    name: >-
+      Ultra-HA zone join - ${{ matrix.os }} - ${{ matrix.dcs }} - ${{ matrix.backup }}${{
+      inputs.repo != 'pgedge' && format(' - repo {0}', inputs.repo) || '' }}
+    if: >-
+      ${{ inputs.zone_join != 'off' && !inputs.coldfront &&
+          (github.actor != 'nektos/act' || inputs.act_job == 'zone-join') }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ inputs.os == 'all' && fromJSON('["debian12","rocky9"]') || fromJSON(format('["{0}"]', inputs.os)) }}
+        dcs: ${{ inputs.dcs == 'all' && fromJSON('["etcd3","consul"]') || fromJSON(format('["{0}"]', inputs.dcs)) }}
+        backup: ${{ inputs.backup == 'all' && fromJSON('["ssh","s3"]') || fromJSON(format('["{0}"]', inputs.backup)) }}
+    env:
+      COMPOSE_ARGS: >-
+        -f tests/compose/ultra-ha-${{ matrix.os }}.yml
+        ${{ matrix.dcs != 'etcd3' && format('-f tests/compose/dcs-{0}.yml', matrix.dcs) || '' }}
+        ${{ matrix.backup == 's3' && '-f tests/compose/backup-s3.yml' || '' }}
+        ${{ inputs.repo != 'pgedge' && '-f tests/compose/repo-proxy.yml' || '' }}
+      DCS_VARS: ${{ matrix.dcs != 'etcd3' && format('-e @tests/vars/dcs-{0}.yml', matrix.dcs) || '' }}
+      BACKUP_ARGS: ${{ matrix.backup == 's3' && '-e @tests/vars/backup-s3.yml' || '-i tests/inventories/ultra-ha-ssh.yml' }}
+      REPO_ARGS: >-
+        ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
+      # Everything every playbook in the scenarios takes; the script adds the
+      # base inventory and the zone-join layers itself.
+      JOIN_ARGS: >-
+        --private-key tests/.ssh/id_ed25519
+        -e repo_environment=${{ inputs.environment }}
+      ZONE_JOIN_LEVEL: ${{ inputs.zone_join }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Increase inotify limits for systemd containers
+        run: sudo sysctl -w fs.inotify.max_user_instances=512
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Generate SSH keypair
+        run: |
+          mkdir -p tests/.ssh
+          if [ ! -f tests/.ssh/id_ed25519 ]; then
+            ssh-keygen -t ed25519 -f tests/.ssh/id_ed25519 -N "" -q
+          fi
+          cp tests/.ssh/id_ed25519.pub tests/docker/authorized_keys
+
+      - name: Build and install collection
+        run: make install VERSION=0.0.0-dev
+
+      - name: Start containers
+        run: |
+          docker compose -p e2e $COMPOSE_ARGS up -d --build
+          sleep 5
+          docker compose -p e2e $COMPOSE_ARGS ps
+
+      - name: Wait for SSH
+        run: |
+          for host in 192.168.6.10 192.168.6.11 192.168.6.12 192.168.6.13 192.168.6.14 192.168.6.15 192.168.6.16 192.168.6.17 192.168.6.18 192.168.6.19 192.168.6.24 192.168.6.25 192.168.6.26 192.168.6.30; do
+            ready=0
+            for i in $(seq 1 30); do
+              ssh -i tests/.ssh/id_ed25519 \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=2 \
+                -o BatchMode=yes \
+                ansible@$host true 2>/dev/null && { ready=1; break; }
+              sleep 2
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "ERROR: SSH not ready for $host after 30 attempts" >&2
+              exit 1
+            fi
+          done
+
+      - name: Wait for external DCS
+        if: matrix.dcs == 'consul'
+        run: |
+          for i in $(seq 1 30); do
+            leader=$(curl -sf http://192.168.6.20:8500/v1/status/leader |
+                     tr -d '"' || true)
+            if [ -n "$leader" ]; then
+              echo "Consul leader: $leader"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ERROR: Consul did not elect a leader" >&2
+          exit 1
+
+      # Zone 3's nodes as well, which reach the store once they join.
+      - name: Wait for S3 and install its CA on the nodes
+        if: matrix.backup == 's3'
+        run: |
+          tests/prepare-s3.sh e2e $COMPOSE_ARGS -- \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS \
+            -i tests/inventories/zone-join.yml \
+            -i tests/inventories/ultra-ha-zone-join.yml \
+            --private-key tests/.ssh/id_ed25519
+
+      - name: Refuse pgedge_join_zones on a new cluster (full)
+        if: inputs.zone_join == 'full'
+        run: tests/zone-join-scenarios.sh ultra-ha refuse-new $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+
+      - name: Deploy and seed
+        run: tests/zone-join-scenarios.sh ultra-ha deploy $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+
+      # At full, also reruns with the flag and after a switchover.
+      - name: Join zone 3, and rerun
+        run: tests/zone-join-scenarios.sh ultra-ha join-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+
+      - name: Remove zone 3 while it runs
+        run: tests/zone-join-scenarios.sh ultra-ha remove-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+
+      - name: Show the trickle writers' logs
+        if: always()
+        run: |
+          ssh -i tests/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=2 \
+            -o BatchMode=yes \
+            ansible@192.168.6.30 \
+            'sudo tail -n 20 /var/lib/zone-join-trickle/*.log' || true
+
+      - name: Show Patroni's view of each zone on failure
+        if: failure()
+        run: |
+          for host in 192.168.6.10 192.168.6.13 192.168.6.24; do
+            echo "::group::$host"
+            ssh -i tests/.ssh/id_ed25519 \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=2 \
+              -o BatchMode=yes \
+              ansible@$host \
+              'for c in /etc/patroni/*.yml; do \
+                 [ -f "$c" ] && sudo -u postgres patronictl -c "$c" list; \
+               done; \
+               sudo journalctl -u "patroni*" --no-pager -n 200' \
+              || true
+            echo "::endgroup::"
+          done
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose -p e2e $COMPOSE_ARGS logs
 
       - name: Teardown
         if: always()

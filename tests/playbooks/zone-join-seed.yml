@@ -1,0 +1,292 @@
+---
+# Put data into a deployed cluster for a zone join to copy, and create what the
+# trickle writer (zone-join-trickle.yml) writes into. Run it once the cluster
+# is deployed with tests/inventories/zone-join.yml layered on, and before the
+# zones that join it are added. Running it again changes nothing.
+#
+# A join has to copy every database in db_names from a zone that keeps taking
+# writes, so each database gets:
+#
+#   - zone_join_seed, a table large enough that the copy takes tens of
+#     seconds, so a test can stop a join while the copy is under way. The
+#     first database gets zone_join_seed_rows rows and every other database
+#     zone_join_seed_rows_other: the join copies the databases one at a time,
+#     and the first is the one an interruption test catches mid-copy.
+#     Two indexes on its text column make the copy longer for less disk than
+#     more rows would take, since the copy builds them after the data. Every
+#     node holds a copy, so the size is a balance with the CI runner's disk.
+#     Measured on an 8-core host (2026-11-09), copying 2M rows across the test
+#     network took 2.2s, the primary key 0.9s and each text index 2.8s, and
+#     the table came to about 310MB per million rows with its indexes. 3M
+#     rows in a simple cluster took 13s there, so tens of seconds on a CI
+#     runner, and 920MB on each of five zones. An HA cluster has twice the nodes, so
+#     it gets 1M unless zone_join_seed_rows says otherwise.
+#   - zone_join_trickle, which the trickle writer inserts into through each
+#     zone's endpoint while the join runs.
+#   - the writer's role, zone_join_trickle_user, with what it needs on
+#     zone_join_trickle and nothing more.
+#
+# The tables are created in the first zone and reach the others by Spock's
+# DDL replication, which also puts them into each zone's replication sets, as
+# a table an application created would be. The seed rows are not replicated:
+# every zone generates the same rows itself, inside spock.repair_mode, which
+# keeps them out of the replication stream. Sending millions of rows to every
+# other zone row by row would take minutes and prove nothing a join needs.
+# verify-zone-join.yml checks every zone holds the same rows.
+#
+# The role is created in the postgres database, which has no Spock node, so
+# its CREATE ROLE is not replicated: each zone creates its own, and a joining
+# zone gets it from the join, which copies roles before it copies tables. A
+# zone the inventory marks zone_join_new is left alone for the same reason:
+# nothing may be written to a zone until its join finishes.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    zone_join_seed_rows: "{{ 1000000 if is_ha_cluster | bool else 3000000 }}"
+    zone_join_seed_rows_other: 250000
+    # The zones that are already members, which is every zone of the inventory
+    # but those a join layer adds.
+    member_zones: >-
+      {% set zones = [] %}
+      {%- for host in groups['pgedge'] | map('extract', hostvars)
+            if not host.zone_join_new | default(false) | bool
+               and host.zone | int not in zones %}
+      {%-   set _ = zones.append(host.zone | int) %}
+      {%- endfor %}{{ zones | sort }}
+    is_member_primary: >-
+      {{ inventory_hostname == zone_primary
+         and zone | int in member_zones }}
+    first_zone_primary: >-
+      {{ inventory_hostname == zone_primary
+         and zone | int == member_zones | first }}
+    seed_rows: >-
+      {{ zone_join_seed_rows if seed_db == db_names | first
+         else zone_join_seed_rows_other }}
+
+  # role_config's defaults reach the play only once the first include_role has
+  # made them public, and this is evaluated for that very task too.
+  environment:
+    PATH: "/usr/pgsql-{{ pg_version | default(17) }}/bin:/usr/lib/postgresql/{{ pg_version | default(17) }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  tasks:
+  - name: Ensure the inventory names the trickle writer's role
+    assert:
+      that:
+      - zone_join_trickle_user | default('') | length > 0
+      - zone_join_trickle_password | default('') | length > 0
+      fail_msg: >-
+        zone_join_trickle_user and zone_join_trickle_password are not set.
+        Layer tests/inventories/zone-join.yml onto the inventory.
+    run_once: true
+
+  - name: Find each zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+
+  - name: Ensure there is more than one zone to copy between
+    assert:
+      that:
+      - member_zones | length >= 2
+      fail_msg: >-
+        Only zones {{ member_zones }} are members. A join needs a cluster
+        that already replicates.
+    run_once: true
+
+  # Before any table, so the GRANT below finds the role on every zone it is
+  # replicated to.
+
+  - name: Create the trickle writer's role on each zone's primary
+    become: true
+    become_user: postgres
+    community.postgresql.postgresql_user:
+      name: "{{ zone_join_trickle_user }}"
+      password: "{{ zone_join_trickle_password }}"
+      role_attr_flags: LOGIN
+      login_db: postgres
+      login_port: "{{ pg_port }}"
+      login_unix_socket: /var/run/postgresql
+    no_log: true
+    when: is_member_primary | bool
+
+  - name: Look for the join tables in the first zone
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ seed_db }} -X -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT to_regclass('public.zone_join_seed') IS NOT NULL,
+              to_regclass('public.zone_join_trickle') IS NOT NULL
+              AND has_table_privilege('{{ zone_join_trickle_user }}',
+                                      'public.zone_join_trickle',
+                                      'SELECT, INSERT')"
+    register: join_tables
+    changed_when: false
+    loop: "{{ db_names }}"
+    loop_control:
+      loop_var: seed_db
+    when: first_zone_primary | bool
+
+  # Each statement is run only where it is missing, so a second run sends
+  # nothing through DDL replication and reports no change.
+
+  - name: Create the join tables in the first zone
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ result.seed_db }} -X -v ON_ERROR_STOP=1
+      {% if not have_seed %}
+      -c "CREATE TABLE IF NOT EXISTS zone_join_seed (
+            id bigint PRIMARY KEY,
+            grp integer NOT NULL,
+            payload text NOT NULL)"
+      {% endif %}
+      {% if not have_trickle %}
+      -c "CREATE TABLE IF NOT EXISTS zone_join_trickle (
+            origin_zone integer,
+            seq bigint,
+            ts timestamptz,
+            PRIMARY KEY (origin_zone, seq))"
+      -c "GRANT SELECT, INSERT ON zone_join_trickle
+            TO {{ zone_join_trickle_user }}"
+      {% endif %}
+    vars:
+      have_seed: "{{ result.stdout.split('|')[0] == 't' }}"
+      have_trickle: "{{ result.stdout.split('|')[1] == 't' }}"
+    loop: "{{ join_tables.results | default([]) }}"
+    loop_control:
+      loop_var: result
+      label: "{{ result.seed_db | default('') }}"
+    when:
+    - first_zone_primary | bool
+    - not (have_seed | bool and have_trickle | bool)
+
+  - name: Wait for the join tables to reach every zone
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ seed_db }} -X -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT to_regclass('public.zone_join_seed') IS NOT NULL
+              AND to_regclass('public.zone_join_trickle') IS NOT NULL
+              AND has_table_privilege('{{ zone_join_trickle_user }}',
+                                      'public.zone_join_trickle',
+                                      'SELECT, INSERT')"
+    register: tables_arrived
+    until: tables_arrived.stdout | trim == 't'
+    retries: 30
+    delay: 2
+    changed_when: false
+    loop: "{{ db_names }}"
+    loop_control:
+      loop_var: seed_db
+    when: is_member_primary | bool
+
+  # One transaction per zone and database, filling the table only while it is
+  # empty, so a zone either has every row or none, and a second run adds none.
+  # repair_mode lasts until the transaction ends.
+
+  - name: Generate the seed rows on each zone's primary
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ seed_db }} -X -t -A -v ON_ERROR_STOP=1
+      -c "BEGIN"
+      -c "SELECT spock.repair_mode(true)"
+      -c "INSERT INTO zone_join_seed (id, grp, payload)
+          SELECT i, i % 1000, md5(i::text) || md5((i * 7)::text)
+            FROM generate_series(1, {{ seed_rows | int }}) AS i
+           WHERE NOT EXISTS (SELECT 1 FROM zone_join_seed)"
+      -c "COMMIT"
+    register: seeded
+    changed_when: >-
+      seeded.stdout | regex_findall('INSERT 0 ([0-9]+)') | map('int') | sum > 0
+    loop: "{{ db_names }}"
+    loop_control:
+      loop_var: seed_db
+    when: is_member_primary | bool
+
+  - name: Count the seed rows on each zone's primary
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ seed_db }} -X -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT count(*) FROM zone_join_seed"
+    register: seed_count
+    changed_when: false
+    loop: "{{ db_names }}"
+    loop_control:
+      loop_var: seed_db
+    when: is_member_primary | bool
+
+  - name: Assert each zone holds the seed rows
+    assert:
+      that:
+      - result.stdout | trim | int == seed_rows | int
+      fail_msg: >-
+        {{ result.seed_db }} on {{ inventory_hostname }} holds
+        {{ result.stdout | trim }} seed rows, not {{ seed_rows }}. An earlier
+        run seeded it with another zone_join_seed_rows; seed every zone alike.
+    vars:
+      seed_db: "{{ result.seed_db }}"
+    loop: "{{ seed_count.results | default([]) }}"
+    loop_control:
+      loop_var: result
+      label: "{{ result.seed_db | default('') }}"
+    when: is_member_primary | bool
+
+  # The indexes come after the rows, which every zone then has, so each zone
+  # builds them once instead of maintaining them row by row as it generates.
+  # Created in the first zone and replicated as the tables were.
+
+  - name: Look for the seed table's indexes in the first zone
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ seed_db }} -X -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT to_regclass('public.zone_join_seed_payload') IS NOT NULL
+              AND to_regclass('public.zone_join_seed_grp_payload') IS NOT NULL"
+    register: seed_indexes
+    changed_when: false
+    loop: "{{ db_names }}"
+    loop_control:
+      loop_var: seed_db
+    when: first_zone_primary | bool
+
+  - name: Index the seed table in the first zone
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ result.seed_db }} -X -v ON_ERROR_STOP=1
+      -c "CREATE INDEX IF NOT EXISTS zone_join_seed_payload
+            ON zone_join_seed (payload)"
+      -c "CREATE INDEX IF NOT EXISTS zone_join_seed_grp_payload
+            ON zone_join_seed (grp, payload)"
+    loop: "{{ seed_indexes.results | default([]) }}"
+    loop_control:
+      loop_var: result
+      label: "{{ result.seed_db | default('') }}"
+    when:
+    - first_zone_primary | bool
+    - result.stdout | trim != 't'
+
+  - name: Wait for the seed table's indexes to reach every zone
+    become: true
+    become_user: postgres
+    command: >-
+      psql -d {{ seed_db }} -X -t -A -v ON_ERROR_STOP=1 -c
+      "SELECT to_regclass('public.zone_join_seed_payload') IS NOT NULL
+              AND to_regclass('public.zone_join_seed_grp_payload') IS NOT NULL"
+    register: indexes_arrived
+    until: indexes_arrived.stdout | trim == 't'
+    retries: 60
+    delay: 2
+    changed_when: false
+    loop: "{{ db_names }}"
+    loop_control:
+      loop_var: seed_db
+    when: is_member_primary | bool

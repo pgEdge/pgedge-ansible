@@ -170,23 +170,45 @@ pg_config_dir: >-
 #
 #   - N, every zone is one Spock node however many members it has.
 #   - D, Spock starts a manager for every database that accepts connections,
-#     whether or not it replicates: db_names, postgres and template1. A
-#     database created outside the collection is not counted.
+#     whether or not it replicates: db_names, unmanaged_db_names, the
+#     databases the collection creates for its own components, postgres and
+#     template1. A database created outside the collection is counted only
+#     when unmanaged_db_names names it.
 #   - S, each database in db_names subscribes to the same database on every
-#     other node.
+#     other node. So may each in unmanaged_db_names, which the collection
+#     cannot see into, so each is sized as though it does.
 #   - Each other member of an HA zone holds a physical slot on the leader.
 #
 # max_parallel_workers draws from the worker pool too, so an inventory that
 # raises it raises the pool with it. The worker total is rounded up to a
 # multiple of four to leave room to grow, and the slot total never falls below
-# 16, the fixed value earlier releases used: shrinking max_replication_slots
-# beneath the slots a node already holds stops Postgres from starting.
+# 16, the fixed value earlier releases used.
+#
+# Nor does any of them fall below what the zone was last configured with:
+# shrinking max_replication_slots beneath the slots a node already holds stops
+# Postgres from starting. sizing_floor reads the sizes the collection last
+# wrote into pg_sizing_floor, and pg_sized_parameters takes the larger of each
+# and the formula, so the calculated sizes go up with the cluster and never
+# come down on their own. A zone not yet built has no floor.
 
 pg_spock_nodes: "{{ zone_list | length }}"
 
-pg_connectable_dbs: "{{ (db_names + ['postgres', 'template1']) | unique | length }}"
+# Every database the pools are sized for, whether the collection manages it or
+# unmanaged_db_names only tells it the database is there.
+pg_sized_dbs: "{{ (db_names + unmanaged_db_names) | unique }}"
 
-pg_spock_subscriptions: "{{ db_names | length * (pg_spock_nodes | int - 1) }}"
+# The databases the collection creates for components it sets up, outside
+# db_names: ColdFront's, where it is enabled. Each gets a Spock manager like any
+# other database but replicates only when db_names lists it too, as ColdFront's
+# mesh mode does.
+pg_internal_dbs: "{{ [coldfront_db] if coldfront_enabled | bool else [] }}"
+
+pg_connectable_dbs: >-
+  {{ (pg_sized_dbs + pg_internal_dbs + ['postgres', 'template1'])
+     | unique | length }}
+
+pg_spock_subscriptions: >-
+  {{ pg_sized_dbs | length * (pg_spock_nodes | int - 1) }}
 
 pg_physical_standbys: "{{ nodes_in_zone | length - 1 if is_ha_cluster | bool else 0 }}"
 
@@ -207,9 +229,9 @@ pg_replication_slots: >-
   {{ [16, 2 * pg_spock_subscriptions | int + pg_physical_standbys | int + 2]
      | max }}
 
-# The calculated parameters by name, which init_server compares pg_parameters
+# The formulas' results by name, which init_server compares pg_parameters
 # against.
-pg_sized_parameters: >-
+pg_calculated_parameters: >-
   {{ {
        'max_worker_processes': pg_worker_processes | int,
        'max_replication_slots': pg_replication_slots | int,
@@ -218,6 +240,31 @@ pg_sized_parameters: >-
      | combine({
          'max_active_replication_origins': pg_replication_slots | int,
        } if pg_version | int >= 18 else {}) }}
+
+# The defaults the collection gives these parameters: each formula's result,
+# or the size the zone was last configured with where that is larger.
+pg_sized_parameters: >-
+  {% set sized = {} %}
+  {%- for name, calculated in pg_calculated_parameters.items() %}
+  {%-   set _ = sized.update({name: [calculated,
+          (pg_sizing_floor | default({}))[name] | default(0) | int] | max}) %}
+  {%- endfor %}{{ sized }}
+
+# Each calculated parameter pg_parameters sets below its formula's result, or
+# to null, which falls back to Postgres's own smaller default, as 'name to
+# value where the cluster needs at least N'. The floor does not count: a value
+# beneath it is how an operator brings a pool back down.
+pg_undersized_parameters: >-
+  {% set found = [] %}
+  {%- for name, sized in pg_calculated_parameters.items()
+        if name in pg_user_parameters %}
+  {%-   set given = pg_user_parameters[name] %}
+  {%-   if given is none or given | int < sized %}
+  {%-     set _ = found.append(name ~ ' to '
+            ~ ('null' if given is none else given)
+            ~ ' where the cluster needs at least ' ~ sized) %}
+  {%-   endif %}
+  {%- endfor %}{{ found }}
 
 pg_default_parameters: >-
   {{ {
@@ -490,6 +537,15 @@ patroni_config_file: >-
     pg_version|string + '-' + cluster_name + '.yml' if ansible_facts['os_family'] == 'Debian'
     else 'patroni.yml'
   }}
+
+# The file holding the Postgres configuration the collection last wrote, which
+# sizing_floor reads back: patroni.yml on an HA node, whose bootstrap section
+# carries the same parameters as the zone's store, and postgresql.conf
+# otherwise.
+
+sizing_floor_file: >-
+  {{ patroni_config_dir ~ '/' ~ patroni_config_file if is_ha_cluster | bool
+     else pg_config_dir ~ '/postgresql.conf' }}
 
 # Whether Patroni's store is the etcd this collection hosts on the pgEdge nodes:
 # an etcd type with no parameters of its own, which the template fills in with

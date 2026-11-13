@@ -83,14 +83,23 @@ Postgres sizing variables include the following computed values, which follow
 the formulas in
 [Worker and Replication Sizing](../configuration/postgres.md#worker-and-replication-sizing):
 
+- `pg_sized_dbs` lists the databases the formulas count as replicating:
+  those in `db_names` and `unmanaged_db_names`.
+- `pg_internal_dbs` lists the databases the collection creates for
+  components it sets up, outside `db_names`: `coldfront_db` where ColdFront is
+  enabled. The worker formula counts the Spock manager in each.
 - `pg_spock_nodes`, `pg_connectable_dbs`, `pg_spock_subscriptions`,
   `pg_physical_standbys` and `pg_parallel_workers` contain the formulas'
   inputs.
 - `pg_worker_processes` and `pg_replication_slots` contain the calculated
   totals.
-- `pg_sized_parameters` maps each calculated Postgres parameter to its value.
-  `pg_default_parameters` includes it, and `init_server` compares
-  `pg_parameters` against it.
+- `pg_calculated_parameters` maps each calculated Postgres parameter to the
+  formula's value, which `init_server` compares `pg_parameters` against.
+- `pg_sized_parameters` maps each calculated Postgres parameter to the larger
+  of the formula's value and the [sizing floor](#sizing-floor).
+  `pg_default_parameters` includes it.
+- `pg_undersized_parameters` lists each calculated parameter `pg_parameters`
+  sets below the formula's value, which `init_server` refuses.
 
 OS-specific shortcut variables include the following computed values:
 
@@ -131,6 +140,110 @@ The `setup_postgres` and `setup_patroni` roles both include it. The task file
 skips each check that already holds a value, so repeated inclusion costs
 nothing and an inventory may set a check directly when the binary is
 unreachable.
+
+### Zone Primary
+
+Anything that writes to a zone has to run on the node running its primary,
+because a replica is read-only. On a non-HA cluster that is the zone's only
+node. On an HA cluster it is wherever Patroni last put the leader, which after
+a failover or switchover is not the zone's first node. The role provides a
+`zone_primary` task file that finds that node and records its inventory name
+as the `zone_primary` fact on every node of the zone:
+
+```yaml
+- name: Find the node that runs this zone's primary
+  include_role:
+    name: role_config
+    tasks_from: zone_primary
+
+- name: Write something to the zone
+  ...
+  when: inventory_hostname == zone_primary
+```
+
+On an HA cluster, every node whose Patroni service is running asks
+`patronictl list` for the zone's leader, and the answers are pooled, so a node
+new to the zone still finds the leader. Only a zone that has never been
+built, where no node has a Patroni configuration file yet, takes its first node
+as the primary. A built zone whose Patroni is stopped on every node is not
+assumed to be led by its first node, which after a failover may be a standby:
+the task file starts Patroni on each member that has a configuration file and a
+data directory, stopping any Postgres running outside Patroni first, and lets
+the members elect a leader. If no member can start Patroni in a built zone,
+the task stops the run. Once Patroni runs, the task file waits briefly for an 
+election to settle, then stops unless
+Patroni reports exactly one leader among the zone's nodes, and unless every
+node reports the same one. Nodes that disagree mean a switchover or failover
+is under way outside the run, and the collection does not manage a zone while
+something else is changing it.
+
+The task file also stops the run when the zone's primary is not one of the
+play's hosts, whether `--limit` left it out or it failed earlier in the run.
+Every write to the zone runs there, so a run without it would skip them.
+
+A caller that must change nothing sets `zone_primary_read_only: true` on the
+include. Patroni is then never started, and a built zone with no running
+leader, whether Patroni is stopped or runs without electing one, records an
+empty `zone_primary` instead of stopping the run. Nor does
+the run stop when the primary is not one of the play's hosts, as when a
+follower's Patroni names a leader whose host was unreachable. The caller
+decides what either case means. The `remove_zone` role includes it this way,
+and treats a primary that did not answer as unreachable.
+
+The `setup_postgres`, `setup_pgedge` and `finalize_backrest` roles include
+it.
+
+### Sizing Floor
+
+The worker and slot formulas count the zones and the databases in `db_names`,
+so their values go down when either does. Postgres refuses to start when it
+finds more replication slots on disk than `max_replication_slots` allows, and
+Spock cannot start the workers it needs in a smaller pool, so a database whose
+name is removed before it is retired would leave a restarted node in one state
+or the other.
+
+The role provides a `sizing_floor` task file that reads back the values the
+zone was last configured with and records them as the `pg_sizing_floor` fact,
+which maps each calculated parameter to its value. It reads the file the
+collection last wrote: `patroni.yml` on an Ultra-HA node, whose bootstrap
+section carries the same parameters `setup_patroni` writes into the zone's
+store, and `postgresql.conf` otherwise. Every node of the zone in the play is
+read and the largest value kept. A file answers whether or not Postgres or
+Patroni is running, and a zone that has not been built has no file and no
+floor.
+
+`pg_sized_parameters` takes the larger of each formula's value and the floor,
+so the calculated values go up with the cluster and never come down on their
+own. A value in `pg_parameters` replaces both, which is how an operator lowers
+a pool, and `init_server` measures it against the formula alone.
+
+The floor keeps a size, not the databases behind it. A database removed from
+`db_names` but still in use keeps its share of the pools only until another
+database is added, which the formula then counts in its place. The formula
+counts both only when `unmanaged_db_names` lists the removed one.
+
+`setup_postgres` includes it before writing `postgresql.conf` on a simple
+cluster, and `setup_patroni` includes it before writing `patroni.yml` and the
+zone's store.
+
+### Password File Entries
+
+The role provides a `pgpass_entry` task file that gives an OS user's
+`~/.pgpass` one entry for a Postgres role. It takes three variables:
+
+- `pgpass_os_user` is the OS user whose `~/.pgpass` the entry belongs to.
+- `pgpass_role` is the Postgres role the entry is for.
+- `pgpass_password` is that role's password.
+
+libpq uses the first entry that matches a connection, so a changed password
+has to replace the old entry rather than follow it. The task file first
+removes any entry for the role with a different password, and then writes the
+current one, escaping colons and backslashes as `.pgpass` requires. A run
+whose password has not changed changes nothing.
+
+`setup_postgres` uses it for `replication_user` on every HA node,
+`setup_pgedge` for `pgedge_user`, and `setup_backrest` for `backup_user` on a
+backup server.
 
 ### ColdFront and Lakekeeper Settings
 
