@@ -1,0 +1,28 @@
+# Code owners under the Code Review and Commit Policy v2.0.
+# pgedge-ansible is Tier 3. The last matching line wins.
+
+# Tier 3: every change needs a code owner's approval.
+*  @bonesmoses
+
+# Workflows, release, packaging and signing: a code owner or build-packaging.
+/.github/workflows/  @bonesmoses @pgEdge/build-packaging
+/.github/actions/  @bonesmoses @pgEdge/build-packaging
+action.yml  @bonesmoses @pgEdge/build-packaging
+action.yaml  @bonesmoses @pgEdge/build-packaging
+.goreleaser*.yml  @bonesmoses @pgEdge/build-packaging
+.goreleaser*.yaml  @bonesmoses @pgEdge/build-packaging
+*.spec  @bonesmoses @pgEdge/build-packaging
+debian/  @bonesmoses @pgEdge/build-packaging
+rpm/  @bonesmoses @pgEdge/build-packaging
+packaging/  @bonesmoses @pgEdge/build-packaging
+release*.sh  @bonesmoses @pgEdge/build-packaging
+sign*.sh  @bonesmoses @pgEdge/build-packaging
+sign*.py  @bonesmoses @pgEdge/build-packaging
+Dockerfile*  @bonesmoses @pgEdge/build-packaging
+
+# Ownership and AI review configuration: code owners only.
+/CODEOWNERS  @bonesmoses
+/.github/CODEOWNERS  @bonesmoses
+/docs/CODEOWNERS  @bonesmoses
+/REVIEW.md  @bonesmoses
+/.coderabbit.yaml  @bonesmoses
