@@ -1,0 +1,28 @@
+# Code owners under the Code Review and Commit Policy v2.0.
+# pgedge-ansible is Tier 3. The last matching line wins.
+
+# Tier 3: every change needs a code owner's approval.
+*  @pgEdge/escalation-engineering
+
+# Workflows, release, packaging and signing: a code owner or build-packaging.
+/.github/workflows/  @pgEdge/escalation-engineering @pgEdge/build-packaging
+/.github/actions/  @pgEdge/escalation-engineering @pgEdge/build-packaging
+action.yml  @pgEdge/escalation-engineering @pgEdge/build-packaging
+action.yaml  @pgEdge/escalation-engineering @pgEdge/build-packaging
+.goreleaser*.yml  @pgEdge/escalation-engineering @pgEdge/build-packaging
+.goreleaser*.yaml  @pgEdge/escalation-engineering @pgEdge/build-packaging
+*.spec  @pgEdge/escalation-engineering @pgEdge/build-packaging
+debian/  @pgEdge/escalation-engineering @pgEdge/build-packaging
+rpm/  @pgEdge/escalation-engineering @pgEdge/build-packaging
+packaging/  @pgEdge/escalation-engineering @pgEdge/build-packaging
+release*.sh  @pgEdge/escalation-engineering @pgEdge/build-packaging
+sign*.sh  @pgEdge/escalation-engineering @pgEdge/build-packaging
+sign*.py  @pgEdge/escalation-engineering @pgEdge/build-packaging
+Dockerfile*  @pgEdge/escalation-engineering @pgEdge/build-packaging
+
+# Ownership and AI review configuration: code owners only.
+/CODEOWNERS  @pgEdge/escalation-engineering-admin
+/.github/CODEOWNERS  @pgEdge/escalation-engineering-admin
+/docs/CODEOWNERS  @pgEdge/escalation-engineering-admin
+/REVIEW.md  @pgEdge/escalation-engineering-admin
+/.coderabbit.yaml  @pgEdge/escalation-engineering-admin
