@@ -298,7 +298,7 @@ jobs:
             $BACKUP_ARGS $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
-            $DCS_VARS $REPO_ARGS
+            $DCS_VARS $REPO_ARGS $CERT_ARGS
           move_leaders first
 
       - name: Check packages came from the site's repository
@@ -419,7 +419,7 @@ jobs:
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
-            $DCS_VARS $REPO_ARGS
+            $DCS_VARS $REPO_ARGS $CERT_ARGS
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-node-add.yml \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \
@@ -431,7 +431,7 @@ jobs:
             $BACKUP_ARGS $NODE_ADD_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
-            $DCS_VARS $REPO_ARGS
+            $DCS_VARS $REPO_ARGS $CERT_ARGS
 
       - name: Show container logs on failure
         if: failure()
@@ -503,10 +503,14 @@ jobs:
       REPO_ARGS: >-
         ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
       # Everything every playbook in the scenarios takes; the script adds the
-      # base inventory and the zone-join layers itself.
+      # base inventory and the zone-join layers itself. The repository client
+      # certificate goes as paths, as in the job above, so every host the
+      # scenarios deploy, the joining zones' included, can install packages.
       JOIN_ARGS: >-
         --private-key tests/.ssh/id_ed25519
         -e repo_environment=${{ inputs.environment }}
+        -e pgedge_client_cert_src=${{ github.workspace }}/tests/.certs/client.crt
+        -e pgedge_client_key_src=${{ github.workspace }}/tests/.certs/client.key
       ZONE_JOIN_LEVEL: ${{ inputs.zone_join }}
     steps:
       - name: Check out code
@@ -585,6 +589,21 @@ jobs:
             -i tests/inventories/zone-join.yml \
             -i tests/inventories/ultra-ha-zone-join.yml \
             --private-key tests/.ssh/id_ed25519
+
+      - name: Install the pgEdge repository client certificate
+        run: |
+          # An empty secret would write a lone newline, which `test -s` accepts,
+          # so the deployment would get invalid credentials instead of failing
+          # here. Check the values before they reach a file.
+          : "${PGEDGE_REPO_CLIENT_CRT:?is empty or unset}"
+          : "${PGEDGE_REPO_CLIENT_KEY:?is empty or unset}"
+          install -d -m 0700 tests/.certs
+          install -m 0600 /dev/null tests/.certs/client.key
+          printf '%s\n' "$PGEDGE_REPO_CLIENT_CRT" > tests/.certs/client.crt
+          printf '%s\n' "$PGEDGE_REPO_CLIENT_KEY" > tests/.certs/client.key
+        env:
+          PGEDGE_REPO_CLIENT_CRT: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
+          PGEDGE_REPO_CLIENT_KEY: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
 
       - name: Refuse pgedge_join_zones on a new cluster (full)
         if: inputs.zone_join == 'full'

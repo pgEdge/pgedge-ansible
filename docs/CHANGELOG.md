@@ -16,6 +16,11 @@ in full.
 
 ### Fixed
 
+- The end-to-end tests pass the repository client certificate to every
+  deployment: the Ultra-HA node-add and switchover steps, both workflows'
+  zone-join jobs, and `tests/run-test.sh`, which reads it from
+  `PGEDGE_CLIENT_CERT_SRC` and `PGEDGE_CLIENT_KEY_SRC`. (#73)
+
 ## v2.2.0
 
 This release lets a running cluster change shape. A zone can join a cluster
