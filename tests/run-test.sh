@@ -178,10 +178,15 @@ for cert_file in "$PGEDGE_CLIENT_CERT_SRC" "$PGEDGE_CLIENT_KEY_SRC"; do
     exit 1
   fi
 done
-EXTRA_VARS+=(
-  -e "pgedge_client_cert_src=$(realpath "$PGEDGE_CLIENT_CERT_SRC")"
-  -e "pgedge_client_key_src=$(realpath "$PGEDGE_CLIENT_KEY_SRC")"
-)
+# As a JSON object rather than key=value, which Ansible splits at spaces and
+# strips quotation marks from, so any path survives intact.
+CERT_VARS="$(python3 -c '
+import json, os, sys
+print(json.dumps({
+    "pgedge_client_cert_src": os.path.realpath(sys.argv[1]),
+    "pgedge_client_key_src": os.path.realpath(sys.argv[2]),
+}))' "$PGEDGE_CLIENT_CERT_SRC" "$PGEDGE_CLIENT_KEY_SRC")"
+EXTRA_VARS+=(-e "$CERT_VARS")
 
 # Set by Step 8b when it stages the etcd authority for the reconfigure run,
 # and passed on to Step 10, which re-runs setup_patroni too.
