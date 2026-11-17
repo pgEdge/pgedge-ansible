@@ -71,6 +71,16 @@ on:
           - test
           - zone-join
 
+# Every job's deployments take the repository client certificate, which
+# tests/write-client-cert.sh writes to these paths from the secrets. The pgEdge
+# repositories authenticate clients with mutual TLS, and a host without the
+# certificate cannot install pgEdge packages. It is passed as a path rather
+# than inline so no key material reaches the process arguments.
+env:
+  CERT_ARGS: >-
+    -e pgedge_client_cert_src=${{ github.workspace }}/tests/.certs/client.crt
+    -e pgedge_client_key_src=${{ github.workspace }}/tests/.certs/client.key
+
 jobs:
   test:
     if: ${{ github.actor != 'nektos/act' || inputs.act_job == 'test' }}
@@ -99,12 +109,6 @@ jobs:
       # an inventory would set it; switch-repo.yml leaves its definition alone.
       REPO_ARGS: >-
         ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
-      # The pgEdge repositories authenticate clients with mutual TLS. The
-      # certificate is passed as a path rather than inline so no key material
-      # reaches the process arguments.
-      CERT_ARGS: >-
-        -e pgedge_client_cert_src=${{ github.workspace }}/tests/.certs/client.crt
-        -e pgedge_client_key_src=${{ github.workspace }}/tests/.certs/client.key
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -180,16 +184,7 @@ jobs:
           done
 
       - name: Install the pgEdge repository client certificate
-        run: |
-          # An empty secret would write a lone newline, which `test -s` accepts,
-          # so the deployment would get invalid credentials instead of failing
-          # here. Check the values before they reach a file.
-          : "${PGEDGE_REPO_CLIENT_CRT:?is empty or unset}"
-          : "${PGEDGE_REPO_CLIENT_KEY:?is empty or unset}"
-          install -d -m 0700 tests/.certs
-          install -m 0600 /dev/null tests/.certs/client.key
-          printf '%s\n' "$PGEDGE_REPO_CLIENT_CRT" > tests/.certs/client.crt
-          printf '%s\n' "$PGEDGE_REPO_CLIENT_KEY" > tests/.certs/client.key
+        run: tests/write-client-cert.sh
         env:
           PGEDGE_REPO_CLIENT_CRT: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
           PGEDGE_REPO_CLIENT_KEY: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
@@ -327,14 +322,10 @@ jobs:
       REPO_ARGS: >-
         ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
       # Everything every playbook in the scenarios takes; the script adds the
-      # base inventory and the zone-join layers itself. The repository client
-      # certificate goes as paths, as in the job above, so every host the
-      # scenarios deploy, the joining zones' included, can install packages.
+      # base inventory and the zone-join layers itself.
       JOIN_ARGS: >-
         --private-key tests/.ssh/id_ed25519
         -e repo_environment=${{ inputs.environment }}
-        -e pgedge_client_cert_src=${{ github.workspace }}/tests/.certs/client.crt
-        -e pgedge_client_key_src=${{ github.workspace }}/tests/.certs/client.key
       ZONE_JOIN_LEVEL: ${{ inputs.zone_join }}
     steps:
       - name: Check out code
@@ -390,16 +381,7 @@ jobs:
           done
 
       - name: Install the pgEdge repository client certificate
-        run: |
-          # An empty secret would write a lone newline, which `test -s` accepts,
-          # so the deployment would get invalid credentials instead of failing
-          # here. Check the values before they reach a file.
-          : "${PGEDGE_REPO_CLIENT_CRT:?is empty or unset}"
-          : "${PGEDGE_REPO_CLIENT_KEY:?is empty or unset}"
-          install -d -m 0700 tests/.certs
-          install -m 0600 /dev/null tests/.certs/client.key
-          printf '%s\n' "$PGEDGE_REPO_CLIENT_CRT" > tests/.certs/client.crt
-          printf '%s\n' "$PGEDGE_REPO_CLIENT_KEY" > tests/.certs/client.key
+        run: tests/write-client-cert.sh
         env:
           PGEDGE_REPO_CLIENT_CRT: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
           PGEDGE_REPO_CLIENT_KEY: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
@@ -408,60 +390,60 @@ jobs:
       # trim their reruns at basic (ZONE_JOIN_LEVEL).
       - name: Refuse pgedge_join_zones on a new cluster (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster refuse-new $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster refuse-new $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Deploy and seed
-        run: tests/zone-join-scenarios.sh simple-cluster deploy $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster deploy $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Refuse new zones without the flag
-        run: tests/zone-join-scenarios.sh simple-cluster gate $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster gate $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Refuse new zones with a database added (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster gate-db-added $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster gate-db-added $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Join zones 4 and 5, interrupted mid-copy and resumed
-        run: tests/zone-join-scenarios.sh simple-cluster join-two $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster join-two $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Remove a running zone (basic)
         if: inputs.zone_join == 'basic'
-        run: tests/zone-join-scenarios.sh simple-cluster remove $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster remove $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Resume a join stopped after step 3 (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster resume-step4 $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster resume-step4 $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Refuse a join that cannot be resumed, release it, and reset the zone (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster not-resumable $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster not-resumable $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Refuse a join whose copy died in its data step (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster copy-died $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster copy-died $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Join with AutoDDL during and after the copy (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster autoddl $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster autoddl $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Refuse a rebuilt zone the others still subscribe to, then rejoin it (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster rebuilt $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster rebuilt $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Refuse to remove a zone a subscriber is behind on (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster remove-behind $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster remove-behind $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Remove a zone whose Postgres is stopped, then reset and rejoin it (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster remove-pg-stopped $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster remove-pg-stopped $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Resume a join marked unfinished after every subscription exists (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster resume-step10 $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster resume-step10 $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Remove an unreachable zone (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh simple-cluster remove-unreachable $JOIN_ARGS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh simple-cluster remove-unreachable $JOIN_ARGS $REPO_ARGS $CERT_ARGS
 
       - name: Show the trickle writers' logs
         if: always()
