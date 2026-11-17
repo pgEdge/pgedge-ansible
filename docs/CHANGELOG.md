@@ -20,6 +20,10 @@ in full.
   deployment: the Ultra-HA node-add and switchover steps, both workflows'
   zone-join jobs, and `tests/run-test.sh`, which reads it from
   `PGEDGE_CLIENT_CERT_SRC` and `PGEDGE_CLIENT_KEY_SRC`. (#73)
+- Patroni replicas on Debian start when `patroni_scope` is set per zone or
+  `cluster_name` contains a hyphen. `setup_patroni` creates Debian clusters
+  through a script of its own instead of the Patroni package's, which read
+  the cluster's name out of the scope. (EE-41)
 
 ## v2.2.0
 

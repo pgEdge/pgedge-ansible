@@ -13,6 +13,8 @@ The role performs the following tasks on inventory hosts:
 - Install the replica method that restores from the backup repository, when
   `patroni_replica_from_backup` is enabled and a backup repository is
   configured.
+- Install the bootstrap and replica method that creates a Debian cluster, on
+  Debian-based systems.
 - Generate the `patroni.yaml` configuration file from a template.
 - Disable the native Postgres systemd service so Patroni takes control.
 - Start Patroni on the primary node first, then on all replica nodes.
@@ -194,6 +196,7 @@ This role generates the following files on inventory hosts:
 | `{{ patroni_tls_dir }}/patroni.key` | New | Private key for encrypting traffic to etcd. Created for etcd stores only. |
 | `{{ patroni_tls_dir }}/patroni.crt` | New | Certificate for communicating with etcd as a client. Created for etcd stores only. |
 | `{{ pg_home }}/.patroni_pgpass` | New | Password file for Patroni database connections with mode 600. |
+| `/usr/local/bin/patroni_debian_cluster` | New | Bootstrap and replica method that creates the `/etc/postgresql` configuration directory with `pg_createcluster`, and for a replica then clones the leader with `pg_basebackup`. Installed on Debian-based systems only. |
 | `/usr/local/bin/patroni_pgbackrest_replica` | New | Replica method that restores from the backup repository when the newest backup can become a replica of the leader, and on Debian then creates the `/etc/postgresql` configuration directory. Installed only when `patroni_replica_from_backup` is enabled and a backup repository is configured. |
 
 ## Platform-Specific Behavior
@@ -206,10 +209,18 @@ configuration file is named `patroni.yml`.
 Debian keeps `postgresql.conf` in `/etc/postgresql/<version>/<cluster>`, which
 neither `pg_basebackup` nor a PgBackRest restore creates, and Patroni cannot
 start a replica without it. Debian replicas are therefore built with
-`pg_clonecluster`, which creates the directory before it clones. With
-`patroni_replica_from_backup` enabled, the restore runs first through
-`/usr/local/bin/patroni_pgbackrest_replica`, which creates the directory after
-restoring, and `pg_clonecluster` is the fallback.
+`/usr/local/bin/patroni_debian_cluster`, which creates the directory with
+`pg_createcluster` before it clones, and Patroni bootstraps a zone through the
+same script. With `patroni_replica_from_backup` enabled, the restore runs
+first through `/usr/local/bin/patroni_pgbackrest_replica`, which creates the
+directory after restoring, and the clone is the fallback.
+
+The role writes `pg_version` and `cluster_name` into both scripts, so neither
+depends on `patroni_scope`. The `pg_createcluster_patroni` and
+`pg_clonecluster_patroni` scripts that Debian's Patroni package provides are
+not used, because they derive the cluster's name from the scope and create
+the wrong cluster when the scope is set per zone or `cluster_name` contains a
+hyphen.
 
 ## Idempotency
 

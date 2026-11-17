@@ -67,11 +67,16 @@ ZONE_OF.update({HAPROXY[0]: 1, HAPROXY[1]: 2, BACKUP[0]: 1, BACKUP[1]: 2})
 # setup_patroni's role variable naming the pgbackrest replica script.
 REPLICA_SCRIPT = "/usr/local/bin/patroni_pgbackrest_replica"
 
+# setup_patroni's role variable naming the Debian bootstrap and clone script.
+DEBIAN_SCRIPT = "/usr/local/bin/patroni_debian_cluster"
+
 # The Debian replica methods that create /etc/postgresql/<version>/<cluster>,
 # keyed by the command each must run. Patroni fails to start a replica whose
-# configuration directory has no postgresql.conf.
+# configuration directory has no postgresql.conf. Debian's own
+# pg_clonecluster_patroni is not among them: it reads the cluster's name out of
+# the scope, and gets it wrong for a scope set per zone.
 DEBIAN_CONFIG_METHODS = {
-    "pg_clonecluster": "/usr/share/patroni/pg_clonecluster_patroni",
+    "pg_clonecluster": DEBIAN_SCRIPT + " clone",
     "pgbackrest": REPLICA_SCRIPT,
 }
 
@@ -236,6 +241,7 @@ def context(e, os_family, backups, replica, hosts_with_facts,
         pg_config_dir="/var/lib/pgsql/17/data", pg_path="/usr/pgsql-17",
         pg_home="/var/lib/pgsql", pg_version=17, cluster_name="demo", zone=zone,
         patroni_pgbackrest_replica_script=REPLICA_SCRIPT,
+        patroni_debian_cluster_script=DEBIAN_SCRIPT,
         groups={"pgedge": PGEDGE, "haproxy": HAPROXY, "backup": BACKUP},
         hostvars=hostvars_for(hosts_with_facts),
         nodes_in_zone=in_zone,
@@ -278,6 +284,13 @@ def failed_checks(doc, os_family, backups, replica):
         # so no node ever bootstraps from the repository.
         "bootstrap method":
             doc["bootstrap"].get("method") != "pgbackrest",
+        # A Debian bootstrap has to create the configuration directory as a
+        # clone does, through the script rather than Debian's own, which reads
+        # the cluster's name out of the scope.
+        "debian bootstrap command":
+            (doc["bootstrap"].get("pg_createcluster") or {}).get("command")
+            == (DEBIAN_SCRIPT + " bootstrap" if os_family == "Debian"
+                else None),
         "archive_command":
             ("pgbackrest" in params["archive_command"]) == backups,
         "restore_command present":
@@ -803,6 +816,138 @@ def check_replica_decision(e, template):
     return failures
 
 
+# Stand-ins for the Debian cluster tools. pg_createcluster records its
+# arguments and lays out what the real one would: postgresql.conf and the rest
+# in the configuration directory, an initialized data directory, and an
+# outright refusal when a postgresql.conf or pg_hba.conf is already there.
+# pg_basebackup records its arguments and whether the directory it was handed
+# was empty.
+STUB_CREATECLUSTER = """#!/bin/sh
+if [ -e "$STUB_CONF/postgresql.conf" ] || [ -e "$STUB_CONF/pg_hba.conf" ]; then
+    echo "configuration already exists" >&2
+    exit 1
+fi
+echo "$*" > "$STUB_LOG/createcluster"
+mkdir -p "$STUB_DATA"
+echo initdb > "$STUB_DATA/PG_VERSION"
+for f in postgresql.conf pg_hba.conf pg_ident.conf start.conf; do
+    echo new > "$STUB_CONF/$f"
+done
+"""
+STUB_BASEBACKUP = """#!/bin/sh
+echo "$*" > "$STUB_LOG/basebackup"
+ls -A "$STUB_DATA" > "$STUB_LOG/basebackup_found"
+echo leader > "$STUB_DATA/PG_VERSION"
+"""
+
+
+def check_debian_cluster_script(e, template):
+    """Run the Debian bootstrap and clone script against stand-ins for
+    pg_createcluster and pg_basebackup. Whatever the scope says, it has to
+    create the cluster under cluster_name, hyphens and all, clear a
+    configuration left over from a node whose data is gone, and clone into an
+    empty data directory.
+    """
+    failures = []
+
+    def fail(label, why):
+        print(f"FAIL     Debian cluster script: {label}")
+        failures.append(f"debian_cluster.sh.j2 ({label}): {why}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / "bin").mkdir()
+        for name, body in (("pg_createcluster", STUB_CREATECLUSTER),
+                           ("pg_basebackup", STUB_BASEBACKUP)):
+            stub = tmp / "bin" / name
+            stub.write_text(body)
+            stub.chmod(0o755)
+        conf, data, log = tmp / "etc", tmp / "data", tmp / "log"
+
+        ctx = context(e, "Debian", True, True, set(PGEDGE + HAPROXY + BACKUP))
+        ctx.update(pg_path=str(tmp), pg_config_dir=str(conf),
+                   pg_data=str(data), cluster_name="my-demo")
+        text = template.render(**ctx)
+        result = subprocess.run(["sh", "-n"], input=text, text=True,
+                                capture_output=True)
+        if result.returncode != 0:
+            fail("syntax", f"sh -n: {result.stderr.strip()}")
+            return failures
+        script = tmp / "debian_cluster.sh"
+        script.write_text(text)
+
+        run_env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}",
+                       STUB_CONF=str(conf), STUB_DATA=str(data),
+                       STUB_LOG=str(log))
+        scope = "--scope=17-my-demo-zone1"
+        cases = [
+            # label, arguments, leftover configuration, should succeed
+            ("bootstrap", ["bootstrap", scope, f"--datadir={data}"],
+             False, True),
+            ("clone", ["clone", scope, "--role=replica", f"--datadir={data}",
+                       "--connstring=host=10.0.0.10 user=replicator"],
+             False, True),
+            ("clone over a leftover configuration",
+             ["clone", scope, "--role=replica", f"--datadir={data}",
+              "--connstring=host=10.0.0.10 user=replicator"], True, True),
+            ("clone with no leader", ["clone", scope, f"--datadir={data}"],
+             False, False),
+            ("no mode", [scope, f"--datadir={data}"], False, False),
+        ]
+        for label, args, leftover, succeeds in cases:
+            for d in (conf, data, log):
+                subprocess.run(["rm", "-rf", str(d)], check=True)
+            conf.mkdir()
+            log.mkdir()
+            if leftover:
+                for f in ("postgresql.conf", "postgresql.base.conf",
+                          "pg_hba.conf"):
+                    (conf / f).write_text("old")
+            result = subprocess.run(["sh", str(script)] + args, env=run_env,
+                                    capture_output=True, text=True)
+            if (result.returncode == 0) != succeeds:
+                fail(label, f"expected {'success' if succeeds else 'failure'},"
+                            f" got rc {result.returncode}: "
+                            f"{result.stderr.strip()}")
+                continue
+            if not succeeds:
+                if (log / "createcluster").exists():
+                    fail(label, "ran pg_createcluster before refusing")
+                    continue
+                print(f"ok       Debian cluster script: {label}")
+                continue
+
+            created = (log / "createcluster").read_text().split()
+            cloned = (log / "basebackup").exists()
+            problems = []
+            if created[-2:] != ["17", "my-demo"]:
+                problems.append(f"created cluster {created[-2:]}, not "
+                                f"['17', 'my-demo']")
+            if f"{data}" not in created:
+                problems.append("pg_createcluster was not given pg_data")
+            if (conf / "postgresql.conf").read_text().strip() != "new":
+                problems.append("postgresql.conf is not pg_createcluster's")
+            if (conf / "postgresql.base.conf").exists():
+                problems.append("a leftover postgresql.base.conf survived")
+            if cloned != (args[0] == "clone"):
+                problems.append(f"pg_basebackup ran={cloned}")
+            if cloned:
+                if (log / "basebackup_found").read_text().strip():
+                    problems.append("pg_basebackup was handed a data "
+                                    "directory that was not empty")
+                bb = (log / "basebackup").read_text()
+                if "--dbname=host=10.0.0.10 user=replicator" not in bb:
+                    problems.append("pg_basebackup was not given the leader's "
+                                    "connection string")
+                if f"--pgdata={data}" not in bb:
+                    problems.append("pg_basebackup was not given pg_data")
+            if problems:
+                fail(label, "; ".join(problems))
+            else:
+                print(f"ok       Debian cluster script: {label}")
+    return failures
+
+
 def main():
     e = env()
     template = e.get_template("patroni.yml.j2")
@@ -818,6 +963,9 @@ def main():
         e, e.get_template("pgbackrest_replica.sh.j2"))
     failures += check_replica_decision(
         e, e.get_template("pgbackrest_replica.sh.j2"))
+    print()
+    failures += check_debian_cluster_script(
+        e, e.get_template("debian_cluster.sh.j2"))
 
     if failures:
         print("\n" + "\n".join(f"  - {f}" for f in failures))

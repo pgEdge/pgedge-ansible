@@ -4,6 +4,11 @@
 # the backup repository. See templates/pgbackrest_replica.sh.j2.
 patroni_pgbackrest_replica_script: /usr/local/bin/patroni_pgbackrest_replica
 
+# The bootstrap and replica method setup_patroni installs on Debian, which
+# creates the cluster's configuration directory. See
+# templates/debian_cluster.sh.j2.
+patroni_debian_cluster_script: /usr/local/bin/patroni_debian_cluster
+
 # Restarts this member's Postgres through Patroni. A restart of the service
 # itself would leave Patroni's "Pending restart" flag set. setup.yaml decides
 # whether one is needed, so this does not pass --pending.
