@@ -15,6 +15,11 @@ usage() {
   echo "  repo:     repo-upstream | repo-mirror -- install from a repo_url of"
   echo "            the site's own, in that layout, instead of pgEdge's servers"
   echo "  --keep:   don't tear down containers after test"
+  echo ""
+  echo "The pgEdge repositories need a client certificate. Point these at its"
+  echo "files on this host:"
+  echo "  PGEDGE_CLIENT_CERT_SRC  the certificate, leaf then intermediate"
+  echo "  PGEDGE_CLIENT_KEY_SRC   its private key"
   exit 1
 }
 
@@ -157,6 +162,31 @@ if [ -n "$REPO_LAYOUT" ]; then
   EXTRA_VARS+=(-e "@$SCRIPT_DIR/vars/repo-${REPO_LAYOUT}.yml")
   PROJECT_NAME="${PROJECT_NAME}-repo-${REPO_LAYOUT}"
 fi
+
+# The client certificate the pgEdge repositories require, passed as paths, as
+# the workflows pass it, so no key material reaches the process arguments.
+# Without it install_repos leaves the repositories disabled and the first
+# package install fails, well into the run, so stop here instead.
+if [ -z "${PGEDGE_CLIENT_CERT_SRC:-}" ] || [ -z "${PGEDGE_CLIENT_KEY_SRC:-}" ]; then
+  echo "ERROR: set PGEDGE_CLIENT_CERT_SRC and PGEDGE_CLIENT_KEY_SRC to the"
+  echo "       pgEdge repository client certificate and key"
+  usage
+fi
+for cert_file in "$PGEDGE_CLIENT_CERT_SRC" "$PGEDGE_CLIENT_KEY_SRC"; do
+  if [ ! -r "$cert_file" ]; then
+    echo "ERROR: cannot read $cert_file"
+    exit 1
+  fi
+done
+# As a JSON object rather than key=value, which Ansible splits at spaces and
+# strips quotation marks from, so any path survives intact.
+CERT_VARS="$(python3 -c '
+import json, os, sys
+print(json.dumps({
+    "pgedge_client_cert_src": os.path.realpath(sys.argv[1]),
+    "pgedge_client_key_src": os.path.realpath(sys.argv[2]),
+}))' "$PGEDGE_CLIENT_CERT_SRC" "$PGEDGE_CLIENT_KEY_SRC")"
+EXTRA_VARS+=(-e "$CERT_VARS")
 
 # Set by Step 8b when it stages the etcd authority for the reconfigure run,
 # and passed on to Step 10, which re-runs setup_patroni too.

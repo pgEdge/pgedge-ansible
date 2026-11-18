@@ -107,6 +107,16 @@ on:
           - test
           - zone-join
 
+# Every job's deployments take the repository client certificate, which
+# tests/write-client-cert.sh writes to these paths from the secrets. The pgEdge
+# repositories authenticate clients with mutual TLS, and a host without the
+# certificate cannot install pgEdge packages. It is passed as a path rather
+# than inline so no key material reaches the process arguments.
+env:
+  CERT_ARGS: >-
+    -e pgedge_client_cert_src=${{ github.workspace }}/tests/.certs/client.crt
+    -e pgedge_client_key_src=${{ github.workspace }}/tests/.certs/client.key
+
 jobs:
   test:
     if: ${{ github.actor != 'nektos/act' || inputs.act_job == 'test' }}
@@ -139,12 +149,6 @@ jobs:
       # an inventory would set it; switch-repo.yml leaves its definition alone.
       REPO_ARGS: >-
         ${{ inputs.repo != 'pgedge' && format('-e @tests/vars/repo-{0}.yml -e repo_name={1}', inputs.repo, inputs.environment) || '' }}
-      # The pgEdge repositories authenticate clients with mutual TLS. The
-      # certificate is passed as a path rather than inline so no key material
-      # reaches the process arguments.
-      CERT_ARGS: >-
-        -e pgedge_client_cert_src=${{ github.workspace }}/tests/.certs/client.crt
-        -e pgedge_client_key_src=${{ github.workspace }}/tests/.certs/client.key
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -245,16 +249,7 @@ jobs:
             --private-key tests/.ssh/id_ed25519
 
       - name: Install the pgEdge repository client certificate
-        run: |
-          # An empty secret would write a lone newline, which `test -s` accepts,
-          # so the deployment would get invalid credentials instead of failing
-          # here. Check the values before they reach a file.
-          : "${PGEDGE_REPO_CLIENT_CRT:?is empty or unset}"
-          : "${PGEDGE_REPO_CLIENT_KEY:?is empty or unset}"
-          install -d -m 0700 tests/.certs
-          install -m 0600 /dev/null tests/.certs/client.key
-          printf '%s\n' "$PGEDGE_REPO_CLIENT_CRT" > tests/.certs/client.crt
-          printf '%s\n' "$PGEDGE_REPO_CLIENT_KEY" > tests/.certs/client.key
+        run: tests/write-client-cert.sh
         env:
           PGEDGE_REPO_CLIENT_CRT: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
           PGEDGE_REPO_CLIENT_KEY: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
@@ -298,7 +293,7 @@ jobs:
             $BACKUP_ARGS $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
-            $DCS_VARS $REPO_ARGS
+            $DCS_VARS $REPO_ARGS $CERT_ARGS
           move_leaders first
 
       - name: Check packages came from the site's repository
@@ -419,7 +414,7 @@ jobs:
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
-            $DCS_VARS $REPO_ARGS
+            $DCS_VARS $REPO_ARGS $CERT_ARGS
           ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
             tests/verify/verify-node-add.yml \
             -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $NODE_ADD_ARGS \
@@ -431,7 +426,7 @@ jobs:
             $BACKUP_ARGS $NODE_ADD_ARGS \
             --private-key tests/.ssh/id_ed25519 \
             -e repo_environment=${{ inputs.environment }} \
-            $DCS_VARS $REPO_ARGS
+            $DCS_VARS $REPO_ARGS $CERT_ARGS
 
       - name: Show container logs on failure
         if: failure()
@@ -586,19 +581,25 @@ jobs:
             -i tests/inventories/ultra-ha-zone-join.yml \
             --private-key tests/.ssh/id_ed25519
 
+      - name: Install the pgEdge repository client certificate
+        run: tests/write-client-cert.sh
+        env:
+          PGEDGE_REPO_CLIENT_CRT: ${{ secrets.PGEDGE_REPO_CLIENT_CRT }}
+          PGEDGE_REPO_CLIENT_KEY: ${{ secrets.PGEDGE_REPO_CLIENT_KEY }}
+
       - name: Refuse pgedge_join_zones on a new cluster (full)
         if: inputs.zone_join == 'full'
-        run: tests/zone-join-scenarios.sh ultra-ha refuse-new $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh ultra-ha refuse-new $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS $CERT_ARGS
 
       - name: Deploy and seed
-        run: tests/zone-join-scenarios.sh ultra-ha deploy $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh ultra-ha deploy $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS $CERT_ARGS
 
       # At full, also reruns with the flag and after a switchover.
       - name: Join zone 3, and rerun
-        run: tests/zone-join-scenarios.sh ultra-ha join-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh ultra-ha join-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS $CERT_ARGS
 
       - name: Remove zone 3 while it runs
-        run: tests/zone-join-scenarios.sh ultra-ha remove-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS
+        run: tests/zone-join-scenarios.sh ultra-ha remove-ha $BACKUP_ARGS $JOIN_ARGS $DCS_VARS $REPO_ARGS $CERT_ARGS
 
       - name: Show the trickle writers' logs
         if: always()
