@@ -193,6 +193,30 @@
       These roles make many assumptions based on OS distribution. Currently
       only distributions in the RedHat and Debian families are supported.
 
+# Debian runs each cluster as postgresql@<version>-<cluster>, and the unit
+# finds the cluster's configuration by turning every hyphen in that instance
+# name into a slash. A cluster named my-demo is looked for in
+# /etc/postgresql/17/my/demo, so its service fails to start partway through
+# setup_postgres with nothing more than "Assertion failed". postgresql-common
+# warns that such names break under systemd. Refused here instead, before
+# anything is installed. RedHat names its service without the cluster, so a
+# hyphen does no harm there.
+
+- name: Ensure the cluster name has no hyphen on Debian
+  assert:
+    that:
+    - "'-' not in cluster_name | string"
+    fail_msg: >-
+      cluster_name is "{{ cluster_name }}", which Debian cannot run: its
+      postgresql@.service unit reads a hyphen in the instance name as a path
+      separator, so it looks for this cluster's configuration in
+      /etc/postgresql/{{ pg_version }}/{{ cluster_name | replace('-', '/') }}
+      and refuses to start. Use a name without hyphens, such as
+      "{{ cluster_name | replace('-', '_') }}".
+  when:
+  - ansible_facts['os_family'] == 'Debian'
+  - inventory_hostname in (groups.pgedge | default([]))
+
 # A package repository of the site's own. Every host install_repos runs on
 # reads these, whatever its group, so none of the checks is gated on one. Each
 # refuses a setting that would otherwise be quietly ignored or quietly

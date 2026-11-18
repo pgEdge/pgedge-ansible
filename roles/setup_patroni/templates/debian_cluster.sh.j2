@@ -13,9 +13,8 @@
 # for this, and they work out the version and the cluster's name by splitting
 # Patroni's scope. That holds only for a scope of exactly
 # <version>-<cluster>: a scope set per zone, as one store shared by several
-# zones needs, or a cluster name with a hyphen in it, has them create a cluster
-# under the wrong name. The replica then has no postgresql.conf and never
-# starts. Every path here is fixed when setup_patroni writes the script, so the
+# zones needs, has them create a cluster under the wrong name. The replica then
+# has no postgresql.conf and never starts. Every path here is fixed when setup_patroni writes the script, so the
 # scope plays no part.
 #
 # Usage, as Patroni runs it:

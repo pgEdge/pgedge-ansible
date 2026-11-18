@@ -183,7 +183,7 @@ all:
 
 pgedge:
   vars:
-    cluster_name: prod-cluster
+    cluster_name: production
     is_ha_cluster: true
     db_password: "{{ vault_db_password }}"
     pgedge_password: "{{ vault_pgedge_password }}"

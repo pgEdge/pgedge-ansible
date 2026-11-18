@@ -12,10 +12,16 @@ cluster.
   The collection uses this name for descriptive items and generated values
   such as stanza names and etcd key prefixes.
 
+On Debian-based systems the name cannot contain a hyphen, and `init_server`
+refuses one. Debian runs each cluster as the `postgresql@<version>-<cluster>`
+service, which reads every hyphen in that name as a path separator and so
+cannot find the configuration of a cluster named `my-demo`. Use an underscore
+instead.
+
 In the following example, the inventory specifies a production cluster name:
 
 ```yaml
-cluster_name: production-cluster
+cluster_name: production
 ```
 
 ## zone

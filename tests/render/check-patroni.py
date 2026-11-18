@@ -844,9 +844,9 @@ echo leader > "$STUB_DATA/PG_VERSION"
 def check_debian_cluster_script(e, template):
     """Run the Debian bootstrap and clone script against stand-ins for
     pg_createcluster and pg_basebackup. Whatever the scope says, it has to
-    create the cluster under cluster_name, hyphens and all, clear a
-    configuration left over from a node whose data is gone, and clone into an
-    empty data directory.
+    create the cluster under cluster_name, clear a configuration left over
+    from a node whose data is gone, and clone into an empty data directory.
+    The scope is set per zone, as Debian's own scripts misread it.
     """
     failures = []
 
@@ -866,7 +866,7 @@ def check_debian_cluster_script(e, template):
 
         ctx = context(e, "Debian", True, True, set(PGEDGE + HAPROXY + BACKUP))
         ctx.update(pg_path=str(tmp), pg_config_dir=str(conf),
-                   pg_data=str(data), cluster_name="my-demo")
+                   pg_data=str(data), cluster_name="my_demo")
         text = template.render(**ctx)
         result = subprocess.run(["sh", "-n"], input=text, text=True,
                                 capture_output=True)
@@ -879,7 +879,7 @@ def check_debian_cluster_script(e, template):
         run_env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}",
                        STUB_CONF=str(conf), STUB_DATA=str(data),
                        STUB_LOG=str(log))
-        scope = "--scope=17-my-demo-zone1"
+        scope = "--scope=17-my_demo-zone1"
         cases = [
             # label, arguments, leftover configuration, should succeed
             ("bootstrap", ["bootstrap", scope, f"--datadir={data}"],
@@ -920,9 +920,9 @@ def check_debian_cluster_script(e, template):
             created = (log / "createcluster").read_text().split()
             cloned = (log / "basebackup").exists()
             problems = []
-            if created[-2:] != ["17", "my-demo"]:
+            if created[-2:] != ["17", "my_demo"]:
                 problems.append(f"created cluster {created[-2:]}, not "
-                                f"['17', 'my-demo']")
+                                f"['17', 'my_demo']")
             if f"{data}" not in created:
                 problems.append("pg_createcluster was not given pg_data")
             if (conf / "postgresql.conf").read_text().strip() != "new":

@@ -219,8 +219,7 @@ The role writes `pg_version` and `cluster_name` into both scripts, so neither
 depends on `patroni_scope`. The `pg_createcluster_patroni` and
 `pg_clonecluster_patroni` scripts that Debian's Patroni package provides are
 not used, because they derive the cluster's name from the scope and create
-the wrong cluster when the scope is set per zone or `cluster_name` contains a
-hyphen.
+the wrong cluster when the scope is set per zone.
 
 ## Idempotency
 

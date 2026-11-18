@@ -20,6 +20,16 @@ Overview, and creates a fresh copy of this page in the same pull request.
 
 ### Changed
 
+- `init_server` refuses a `cluster_name` that contains a hyphen on
+  Debian-based systems. Debian runs each cluster as the
+  `postgresql@<version>-<cluster>` service, and that unit reads every hyphen
+  in the instance name as a path separator, so it looks for a cluster named
+  `my-demo` in `/etc/postgresql/17/my/demo` and refuses to start it. Such a
+  deployment used to stop partway through `setup_postgres` with only
+  "Assertion failed" from systemd; it now stops before anything is installed,
+  with a message that names the cause. RedHat-based systems still accept a
+  hyphen. (EE-41)
+
 ### Fixed
 
 - The end-to-end tests pass the repository client certificate to every
@@ -40,10 +50,9 @@ Overview, and creates a fresh copy of this page in the same pull request.
 - Patroni replicas on Debian-based systems now start when `patroni_scope` is
   anything other than `<pg_version>-<cluster_name>`, such as the per-zone
   scope that [Sharing One Store Across Zones](../configuration/dcs.md#sharing-one-store-across-zones)
-  recommends, and when `cluster_name` contains a hyphen. Patroni built Debian
-  replicas with the `pg_clonecluster_patroni` script from Debian's Patroni
-  package, which derives the version and cluster name by splitting the scope
-  at hyphens. With a scope such as `17-demo-zone1` it created a cluster named
+  recommends. Patroni built Debian replicas with the `pg_clonecluster_patroni`
+  script from Debian's Patroni package, which derives the version and cluster
+  name by splitting the scope at hyphens. With a scope such as `17-demo-zone1` it created a cluster named
   `zone1`, the replica's own configuration directory stayed empty, and
   `patronictl list` reported the replica as `start failed`. `setup_patroni`
   now installs `/usr/local/bin/patroni_debian_cluster`, written with

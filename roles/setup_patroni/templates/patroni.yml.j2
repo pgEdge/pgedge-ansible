@@ -94,7 +94,7 @@ postgresql:
   # list above. Every method ahead of basebackup on Debian has to create that
   # directory too. Debian's own pg_clonecluster_patroni is not used: it reads
   # the cluster's name out of the scope, and gets it wrong for any scope but
-  # <version>-<cluster_name> without a hyphen in the name.
+  # <version>-<cluster_name>, such as one set per zone.
   pg_clonecluster:
     command: {{ patroni_debian_cluster_script }} clone
 {% endif %}
