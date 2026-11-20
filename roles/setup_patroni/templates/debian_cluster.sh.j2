@@ -1,0 +1,75 @@
+#!/bin/sh
+#
+# Patroni's bootstrap and replica method on Debian: creates the cluster's
+# configuration directory, {{ pg_config_dir }}, along with the data directory,
+# and for a replica then fills the data directory from the leader.
+#
+# Debian keeps postgresql.conf in that directory rather than in the data
+# directory. Patroni renames the file to postgresql.base.conf the first time it
+# starts Postgres, and fails to start Postgres at all when it is missing, but
+# neither initdb nor pg_basebackup creates it. Only pg_createcluster does.
+#
+# The Patroni package ships pg_createcluster_patroni and pg_clonecluster_patroni
+# for this, and they work out the version and the cluster's name by splitting
+# Patroni's scope. That holds only for a scope of exactly
+# <version>-<cluster>: a scope set per zone, as one store shared by several
+# zones needs, has them create a cluster under the wrong name. The replica then
+# has no postgresql.conf and never starts. Every path here is fixed when setup_patroni writes the script, so the
+# scope plays no part.
+#
+# Usage, as Patroni runs it:
+#   {{ patroni_debian_cluster_script }} bootstrap --scope=... --datadir=...
+#   {{ patroni_debian_cluster_script }} clone --scope=... --connstring=... ...
+#
+# Patroni runs either one only with an empty data directory: it bootstraps a
+# node whose data directory is empty, and empties it before any replica method
+# that does not keep its data. So a configuration found in {{ pg_config_dir }}
+# is left over from a cluster whose data is gone, as on a node rebuilt after a
+# failure. pg_createcluster refuses to create a cluster over one, so the files
+# it writes are removed first, as Debian's own scripts do with pg_dropcluster.
+# pg_dropcluster is not used, because it deletes the data directory the old
+# configuration names, which fails on a mount point. Patroni writes
+# postgresql.conf and pg_hba.conf again from its own configuration, so nothing
+# is lost.
+#
+# A clone then empties the data directory pg_createcluster initialized and
+# copies the leader's into it. Should the copy fail, the configuration stays,
+# and Patroni's basebackup, the next method in its list, can use it.
+
+set -eu
+
+mode=${1:-}
+[ $# -gt 0 ] && shift
+
+connstring=
+for arg in "$@"; do
+    case "$arg" in
+        --connstring=*) connstring=${arg#--connstring=} ;;
+    esac
+done
+
+case "$mode" in
+    bootstrap|clone) ;;
+    *)
+        echo "patroni_debian_cluster: the first argument must be bootstrap" \
+             "or clone" >&2
+        exit 2
+        ;;
+esac
+
+if [ "$mode" = clone ] && [ -z "$connstring" ]; then
+    echo "patroni_debian_cluster: Patroni named no node to clone from" >&2
+    exit 1
+fi
+
+for file in postgresql.conf postgresql.base.conf pg_hba.conf pg_ident.conf \
+            pg_ctl.conf start.conf environment; do
+    rm -f '{{ pg_config_dir }}'/"$file"
+done
+
+pg_createcluster --start-conf=manual -p {{ pg_port }} -d '{{ pg_data }}' {{ pg_version }} '{{ cluster_name }}' >/dev/null
+
+if [ "$mode" = clone ]; then
+    find '{{ pg_data }}' -mindepth 1 -delete
+    '{{ pg_path }}/bin/pg_basebackup' --pgdata='{{ pg_data }}' --wal-method=stream --dbname="$connstring"
+fi

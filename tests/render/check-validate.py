@@ -83,8 +83,23 @@ def mesh(pg_parameters):
     return {h: {**v, "pg_parameters": pg_parameters} for h, v in MESH.items()}
 
 
+# The validation reads the controller's own facts, so a check that depends on
+# the OS family can only be refused where the controller is in that family.
+# GitHub's Ubuntu runners are in the Debian family, as is the usual workstation
+# running act.
+CONTROLLER_IS_DEBIAN = pathlib.Path("/etc/debian_version").exists()
+
 # (name, {host: vars}, passes, fragments the refusal must contain)
 CASES = [
+    ("a cluster name without a hyphen",
+     {"n1": {**SIMPLE, "zone": 1, "cluster_name": "my_demo"}},
+     True, []),
+    ("a cluster name with a hyphen",
+     {"n1": {**SIMPLE, "zone": 1, "cluster_name": "my-demo"}},
+     not CONTROLLER_IS_DEBIAN,
+     ["cluster_name is \"my-demo\", which Debian cannot run",
+      "/etc/postgresql/17/my/demo", "such as \"my_demo\""]
+     if CONTROLLER_IS_DEBIAN else []),
     ("accepted parameters",
      {"n1": {**SIMPLE, "zone": 1, "pg_parameters": TUNED},
       "n2": {**SIMPLE, "zone": 2, "pg_parameters": TUNED}},

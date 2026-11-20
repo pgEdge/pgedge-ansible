@@ -19,9 +19,13 @@ restapi:
 
 bootstrap:
 {% if ansible_os_family == 'Debian' %}
+  # Debian keeps postgresql.conf outside the data directory, and only
+  # pg_createcluster creates it. The script setup_patroni installs runs that,
+  # with the version and cluster name it was written with rather than ones
+  # read out of the scope.
   method: pg_createcluster
   pg_createcluster:
-    command: /usr/share/patroni/pg_createcluster_patroni
+    command: {{ patroni_debian_cluster_script }} bootstrap
 {% endif %}
 
   dcs:
@@ -85,11 +89,14 @@ postgresql:
 {% if ansible_os_family == 'Debian' %}
   # Debian keeps postgresql.conf in /etc/postgresql/<version>/<cluster>, which
   # basebackup does not create, and Patroni fails to start a replica without
-  # it. pg_clonecluster_patroni runs pg_createcluster before pg_basebackup, so
-  # on Debian it has to come ahead of basebackup in every list above. Every
-  # method ahead of basebackup on Debian has to create that directory too.
+  # it. The script setup_patroni installs runs pg_createcluster before
+  # pg_basebackup, so on Debian it has to come ahead of basebackup in every
+  # list above. Every method ahead of basebackup on Debian has to create that
+  # directory too. Debian's own pg_clonecluster_patroni is not used: it reads
+  # the cluster's name out of the scope, and gets it wrong for any scope but
+  # <version>-<cluster_name>, such as one set per zone.
   pg_clonecluster:
-    command: /usr/share/patroni/pg_clonecluster_patroni
+    command: {{ patroni_debian_cluster_script }} clone
 {% endif %}
 
   listen: 0.0.0.0:{{ pg_port }}

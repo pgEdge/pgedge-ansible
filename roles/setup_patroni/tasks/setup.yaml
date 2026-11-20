@@ -19,6 +19,21 @@
   become: true
   when: replica_from_backup | bool
 
+# On Debian, Patroni bootstraps and clones through a script that creates the
+# cluster's configuration directory with pg_createcluster. Debian's own scripts
+# read the cluster's name out of the Patroni scope, which this one is written
+# with instead. Root owns it for the same reason.
+
+- name: Install the method that creates a Debian cluster for Patroni
+  template:
+    src: templates/debian_cluster.sh.j2
+    dest: "{{ patroni_debian_cluster_script }}"
+    mode: "0755"
+    owner: root
+    group: root
+  become: true
+  when: ansible_os_family == 'Debian'
+
 # The sizing in patroni.yml and the zone's store never drops beneath what the
 # zone was last configured with.
 

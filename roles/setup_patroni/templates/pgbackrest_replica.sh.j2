@@ -28,8 +28,8 @@
 # starts a replica, and fails to start Postgres at all when it is missing. A
 # restore writes only the data directory, so a replica whose configuration
 # directory is empty, as it is on a new node or after wipe_cluster, needs one
-# made for it. Debian's pg_clonecluster_patroni does the same thing before
-# its pg_basebackup.
+# made for it. The pg_clonecluster method that follows this one does the same
+# thing before its pg_basebackup.
 #
 # The configuration is made after the restore, so a restore that fails leaves
 # the directory as it found it and the next method in Patroni's list starts from
@@ -40,9 +40,8 @@
 # partway through has pg_createcluster drop the cluster it was making, which
 # removes the scratch directory rather than the restored one.
 #
-# Every path is fixed here when setup_patroni writes the script, which also
-# keeps the cluster's name out of the Patroni scope, which
-# pg_clonecluster_patroni splits at hyphens.
+# Every path is fixed here when setup_patroni writes the script, so the
+# cluster's name never has to be read out of the Patroni scope.
 {% endif %}
 
 set -eu
