@@ -173,6 +173,28 @@ Prefer an odd number of nodes in each zone. etcd needs a majority of a zone's
 members to keep running, so a zone of four survives the loss of one member, no
 more than a zone of three does, and a zone of two survives the loss of none.
 
+### Updating the Cluster's Software
+
+The deployment playbook installs each package once and leaves it at that
+version on later runs. To take the minor releases the repositories have
+published since, run the playbook with `permit_software_updates`:
+
+```bash
+ansible-playbook playbook.yaml -i inventory.yaml \
+  -e permit_software_updates=true
+```
+
+The [`update_software`](roles/update_software.md) role, the last play of the
+sample playbooks, then reports what it will update and in what order, and
+updates one node at a time. On an Ultra-HA cluster it switches each zone's
+leader over to an updated replica before updating the leader. pgBackRest is
+updated last, on every host at once. A run with nothing to update changes
+nothing.
+
+The run restarts Postgres, so it refuses to start when `pg_allow_restart` is
+`false`. Change [`etcd_version`](configuration/etcd.md#etcd_version) in the
+inventory first to update etcd in the same run.
+
 ### Disaster Recovery
 
 When a node fails in a Spock cluster, restore it on a provisioned recovery

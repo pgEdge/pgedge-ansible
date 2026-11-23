@@ -1,0 +1,41 @@
+---
+
+# The order the hosts are updated in, decided once for the play.
+#
+# The pgEdge nodes go zone by zone. Within a zone the replicas that need it go
+# first, in inventory order, and the leader last, so that when its turn comes
+# there is an updated replica to switch over to. The leader is placed last
+# whenever it needs updating, even if none of its replicas do. A zone with
+# nothing to update contributes nothing, and neither does a run in which
+# nothing needs updating.
+#
+# The HAProxy hosts go one at a time after every pgEdge node. pgBackRest goes
+# last, on every host that needs it at once.
+
+- name: Put the hosts that need updating in the order they are updated
+  set_fact:
+    update_software_order: >-
+      {%- set order = [] -%}
+      {%- for z in zone_list | sort -%}
+      {%-   set nodes = groups['pgedge'] | map('extract', hostvars)
+                        | selectattr('zone', 'eq', z) | list -%}
+      {%-   set leader = nodes[0].zone_primary -%}
+      {%-   for n in nodes
+              if n.inventory_hostname != leader and n.update_software_restart -%}
+      {%-     set _ = order.append(n.inventory_hostname) -%}
+      {%-   endfor -%}
+      {%-   if hostvars[leader].update_software_restart -%}
+      {%-     set _ = order.append(leader) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ order }}
+    update_software_proxy_order: >-
+      {{ groups['haproxy'] | default([]) | map('extract', hostvars)
+         | selectattr('update_software_restart')
+         | map(attribute='inventory_hostname') | list }}
+    update_software_backrest_hosts: >-
+      {{ (groups['pgedge'] + groups['backup'] | default([]))
+         | map('extract', hostvars)
+         | selectattr('update_software_backrest')
+         | map(attribute='inventory_hostname') | list }}
+  run_once: true

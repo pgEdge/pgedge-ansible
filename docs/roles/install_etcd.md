@@ -105,3 +105,7 @@ system paths in both cases.
 
 This role is idempotent and safe to re-run on inventory hosts. The role
 skips user creation and package installation when the targets already exist.
+
+A node that already has etcd keeps the release it has, even when
+`etcd_version` changes. The [`update_software`](update_software.md) role
+installs a new release on a running cluster.

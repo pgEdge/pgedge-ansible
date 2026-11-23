@@ -1,0 +1,39 @@
+---
+
+# Install the etcd_version release that download.yaml unpacked, and the
+# service file. Nothing here reaches the network, so update_software runs it
+# while etcd is stopped, having downloaded the release before the outage.
+
+- name: Install etcd binaries to expected location
+  copy:
+    src: "{{ ansible_user_dir }}/tmp/{{ etcd_package }}/"
+    dest: "{{ etcd_install_dir }}/"
+    mode: "0755"
+    remote_src: true
+  become: true
+
+# Some systems may have a system-wide umask set, in which case these binaries
+# may not be executable post-install. This step ensures non-root users can run
+# etcd services.
+
+- name: Make sure the etcd binaries are executable
+  file:
+    path: "{{ etcd_install_dir }}/{{ item }}"
+    mode: "0755"
+  become: true
+  loop:
+  - etcd
+  - etcdctl
+  - etcdutl
+
+# The service file is being installed here, but is not being enabled.
+# The setup_etcd role should do that.
+
+- name: Install the etcd Systemd service file
+  template:
+    src: templates/etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  become: true

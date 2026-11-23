@@ -1,0 +1,31 @@
+---
+
+# Download and unpack the etcd_version release archive in the login user's
+# home, without touching the installed binaries. Kept apart from install.yaml
+# so update_software can fetch a new release while the node is still running,
+# and stop etcd only once the archive is ready to install.
+
+- name: Create temp work space if it doesn't exist
+  file:
+    path: "~/tmp"
+    state: directory
+    mode: 0700
+
+# It feels a bit strange installing binaries directly from github rather than
+# Hashicorp, but if they don't want to distribute their own binaries, that's
+# on them. We can at least enforce the checksum for the download. The URL
+# is a variable so users can supply their own repo URL for isolated networks.
+
+- name: Download latest etcd binary package
+  get_url:
+    url: "{{ etcd_base_url }}/{{ etcd_package }}.tar.gz"
+    dest: "~/tmp/{{ etcd_package }}.tar.gz"
+    checksum: "{{ etcd_checksum }}"
+    mode: "0600"
+
+- name: Extract etcd archive
+  unarchive:
+    src: "~/tmp/{{ etcd_package }}.tar.gz"
+    dest: "~/tmp"
+    remote_src: true
+    creates: "~/tmp/{{ etcd_package }}"

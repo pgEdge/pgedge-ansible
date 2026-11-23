@@ -26,7 +26,7 @@ repo_gpg_key: ""
 
 zone: 1
 pg_version: 17
-spock_version: "5.0.4"
+spock_version: "5.0"
 tls_validity_days: 3560
 
 db_names:
@@ -224,10 +224,16 @@ etcd_ca_key: ""
 # that has to reach a node's etcd without running either role: the certificate
 # authority check reads the authority each existing member trusts, and
 # wipe_cluster erases all three.
+#
+# The etcd release and where its binaries go are here for the same reason:
+# install_etcd installs that release, and update_software compares it with the
+# binary a node already has to decide whether the node needs the new one.
 
 etcd_config_dir: "/etc/etcd"
 etcd_data_dir: "/var/lib/etcd"
 etcd_tls_dir: "/etc/etcd/tls"
+etcd_version: "3.6.17"
+etcd_install_dir: "/usr/local/etcd"
 
 # Patroni cluster name within the DCS. This is the second half of every key
 # Patroni writes, and the collection derives it from values that are identical

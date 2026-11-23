@@ -1,0 +1,21 @@
+---
+
+argument_specs:
+  main:
+    short_description: Apply minor updates to a deployed cluster's software
+    description:
+    - Update the packages the collection installed, and the etcd release it
+      installs, to what the repositories and the collection now offer, and
+      restart what runs them, one node at a time and replicas before their
+      zone's leader.
+    - Does nothing unless I(permit_software_updates) is C(true). An update
+      restarts Postgres, so the role refuses to run while I(pg_allow_restart)
+      is off.
+    options:
+      permit_software_updates:
+        type: "bool"
+        default: false
+        description:
+        - Must be C(true) for the role to do anything. Pass it with C(-e),
+          for example C(-e permit_software_updates=true), never from an
+          inventory.

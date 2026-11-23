@@ -12,8 +12,17 @@ in full.
 
 ### Added
 
+- New `update_software` role applies minor updates to a deployed cluster's
+  software when a run sets `permit_software_updates`: one node at a time,
+  each zone's replicas before its leader, then HAProxy, then pgBackRest
+  everywhere at once. The sample playbooks run it last. (#76)
+
 ### Changed
 
+- `etcd_version` and `etcd_install_dir` move to `role_config`'s defaults,
+  and `etcd_version` defaults to 3.6.17. (#76)
+- `spock_version` defaults to `5.0` and is documented as reserved: it will
+  name the Spock major version to install, and nothing reads it yet. (#76)
 - `init_server` refuses a `cluster_name` that contains a hyphen on
   Debian-based systems, whose `postgresql@` service cannot start such a
   cluster. (EE-41)

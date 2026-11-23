@@ -1,0 +1,54 @@
+---
+
+# Bring the extensions the collection created up to the version their updated
+# packages ship, in every database, on every zone's primary. A replica takes
+# the change through physical replication.
+#
+# This waits until every pgEdge node is updated, so no zone is asked to run
+# an extension's new SQL while one of its nodes still has the old library.
+# Each zone updates its own extensions, so DDL replication is turned off for
+# the session: a zone that received the statement from another would try to
+# apply what it does itself.
+#
+# Most minor releases ship no new SQL, and then there is nothing to do. The
+# versions are asked again here, not taken from the report, because the
+# packages this run installed may ship new ones.
+
+- include_tasks: extension_versions.yaml
+
+# An extension with no update path to its package's version is left as it is,
+# and the run goes on to HAProxy and pgBackRest. Stopping here would stop every
+# later run in the same place, until someone put the package back.
+
+- name: Warn about extensions their package cannot update
+  debug:
+    msg: >-
+      {{ inventory_hostname }}, database {{ item.db }}: {{ item.ext }} is at
+      {{ item.installed }}, and its package ships {{ item.available }} with no
+      update path from it, so it was left as it is. Was the package rolled
+      back?
+  loop: "{{ update_software_extensions | rejectattr('path') | list }}"
+  loop_control:
+    label: "{{ item.db }}: {{ item.ext }}"
+
+- name: Update the extensions to the version their packages ship
+  command:
+    argv:
+    - psql
+    - -X
+    - --no-psqlrc
+    - -v
+    - ON_ERROR_STOP=1
+    - -p
+    - "{{ pg_port }}"
+    - -d
+    - "{{ item.db }}"
+    - -c
+    - SET spock.enable_ddl_replication = off
+    - -c
+    - ALTER EXTENSION {{ item.ext }} UPDATE
+  loop: "{{ update_software_extensions | selectattr('path') | list }}"
+  loop_control:
+    label: "{{ item.db }}: {{ item.ext }} {{ item.installed }} -> {{ item.available }}"
+  become: true
+  become_user: postgres

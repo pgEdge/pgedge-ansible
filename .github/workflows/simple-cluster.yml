@@ -229,6 +229,25 @@ jobs:
             -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
             --private-key tests/.ssh/id_ed25519
 
+      # Before the steps that reconfigure the cluster, which leave settings of
+      # their own behind that the deployment run here would put back. The test
+      # makes up an update for every node and applies it, and a deployment run
+      # with the gate still set must then find nothing left to update.
+      - name: Check minor software updates are applied
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/update-software.yml \
+            -i tests/inventories/simple-cluster.yml $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519
+          tests/check-idempotence.sh \
+            tests/inventories/simple-cluster.yml \
+            tests/playbooks/simple-cluster.yml \
+            $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }} \
+            $REPO_ARGS $CERT_ARGS \
+            -e permit_software_updates=true
+
       # After the verification, which reads the inventory's parameters back:
       # this changes them, then puts them back the way it found them.
       - name: Check changed Postgres parameters are applied

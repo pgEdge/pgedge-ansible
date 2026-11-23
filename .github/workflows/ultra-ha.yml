@@ -321,6 +321,27 @@ jobs:
             --private-key tests/.ssh/id_ed25519 \
             $DCS_VARS
 
+      # Before the steps that reconfigure the cluster, which leave settings of
+      # their own behind that the deployment run here would put back. The test
+      # makes up an update for every host, applies it, and moves each zone's
+      # leader back to its first node, and a deployment run with the gate
+      # still set must then find nothing left to update.
+      - name: Check minor software updates are applied
+        run: |
+          ANSIBLE_CONFIG=tests/ansible.cfg ansible-playbook \
+            tests/playbooks/update-software.yml \
+            -i tests/inventories/ultra-ha.yml $BACKUP_ARGS $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            $DCS_VARS
+          tests/check-idempotence.sh \
+            tests/inventories/ultra-ha.yml \
+            tests/playbooks/ultra-ha.yml \
+            $BACKUP_ARGS $COLDFRONT_ARGS \
+            --private-key tests/.ssh/id_ed25519 \
+            -e repo_environment=${{ inputs.environment }} \
+            $DCS_VARS $REPO_ARGS $CERT_ARGS \
+            -e permit_software_updates=true
+
       # After the verification, which reads the inventory's own parameters, and
       # ending on them again, so the steps below see the cluster as deployed.
       - name: Check changed Postgres parameters are applied through Patroni

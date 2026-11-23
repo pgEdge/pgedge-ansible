@@ -1,0 +1,27 @@
+---
+
+# Hand this zone's leadership to one of its replicas, so this node is updated
+# as a replica. The leader comes last in its zone's turn, so every replica
+# that needed updating already has been, and Patroni is left to choose among
+# them: it picks the healthiest, as it would in a failover. A zone with no
+# replica to hand over to fails here, and its leader is not restarted in
+# place.
+
+- name: Switch over to one of this zone's replicas
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - switchover
+    - --leader
+    - "{{ ansible_facts['hostname'] }}"
+    - --force
+    - "{{ patroni_scope }}"
+  become: true
+  become_user: postgres
+
+- name: Wait for the new leader, and for this node to follow it
+  include_tasks: members.yaml
+  vars:
+    update_software_wait: true

@@ -1,0 +1,262 @@
+---
+
+# What this host needs: the packages with a newer version than the one
+# installed, the etcd release when it is not the one the collection installs,
+# and the services still running software that an earlier update replaced.
+#
+# Only packages the collection installed are considered. On a pgEdge node that
+# is every pgedge- package but pgedge-release, which install_repos manages; on
+# an HAProxy host it is haproxy; and on any host with pgBackRest it is
+# pgedge-pgbackrest, which is kept apart from the rest because it is updated
+# last and everywhere at once. Nothing else on the host is touched: the rest of
+# the operating system's updates are the operator's business.
+
+- name: Find the packages installed on this host
+  package_facts:
+
+- name: Choose the packages this host takes updates for
+  set_fact:
+    update_software_names: >-
+      {{ ((installed | select('match', '^pgedge-')
+                     | reject('eq', 'pgedge-release') | list
+           if inventory_hostname in groups['pgedge'] else [])
+          + (['haproxy']
+             if inventory_hostname in groups['haproxy'] | default([])
+                and 'haproxy' in installed else [])
+          + (['pgedge-pgbackrest'] if 'pgedge-pgbackrest' in installed else []))
+         | unique | sort }}
+  vars:
+    installed: "{{ ansible_facts.packages.keys() | list }}"
+
+# The index is refreshed so the newest versions are known, which changes
+# nothing installed, so it never reports a change.
+
+- name: Refresh the APT package index
+  apt:
+    update_cache: true
+    lock_timeout: 300
+  changed_when: false
+  become: true
+  when:
+  - ansible_facts['os_family'] == 'Debian'
+  - update_software_names | length > 0
+
+# One line per package with an update, its name and the newest version a
+# repository offers. On RHEL only upgrades are listed, so a package already at
+# or past the newest version a repository offers prints nothing, and is never
+# taken for an update every run. On Debian APT's candidate is never older than
+# the installed version, so it prints the installed one. A package no
+# repository offers any more prints nothing on RHEL and a candidate of
+# "(none)" on Debian, and is left alone either way.
+
+- name: Ask the repositories for each package's newest version
+  shell: |-
+    set -o pipefail
+    {% if ansible_facts['os_family'] == 'Debian' %}
+    apt-cache policy {{ names }} | awk '
+        /^[^ ]/ { pkg = $1; sub(/:$/, "", pkg) }
+        $1 == "Candidate:" && $2 != "(none)" { print pkg, $2 }'
+    {% else %}
+    dnf -q --refresh repoquery --upgrades --latest-limit=1 --qf '%{name} %{evr}\n' {{ names }}
+    {% endif %}
+  args:
+    executable: /bin/bash
+  vars:
+    names: "{{ update_software_names | map('quote') | join(' ') }}"
+  register: update_software_candidates
+  changed_when: false
+  become: true
+  when: update_software_names | length > 0
+
+# package_facts gives a Debian version whole, epoch included, as APT prints
+# it. On RHEL it gives the parts, which are joined as dnf prints them, with
+# the epoch only when it is not zero.
+
+- name: Record the packages with a newer version available
+  set_fact:
+    update_software_pending: >-
+      {%- set pending = [] -%}
+      {%- for name in update_software_names
+            if name in available and available[name] != installed[name] -%}
+      {%-   set _ = pending.append({'name': name,
+                                    'installed': installed[name],
+                                    'available': available[name]}) -%}
+      {%- endfor -%}
+      {{ pending }}
+  vars:
+    available: >-
+      {{ dict(update_software_candidates.stdout_lines | default([])
+              | select | map('split') | list) }}
+    installed: >-
+      {%- set out = {} -%}
+      {%- for name in update_software_names -%}
+      {%-   set p = ansible_facts.packages[name] | last -%}
+      {%-   if ansible_facts['os_family'] == 'Debian' -%}
+      {%-     set _ = out.update({name: p.version}) -%}
+      {%-   else -%}
+      {%-     set _ = out.update({name: ((p.epoch ~ ':') if p.epoch | int else '')
+                                         ~ p.version ~ '-' ~ p.release}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Separate pgBackRest from the packages updated node by node
+  set_fact:
+    update_software_packages: >-
+      {{ update_software_pending | rejectattr('name', 'eq', 'pgedge-pgbackrest')
+         | list }}
+    update_software_backrest: >-
+      {{ update_software_pending | selectattr('name', 'eq', 'pgedge-pgbackrest')
+         | list }}
+
+# etcd comes from the upstream release archive rather than a package, so it
+# has no repository to ask. The binary reports its own release, which is
+# compared with the one the collection installs.
+
+- name: Find the etcd release this node has
+  command:
+    argv:
+    - "{{ etcd_install_dir }}/etcd"
+    - --version
+  register: update_software_etcd
+  changed_when: false
+  failed_when: false
+  when:
+  - inventory_hostname in groups['pgedge']
+  - is_ha_cluster | bool
+  - patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
+
+# A service that should be running and is not is started again too. That is
+# what a run that stopped partway through a node leaves behind, perhaps after
+# its packages were already updated, and a deployment run would start these
+# services anyway.
+
+- name: Find the services that should be running and are not
+  command:
+    argv: "{{ ['systemctl', 'is-active'] + services }}"
+  vars:
+    services: >-
+      {{ (['etcd'] if update_software_etcd.rc | default(1) == 0 else [])
+         + ([patroni_service_name] if inventory_hostname in groups['pgedge']
+                                      and is_ha_cluster | bool else [])
+         + ([pg_service_name] if inventory_hostname in groups['pgedge']
+                                 and not is_ha_cluster | bool else [])
+         + (['haproxy'] if 'haproxy' in update_software_names else []) }}
+  register: update_software_active
+  changed_when: false
+  failed_when: false
+  when: services | length > 0
+
+- name: Record the services that should be running and are not
+  set_fact:
+    update_software_stopped: >-
+      {{ (update_software_active.cmd | default([]))[2:]
+         | zip(update_software_active.stdout_lines | default([]))
+         | rejectattr(1, 'eq', 'active') | map(attribute=0) | list }}
+
+# The extensions waiting for an update on this zone's primary, for the report.
+# A run that stopped after the packages and before the extensions leaves some.
+# A primary whose Postgres is stopped cannot be asked, and the extensions are
+# asked again after the nodes are updated in any case.
+
+- name: Find the extensions waiting for an update
+  include_tasks: extension_versions.yaml
+  when:
+  - inventory_hostname in groups['pgedge']
+  - update_software_stopped | length == 0
+
+# Patroni is Python, so replacing its package leaves no trace on the running
+# process. patronictl reports the version installed on its first line, and the
+# version the member is running on the line it prints for it. It asks this
+# node's own etcd, and waits for it indefinitely, so it is not asked where
+# etcd or Patroni is stopped; such a node is restarted anyway.
+
+- name: Find the Patroni version this node runs and the one installed
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - version
+    - "{{ patroni_scope }}"
+    - "{{ ansible_facts['hostname'] }}"
+  register: update_software_patroni
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: postgres
+  when:
+  - inventory_hostname in groups['pgedge']
+  - is_ha_cluster | bool
+  - update_software_stopped | length == 0
+
+# A process keeps the files it started with even after a package replaces
+# them, and the kernel marks those files deleted in its memory map. A service
+# whose executable or any library under /usr is marked that way still runs the
+# software an update replaced, whether this run updated it or an earlier run
+# stopped before restarting it. Postgres is found through its postmaster.pid,
+# since under Patroni it is not the main process of any systemd unit.
+
+- name: Find the services still running software an update replaced
+  shell: |-
+    stale() {
+        pid=$1
+        [ -n "$pid" ] && [ "$pid" != 0 ] && [ -d "/proc/$pid" ] || return 1
+        case $(readlink "/proc/$pid/exe") in
+            *' (deleted)') return 0 ;;
+        esac
+        grep -qE ' /(usr|lib|lib64)/[^ ]* \(deleted\)$' "/proc/$pid/maps"
+    }
+    for svc in {{ services | map('quote') | join(' ') }}; do
+        stale "$(systemctl show -p MainPID --value "$svc")" && echo "$svc"
+    done
+    {% if inventory_hostname in groups['pgedge'] %}
+    if [ -f {{ pidfile }} ]; then
+        stale "$(head -n 1 {{ pidfile }})" && echo postgres
+    fi
+    {% endif %}
+    true
+  args:
+    executable: /bin/bash
+  vars:
+    pidfile: "{{ (pg_data ~ '/postmaster.pid') | quote }}"
+    services: >-
+      {{ (['etcd'] if update_software_etcd.rc | default(1) == 0 else [])
+         + (['pgbouncer'] if inventory_hostname in groups['pgedge']
+                             and pgbouncer_enabled | bool else [])
+         + (['haproxy'] if 'haproxy' in update_software_names else []) }}
+  register: update_software_stale_services
+  changed_when: false
+  become: true
+
+- name: Record what this host needs
+  set_fact:
+    update_software_etcd_from: "{{ etcd_from }}"
+    update_software_patroni_from: >-
+      {{ patroni_running if patroni_running and patroni_installed
+                            and patroni_running != patroni_installed else '' }}
+    update_software_stale: "{{ update_software_stale_services.stdout_lines }}"
+  vars:
+    etcd_installed: >-
+      {{ update_software_etcd.stdout | default('')
+         | regex_findall('etcd Version: (\S+)') | first | default('') }}
+    etcd_from: >-
+      {{ etcd_installed if etcd_installed and etcd_installed != etcd_version
+         else '' }}
+    patroni_out: "{{ update_software_patroni.stdout | default('') }}"
+    patroni_installed: >-
+      {{ patroni_out | regex_findall('patronictl version (\S+)')
+         | first | default('') }}
+    patroni_running: >-
+      {{ patroni_out
+         | regex_findall(ansible_facts['hostname'] ~ ': Patroni (\S+)')
+         | first | default('') }}
+
+- name: Record whether this host has to be restarted
+  set_fact:
+    update_software_restart: >-
+      {{ update_software_packages | length > 0
+         or update_software_etcd_from | length > 0
+         or update_software_patroni_from | length > 0
+         or update_software_stale | length > 0
+         or update_software_stopped | length > 0 }}

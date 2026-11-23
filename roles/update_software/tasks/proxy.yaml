@@ -1,0 +1,33 @@
+---
+
+# Update one HAProxy host, update_software_host. Included once per host in
+# update_software_proxy_order, on every host, and run only by the host whose
+# turn it is. A zone's proxy is its endpoint, so while it restarts the zone's
+# clients see their connections dropped and are refused for the moment it
+# takes, and one proxy at a time keeps that to one zone.
+
+- when: inventory_hostname == update_software_host
+  block:
+
+  - name: Update HAProxy
+    package:
+      name: "{{ update_software_packages | map(attribute='name') | list }}"
+      state: latest
+      lock_timeout: 300
+    retries: 5
+    delay: 20
+    register: result
+    until: result is success
+    become: true
+    when: update_software_packages | length > 0
+
+  - name: Restart HAProxy
+    service:
+      name: haproxy
+      state: restarted
+    become: true
+
+  - name: Wait for HAProxy to accept connections again
+    wait_for:
+      port: "{{ proxy_port }}"
+      timeout: 60

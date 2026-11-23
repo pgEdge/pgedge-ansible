@@ -7,9 +7,15 @@ operational distributed coordination layer for Patroni.
 ## etcd_version
 
 - Type: String
-- Default: `3.6.5`
-- Description: This parameter specifies the etcd version to install from the
-  pgEdge package repository.
+- Default: `3.6.17`
+- Description: This parameter specifies the etcd release to install. The
+  release archive is downloaded from etcd's GitHub releases.
+
+`install_etcd` installs etcd only on a node that has none, so changing this
+parameter on a deployed cluster changes nothing by itself. A run with
+[`update_software`](../roles/update_software.md) and
+`permit_software_updates` brings every node to the release this parameter
+names, one node at a time.
 
 In the following example, the inventory specifies a custom etcd version:
 

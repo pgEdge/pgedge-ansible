@@ -1,0 +1,32 @@
+---
+
+# Put back what an update changes on purpose and repairs straight away, for
+# the case where a run stopped in between. The rerun then finds nothing left
+# to update on that host, so nothing else on it would repair the change. The
+# role runs this before anything else, so every run, even one with nothing to
+# update, finishes what a cancelled one left. Each task leaves a host that is
+# already right unchanged, so it can also run on its own, from a playbook of
+# its own, through tasks_from: cleanup.
+#
+# The RHEL pgBackRest package gives /var/log/pgbackrest back to its own owner
+# when it is updated, and pgBackRest then cannot write its log as the user
+# that runs it. The directory is set as setup_backrest sets it, and only where
+# setup_backrest does: on a pgEdge node with a backup repository, where
+# pgBackRest runs as postgres, and on a backup server, where it runs as
+# backup_repo_user.
+
+- name: Give pgBackRest's log directory back to the user that runs it
+  file:
+    path: /var/log/pgbackrest
+    state: directory
+    owner: "{{ owner }}"
+    group: "{{ owner }}"
+    mode: "0700"
+  vars:
+    backup_server: "{{ inventory_hostname in groups['backup'] | default([]) }}"
+    owner: "{{ backup_repo_user if backup_server else 'postgres' }}"
+  become: true
+  when: >-
+    backup_server
+    or (inventory_hostname in groups['pgedge']
+        and backup_repo_configured | bool)

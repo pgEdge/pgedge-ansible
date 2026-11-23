@@ -1,0 +1,52 @@
+---
+
+# The Spock and Snowflake extensions whose version in a database differs from
+# the one their package ships, asked on this zone's primary, in
+# update_software_extensions: one {db, ext, installed, available, path} for
+# each. path is false where the package has no update path from the installed
+# version to its own, as when the package was rolled back outside the
+# collection. ALTER EXTENSION ... UPDATE fails there, so such an extension is
+# reported rather than updated.
+
+- name: Find the extensions whose version differs from their package's
+  community.postgresql.postgresql_query:
+    login_port: "{{ pg_port }}"
+    login_db: "{{ item }}"
+    login_unix_socket: /var/run/postgresql
+    query: >-
+      SELECT x.extname, x.extversion AS installed,
+             a.default_version AS available,
+             EXISTS (SELECT 1
+                       FROM pg_extension_update_paths(x.extname) p
+                      WHERE p.source = x.extversion
+                        AND p.target = a.default_version
+                        AND p.path IS NOT NULL) AS path
+        FROM pg_extension x
+        JOIN pg_available_extensions a ON a.name = x.extname
+       WHERE x.extname IN ('spock', 'snowflake')
+         AND a.default_version <> x.extversion
+       ORDER BY x.extname
+  loop: "{{ db_names }}"
+  register: update_software_extension_rows
+  changed_when: false
+  become: true
+  become_user: postgres
+  when: inventory_hostname == zone_primary
+
+# postgresql_query reports no rows as an empty mapping, not an empty list,
+# and a node that is not its zone's primary has skipped results with no rows.
+
+- name: Record the extensions whose version differs from their package's
+  set_fact:
+    update_software_extensions: >-
+      {%- set out = [] -%}
+      {%- for r in update_software_extension_rows.results | default([]) -%}
+      {%-   set rows = r.query_result | default([]) -%}
+      {%-   for row in (rows if rows is not mapping else []) -%}
+      {%-     set _ = out.append({'db': r.item, 'ext': row.extname,
+                                  'installed': row.installed,
+                                  'available': row.available,
+                                  'path': row.path}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
