@@ -78,6 +78,11 @@
            | difference(ansible_play_hosts) }}
     run_once: true
 
+  # Before anything else is looked at, so a run that was cancelled between an
+  # update and its repair is put right even when nothing is left to update.
+
+  - include_tasks: cleanup.yaml
+
   - include_tasks: versions.yaml
 
   # etcd refuses to start on data a later minor release has written, short of
@@ -94,6 +99,27 @@
         etcd_version is {{ etcd_version }}, an earlier minor release that etcd
         cannot be taken back to by replacing its binary. Set etcd_version to
         {{ update_software_etcd_from }} or later.
+    when: update_software_etcd_from | default('') | length > 0
+
+  # Nor may it skip a minor release going forward. etcd supports an upgrade
+  # from one minor release to the next only, and a node whose binary jumps
+  # further may fail to rejoin its zone. A later patch release of the same
+  # minor release, or of the next one, is fine.
+
+  - name: Ensure etcd_version is at most one minor release past what a node runs
+    assert:
+      that:
+      - target[0] == running[0]
+      - target[1] <= running[1] + 1
+      fail_msg: >-
+        {{ inventory_hostname }} runs etcd {{ update_software_etcd_from }}, and
+        etcd_version is {{ etcd_version }}. etcd is upgraded one minor release
+        at a time, so set etcd_version to a release of
+        {{ running[0] }}.{{ running[1] + 1 }} or earlier, run this, and then
+        go on to the next minor release.
+    vars:
+      target: "{{ etcd_version.split('.')[:2] | map('int') | list }}"
+      running: "{{ update_software_etcd_from.split('.')[:2] | map('int') | list }}"
     when: update_software_etcd_from | default('') | length > 0
 
   - include_tasks: order.yaml

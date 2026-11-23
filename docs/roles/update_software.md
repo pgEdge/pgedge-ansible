@@ -93,7 +93,10 @@ in the inventory to the new release, and run with the gate as above. A later
 patch release of the same minor release may also be taken back to an earlier
 one this way. An earlier minor release may not: etcd does not start on data a
 later minor release has written, and the role refuses such an `etcd_version`
-before it changes anything.
+before it changes anything. Nor may `etcd_version` be more than one minor
+release past what a node runs, because etcd is upgraded one minor release at a
+time. To go from 3.4 to 3.6, set `etcd_version` to a 3.5 release, run with the
+gate, then set it to the 3.6 release and run again.
 
 On a simple cluster each zone is a single node, and the zone is unavailable
 while its node restarts. On an Ultra-HA cluster each zone has a primary
@@ -130,6 +133,9 @@ The role first decides what each host needs, without changing anything:
   pgBouncer and HAProxy.
 - A service that should be running and is not, such as one a stopped run
   left down, needs a restart too.
+- On each zone's primary, a Spock or Snowflake extension whose version in a
+  database differs from the one its package ships is listed. A run that
+  stopped after the packages and before the extensions leaves these.
 
 The check for replaced files does not ask which package replaced them. When
 you apply operating system updates yourself, such as a new OpenSSL or glibc,
@@ -186,6 +192,11 @@ every zone updates its own. Replicas take the change by physical
 replication. Most minor releases ship no new extension version, and then
 there is nothing to do.
 
+An extension whose package offers no update path from the installed version,
+as when the package was rolled back to an earlier release outside the
+collection, is left as it is. The report and a warning name it, and the run
+goes on to HAProxy and pgBackRest.
+
 Spock is compatible across minor versions, and with the next major version,
 so zones that briefly run different minor releases keep replicating.
 
@@ -207,7 +218,7 @@ keeps every segment it could not archive and tries again, so nothing is lost.
 On RHEL, the package gives `/var/log/pgbackrest` back to its own owner when
 it is updated. The role then returns the directory to the user that runs
 pgBackRest: `backup_repo_user` on a backup server and `postgres` on a pgEdge
-node.
+node with a backup repository, as `setup_backrest` sets it.
 
 The role refuses to update pgBackRest while a backup is running anywhere in
 the cluster, because the update would make it fail. Everything else is
@@ -222,6 +233,24 @@ can be run again. Every run starts by finding what each host needs, so the
 next run skips what is done. A node whose packages were updated but whose
 services were left stopped or running the old software is restarted, and an
 extension update that never ran runs then.
+
+Some changes an update makes are repaired straight after it, and a run
+cancelled in between would leave them behind with nothing left to update on
+that host. The role puts these right at the start of every run with the gate
+set, before it looks for updates: today, the owner and mode of
+`/var/log/pgbackrest`. A host that is already right is left unchanged. The
+same repairs can run on their own, from a playbook of your own, with
+`tasks_from: cleanup`:
+
+```yaml
+- hosts: pgedge:backup
+  collections:
+    - pgedge.platform
+  tasks:
+    - include_role:
+        name: update_software
+        tasks_from: cleanup
+```
 
 ## Idempotency
 

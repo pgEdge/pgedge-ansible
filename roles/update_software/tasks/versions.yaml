@@ -154,6 +154,17 @@
          | zip(update_software_active.stdout_lines | default([]))
          | rejectattr(1, 'eq', 'active') | map(attribute=0) | list }}
 
+# The extensions waiting for an update on this zone's primary, for the report.
+# A run that stopped after the packages and before the extensions leaves some.
+# A primary whose Postgres is stopped cannot be asked, and the extensions are
+# asked again after the nodes are updated in any case.
+
+- name: Find the extensions waiting for an update
+  include_tasks: extension_versions.yaml
+  when:
+  - inventory_hostname in groups['pgedge']
+  - update_software_stopped | length == 0
+
 # Patroni is Python, so replacing its package leaves no trace on the running
 # process. patronictl reports the version installed on its first line, and the
 # version the member is running on the line it prints for it. It asks this

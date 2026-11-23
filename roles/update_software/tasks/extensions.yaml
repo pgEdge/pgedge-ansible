@@ -10,26 +10,26 @@
 # the session: a zone that received the statement from another would try to
 # apply what it does itself.
 #
-# Most minor releases ship no new SQL, and then there is nothing to do.
+# Most minor releases ship no new SQL, and then there is nothing to do. The
+# versions are asked again here, not taken from the report, because the
+# packages this run installed may ship new ones.
 
-- name: Find the extensions whose installed version is older than their package's
-  community.postgresql.postgresql_query:
-    login_port: "{{ pg_port }}"
-    login_db: "{{ item }}"
-    login_unix_socket: /var/run/postgresql
-    query: >-
-      SELECT x.extname
-        FROM pg_extension x
-        JOIN pg_available_extensions a ON a.name = x.extname
-       WHERE x.extname IN ('spock', 'snowflake')
-         AND a.default_version <> x.extversion
-       ORDER BY x.extname
-  loop: "{{ db_names }}"
-  register: update_software_extensions
-  changed_when: false
-  become: true
-  become_user: postgres
-  when: inventory_hostname == zone_primary
+- include_tasks: extension_versions.yaml
+
+# An extension with no update path to its package's version is left as it is,
+# and the run goes on to HAProxy and pgBackRest. Stopping here would stop every
+# later run in the same place, until someone put the package back.
+
+- name: Warn about extensions their package cannot update
+  debug:
+    msg: >-
+      {{ inventory_hostname }}, database {{ item.db }}: {{ item.ext }} is at
+      {{ item.installed }}, and its package ships {{ item.available }} with no
+      update path from it, so it was left as it is. Was the package rolled
+      back?
+  loop: "{{ update_software_extensions | rejectattr('path') | list }}"
+  loop_control:
+    label: "{{ item.db }}: {{ item.ext }}"
 
 - name: Update the extensions to the version their packages ship
   command:
@@ -47,19 +47,8 @@
     - SET spock.enable_ddl_replication = off
     - -c
     - ALTER EXTENSION {{ item.ext }} UPDATE
-  # postgresql_query reports no rows as an empty mapping, not an empty list.
-  loop: >-
-    {%- set out = [] -%}
-    {%- for r in update_software_extensions.results | default([])
-          if r.query_result | default([]) is sequence
-             and r.query_result | default([]) is not mapping -%}
-    {%-   for row in r.query_result -%}
-    {%-     set _ = out.append({'db': r.item, 'ext': row.extname}) -%}
-    {%-   endfor -%}
-    {%- endfor -%}
-    {{ out }}
+  loop: "{{ update_software_extensions | selectattr('path') | list }}"
   loop_control:
-    label: "{{ item.db }}: {{ item.ext }}"
+    label: "{{ item.db }}: {{ item.ext }} {{ item.installed }} -> {{ item.available }}"
   become: true
   become_user: postgres
-  when: inventory_hostname == zone_primary

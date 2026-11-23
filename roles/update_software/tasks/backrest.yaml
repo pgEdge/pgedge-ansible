@@ -51,21 +51,7 @@
   when: inventory_hostname in update_software_backrest_hosts
 
 # The RHEL package hands its log directory back to its own owner when it is
-# updated. A backup server runs pgBackRest as backup_repo_user, which could then
-# no longer write its log there, until the next deployment run gave the
-# directory back. setup_backrest gives the directory the same owner and mode;
-# on a pgEdge node pgBackRest runs as postgres.
+# updated, which cleanup.yaml repairs. It runs again here, straight after the
+# update, rather than waiting for the next run.
 
-- name: Give pgBackRest's log directory back to the user that runs it
-  file:
-    path: /var/log/pgbackrest
-    state: directory
-    owner: "{{ owner }}"
-    group: "{{ owner }}"
-    mode: "0700"
-  vars:
-    owner: >-
-      {{ backup_repo_user if inventory_hostname in groups['backup'] | default([])
-         else 'postgres' }}
-  become: true
-  when: inventory_hostname in update_software_backrest_hosts
+- include_tasks: cleanup.yaml

@@ -31,15 +31,19 @@ Overview, and creates a fresh copy of this page in the same pull request.
       before its packages change and started afterwards, and the next node
       waits until it streams from its leader again.
     - The Spock and Snowflake extensions are updated on each zone's primary
-      where their packages ship a newer version.
+      where their packages ship a newer version. One whose package has no
+      update path from the installed version is reported and left as it is.
     - The HAProxy hosts follow, one at a time.
     - pgBackRest is updated last, on every pgEdge node and backup server at
       once, because a client and repository host on different versions
       refuse each other. A running backup stops it.
 
   The run reports what it will update, and in what order, before it stops
-  anything. It refuses to start when `pg_allow_restart` is `false`, and a run
-  that stops partway resumes where it stopped. A run with nothing to update
+  anything. It refuses to start when `pg_allow_restart` is `false`, or when
+  `etcd_version` is an earlier minor release than a node runs or more than
+  one minor release past it. A run that stops partway resumes where it
+  stopped, and every run first repairs what a cancelled one may have left,
+  such as the owner of `/var/log/pgbackrest`. A run with nothing to update
   changes nothing. A service still running libraries that an operating system
   update replaced is restarted too, in the same order, even when no package
   the collection installed changed. (#76)

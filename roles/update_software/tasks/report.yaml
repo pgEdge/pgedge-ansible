@@ -1,6 +1,9 @@
 ---
 
-# What the update would change, host by host, and the order it goes in.
+# What the update would change, host by host, and the order it goes in. The
+# extensions listed are the ones waiting before this run changes a package;
+# the packages it installs may ship new versions, which are found and applied
+# after every node is updated.
 
 - name: Report what the update changes
   debug:
@@ -28,6 +31,13 @@
       {%-     set _ = out.append(h ~ ': stopped, and started again: '
                                  ~ v.update_software_stopped | join(', ')) -%}
       {%-   endif -%}
+      {%-   for e in v.update_software_extensions | default([]) -%}
+      {%-     set _ = out.append(h ~ ', database ' ~ e.db ~ ': ' ~ e.ext ~ ' '
+                                 ~ e.installed ~ ' -> ' ~ e.available
+                                 ~ ('' if e.path else ', which its package'
+                                    ~ ' has no update path to; left as it is'))
+                                 -%}
+      {%-   endfor -%}
       {%-   if v.update_software_stale -%}
       {%-     set _ = out.append(h ~ ': still running replaced software: '
                                  ~ v.update_software_stale | join(', ')) -%}

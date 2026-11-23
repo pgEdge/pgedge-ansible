@@ -13,8 +13,9 @@
 #     repositories then offer what the host already has as an update, and
 #     installing it is a real package update. On RHEL the packages are
 #     downgraded instead, as RPM keeps no version that could be edited.
-#   - Every etcd binary is replaced with a script that reports an older release,
-#     which update_software replaces with the release the collection installs.
+#   - Every etcd binary is replaced with a script that reports the minor
+#     release before etcd_version, the furthest back update_software accepts,
+#     and it replaces that with the release the collection installs.
 #   - Every HAProxy binary is replaced with a copy of itself, which leaves the
 #     running proxy on a file marked deleted, as a package update would.
 #
@@ -107,8 +108,11 @@
       dest: "{{ etcd_install_dir }}/etcd"
       content: |
         #!/bin/sh
-        echo "etcd Version: 3.0.0"
+        echo "etcd Version: {{ previous_minor }}"
       mode: "0755"
+    vars:
+      previous_minor: >-
+        {{ etcd_version.split('.')[0] }}.{{ etcd_version.split('.')[1] | int - 1 }}.0
     when:
     - inventory_hostname in groups['pgedge']
     - is_ha_cluster | bool
@@ -185,7 +189,9 @@
       readlink /proc/$(systemctl show -p MainPID --value haproxy)/exe
     register: update_test_haproxy
     changed_when: false
-    failed_when: "'(deleted)' in update_test_haproxy.stdout"
+    failed_when: >-
+      update_test_haproxy.rc != 0
+      or '(deleted)' in update_test_haproxy.stdout
     when: inventory_hostname in groups['haproxy'] | default([])
 
   # Every leader had a package to update, so it was switched over first.
