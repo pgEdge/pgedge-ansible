@@ -32,7 +32,7 @@ does nothing.
 The role leaves the following alone:
 
 - Packages the collection did not install. Operating system updates are
-  yours to apply.
+  yours to apply, but see the note below on what applying them leads to.
 - Major versions. The repositories decide what the newest version of a
   package is, and pgEdge's repositories publish a major release of Postgres
   under new package names.
@@ -131,6 +131,14 @@ The role first decides what each host needs, without changing anything:
 - A service that should be running and is not, such as one a stopped run
   left down, needs a restart too.
 
+The check for replaced files does not ask which package replaced them. When
+you apply operating system updates yourself, such as a new OpenSSL or glibc,
+every service still running the old libraries counts as needing a restart.
+The next run with `permit_software_updates` then restarts those nodes and
+proxies in the same order as a package update, even when no package the
+collection installed has changed. The report lists them as still running
+replaced software.
+
 The role then reports every update it found and the order the hosts will go
 in. A run with nothing to update reports `Nothing to update.` and changes
 nothing.
@@ -143,18 +151,20 @@ goes last, so an updated replica is ready to take over when its turn comes.
 
 For each node, the role:
 
-1. Makes sure every other member of the zone is running or streaming. A run
+1. Downloads `etcd_version` when the node has another release, while the
+   node still serves its zone, so the download is never part of the outage.
+2. Makes sure every other member of the zone is running or streaming. A run
    that finds a member down stops, rather than take a second member out.
-2. Switches the zone's leader over, when the node leads its zone. Patroni
+3. Switches the zone's leader over, when the node leads its zone. Patroni
    chooses the new leader among the replicas, which are all updated by then.
-3. Stops Patroni, which stops Postgres. On a simple cluster, stops Postgres.
-4. Makes sure every member of the zone's etcd is healthy, stops etcd, installs
-   `etcd_version` when the node has another release, starts etcd, and waits
-   until every member is healthy again.
-5. Updates the node's packages.
-6. Starts Patroni or Postgres, and restarts pgBouncer where the cluster pools
+4. Stops Patroni, which stops Postgres. On a simple cluster, stops Postgres.
+5. Makes sure every member of the zone's etcd is healthy, stops etcd, installs
+   the release downloaded in the first step, starts etcd, and waits until
+   every member is healthy again.
+6. Updates the node's packages.
+7. Starts Patroni or Postgres, and restarts pgBouncer where the cluster pools
    connections.
-7. Waits until the node streams from its zone's leader again, or on a simple
+8. Waits until the node streams from its zone's leader again, or on a simple
    cluster until Postgres accepts connections.
 
 Services are stopped before any package replaces their files. No package

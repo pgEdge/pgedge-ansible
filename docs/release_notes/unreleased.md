@@ -40,7 +40,9 @@ Overview, and creates a fresh copy of this page in the same pull request.
   The run reports what it will update, and in what order, before it stops
   anything. It refuses to start when `pg_allow_restart` is `false`, and a run
   that stops partway resumes where it stopped. A run with nothing to update
-  changes nothing. (#76)
+  changes nothing. A service still running libraries that an operating system
+  update replaced is restarted too, in the same order, even when no package
+  the collection installed changed. (#76)
 
 ### Changed
 

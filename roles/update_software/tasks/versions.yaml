@@ -41,9 +41,13 @@
   - ansible_facts['os_family'] == 'Debian'
   - update_software_names | length > 0
 
-# One line per package, its name and the newest version a repository offers.
-# A package no repository offers any more prints nothing on RHEL and a
-# candidate of "(none)" on Debian, and is left alone either way.
+# One line per package with an update, its name and the newest version a
+# repository offers. On RHEL only upgrades are listed, so a package already at
+# or past the newest version a repository offers prints nothing, and is never
+# taken for an update every run. On Debian APT's candidate is never older than
+# the installed version, so it prints the installed one. A package no
+# repository offers any more prints nothing on RHEL and a candidate of
+# "(none)" on Debian, and is left alone either way.
 
 - name: Ask the repositories for each package's newest version
   shell: |-
@@ -53,7 +57,7 @@
         /^[^ ]/ { pkg = $1; sub(/:$/, "", pkg) }
         $1 == "Candidate:" && $2 != "(none)" { print pkg, $2 }'
     {% else %}
-    dnf -q --refresh repoquery --latest-limit=1 --qf '%{name} %{evr}\n' {{ names }}
+    dnf -q --refresh repoquery --upgrades --latest-limit=1 --qf '%{name} %{evr}\n' {{ names }}
     {% endif %}
   args:
     executable: /bin/bash

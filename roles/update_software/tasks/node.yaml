@@ -27,6 +27,18 @@
     become: true
     when: "'etcd' in update_software_stopped"
 
+  # The new etcd release comes from GitHub, which can be slow or fail. It is
+  # fetched while the node still serves its zone, so the outage below starts
+  # only once the archive is ready and installing it needs no network.
+
+  - name: Download etcd {{ etcd_version }} before anything is stopped
+    include_role:
+      name: install_etcd
+      tasks_from: download.yaml
+    when:
+    - update_software_etcd.rc | default(1) == 0
+    - update_software_etcd_from | length > 0
+
   - name: Find the members of this zone
     include_tasks: members.yaml
     when: is_ha_cluster | bool
@@ -82,7 +94,8 @@
 
   # The same checks setup_etcd makes when it restarts a member, through this
   # member's own server certificate, which etcd also accepts as a client one.
-  # etcd is down only for as long as installing its binaries takes.
+  # etcd is down only for as long as installing its binaries takes, since the
+  # release was downloaded before the node was taken down.
 
   - name: Update and restart etcd
     when: update_software_etcd.rc | default(1) == 0
@@ -106,12 +119,12 @@
         state: stopped
       become: true
 
-    # Not as root: install_etcd unpacks the release in the login user's home.
+    # From the archive downloaded above, in the login user's home.
 
     - name: Install etcd {{ etcd_version }}
       include_role:
         name: install_etcd
-        tasks_from: install.yaml
+        tasks_from: binaries.yaml
       when: update_software_etcd_from | length > 0
 
     - name: Start etcd
@@ -155,8 +168,10 @@
     become: true
     when: not is_ha_cluster | bool
 
-  # pgBouncer is socket-activated, so its listening socket stays open across
-  # the restart and new connections wait for it rather than being refused.
+  # A restart, not a reload, so pgBouncer runs its new binary. Its clients'
+  # connections are dropped, and new ones are refused until it is back: the
+  # packaged socket unit that could hold the listener open is masked by
+  # setup_pgbouncer. Postgres has just restarted under it anyway.
 
   - name: Restart pgBouncer
     service:
