@@ -1,0 +1,39 @@
+---
+
+# The members of this node's zone as Patroni lists them, in
+# update_software_members. With update_software_wait, the list is asked for
+# again until this node is a replica streaming from a running leader, which
+# is how a node rejoins its zone after a restart or a switchover.
+
+- name: List this zone's members
+  command:
+    argv:
+    - patronictl
+    - -c
+    - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+    - list
+    - -f
+    - json
+    - "{{ patroni_scope }}"
+  register: update_software_list
+  changed_when: false
+  retries: "{{ 60 if update_software_wait | default(false) else 0 }}"
+  delay: 5
+  until: >-
+    not update_software_wait | default(false)
+    or (update_software_list.rc == 0
+        and (update_software_list.stdout | from_json
+             | selectattr('Role', 'eq', 'Leader')
+             | selectattr('State', 'eq', 'running')
+             | rejectattr('Member', 'eq', ansible_facts['hostname'])
+             | list | length == 1)
+        and (update_software_list.stdout | from_json
+             | selectattr('Member', 'eq', ansible_facts['hostname'])
+             | selectattr('State', 'eq', 'streaming')
+             | list | length == 1))
+  become: true
+  become_user: postgres
+
+- name: Record this zone's members
+  set_fact:
+    update_software_members: "{{ update_software_list.stdout | from_json }}"

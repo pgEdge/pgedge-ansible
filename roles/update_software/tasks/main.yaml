@@ -1,0 +1,140 @@
+---
+
+# Apply minor updates to the cluster's software: the packages the collection
+# installed, to what the repositories now offer, and etcd, to the release the
+# collection now installs. This is not what pgEdge calls a rolling upgrade,
+# which replaces nodes with new ones running a later major release; nothing
+# here changes a major version or replaces a node.
+#
+# The role runs once for every host in the pgedge, haproxy and backup groups,
+# in a single play, because the order spans all three:
+#
+# 1. The pgEdge nodes, one at a time and zone by zone. In each zone the
+#    replicas go first. Then the leader is switched over to an updated replica
+#    and updated as a replica itself, so a zone's primary is never restarted
+#    in place and no node's etcd or Patroni restarts while it leads its zone.
+# 2. The Spock and Snowflake extensions, on every zone's primary, where their
+#    updated packages ship a newer version.
+# 3. The HAProxy hosts, one at a time.
+# 4. pgBackRest, on every pgEdge node and backup host at once. A pgBackRest
+#    client refuses a repository host whose version differs from its own in
+#    any way, so WAL archiving fails from the moment the two differ, and the
+#    update keeps that window as short as it can be.
+#
+# A host needs updating while a package has a newer version than the one
+# installed, its etcd is not the release the collection installs, one of its
+# services still runs files that an earlier update replaced, or one that
+# should be running is stopped. The last two make a run that stopped partway
+# resumable: the next run restarts what was left running the old software, or
+# not running at all, whether or not a package changed in it. A run with
+# nothing to update changes nothing.
+
+- name: Update the cluster's software
+  when: permit_software_updates | bool
+  block:
+
+  # An update restarts Postgres on every pgEdge node. An operator who has
+  # turned restarts off has not agreed to that, and a run that silently
+  # skipped the update would leave them believing it was done.
+
+  - name: Ensure Postgres may be restarted
+    assert:
+      that:
+      - pg_allow_restart | bool
+      fail_msg: >-
+        permit_software_updates asks for the cluster's software to be updated,
+        which restarts Postgres on every pgEdge node, but pg_allow_restart is
+        off on {{ inventory_hostname }}. Allow restarts, or run without
+        permit_software_updates.
+    when: inventory_hostname in groups['pgedge']
+
+  # Asked before anything else, because it may start Patroni. A zone whose
+  # Patroni is stopped on every node has its members elect a leader first, and
+  # Patroni's own version can only be compared once it runs.
+
+  - name: Find each zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+    when: inventory_hostname in groups['pgedge']
+
+  # The order spans every host, and pgBackRest has to change on all of them
+  # together, so a host that dropped out of the play, unreachable or failed
+  # earlier in the playbook, would be skipped where it cannot be: a backup
+  # server left on the old pgBackRest refuses every node that took the new one.
+
+  - name: Ensure every host of the cluster is still in the play
+    assert:
+      that:
+      - missing | length == 0
+      fail_msg: >-
+        {{ missing | join(', ') }} dropped out of the play before the update,
+        and the cluster's software is updated on every host or none. Bring
+        them back and run this again.
+    vars:
+      missing: >-
+        {{ (groups['pgedge'] + groups['haproxy'] | default([])
+            + groups['backup'] | default([]))
+           | difference(ansible_play_hosts) }}
+    run_once: true
+
+  - include_tasks: versions.yaml
+
+  # etcd refuses to start on data a later minor release has written, short of
+  # its own downgrade procedure, so etcd_version may go back a patch release
+  # but never a minor one.
+
+  - name: Ensure etcd_version is not an earlier minor release than a node runs
+    assert:
+      that:
+      - (etcd_version.split('.')[:2] | join('.'))
+        is version(update_software_etcd_from.split('.')[:2] | join('.'), '>=')
+      fail_msg: >-
+        {{ inventory_hostname }} runs etcd {{ update_software_etcd_from }}, and
+        etcd_version is {{ etcd_version }}, an earlier minor release that etcd
+        cannot be taken back to by replacing its binary. Set etcd_version to
+        {{ update_software_etcd_from }} or later.
+    when: update_software_etcd_from | default('') | length > 0
+
+  - include_tasks: order.yaml
+
+  - include_tasks: report.yaml
+
+  # Every host includes the file once for each host in the order, and only the
+  # host whose turn it is runs it, so the loop moves on only when that host is
+  # done and the hosts go one at a time without serial, which the collection
+  # does not support. Including the file only on the host whose turn it is
+  # would not do: Ansible then runs the includes in the order of the play's
+  # hosts, not the loop's.
+
+  - name: Update the pgEdge nodes one at a time
+    include_tasks: node.yaml
+    loop: "{{ update_software_order }}"
+    loop_control:
+      loop_var: update_software_host
+
+  # The switchovers moved every updated zone's leader, and the extensions are
+  # updated on the new one.
+
+  - name: Find each zone's primary after the switchovers
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+    when:
+    - inventory_hostname in groups['pgedge']
+    - update_software_order | length > 0
+
+  # Asked on every run, not only one that updated a node, so a run that
+  # stopped after the packages and before this still finishes the job.
+
+  - include_tasks: extensions.yaml
+    when: inventory_hostname in groups['pgedge']
+
+  - name: Update the HAProxy hosts one at a time
+    include_tasks: proxy.yaml
+    loop: "{{ update_software_proxy_order }}"
+    loop_control:
+      loop_var: update_software_host
+
+  - include_tasks: backrest.yaml
+    when: update_software_backrest_hosts | length > 0

@@ -393,6 +393,29 @@ if [ "$COLDFRONT" = true ]; then
     -v
 fi
 
+# Step 8a2: Minor software updates reach a running cluster. The test makes up
+# an update for every host, applies it, and on Ultra-HA moves each zone's leader
+# back to its first node; a deployment run with the gate still set must then
+# find nothing left to update. Before the steps that run tests/playbooks, which
+# stage their certificates beside themselves rather than beside the sample
+# playbook, so the deployment run this checks with would replace them.
+if [ "$SCENARIO" = "simple-cluster" ] || [ "$SCENARIO" = "ultra-ha" ]; then
+  echo "==> Step 8a2: Checking minor software updates are applied..."
+  ANSIBLE_CONFIG="$SCRIPT_DIR/ansible.cfg" ansible-playbook \
+    "$SCRIPT_DIR/playbooks/update-software.yml" \
+    "${INVENTORY_ARGS[@]}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -v
+  "$SCRIPT_DIR/check-idempotence.sh" \
+    "$INVENTORY" \
+    "$PLAYBOOK" \
+    "${INVENTORY_ARGS[@]:2}" \
+    --private-key "$SCRIPT_DIR/.ssh/id_ed25519" \
+    "${EXTRA_VARS[@]}" \
+    -e permit_software_updates=true
+fi
+
 # Step 8b: Changed Postgres parameters reach a running cluster, through
 # postgresql.conf on a simple cluster and Patroni's store on an HA one,
 # restarting only the nodes that need it.

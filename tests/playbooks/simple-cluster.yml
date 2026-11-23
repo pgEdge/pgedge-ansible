@@ -109,3 +109,17 @@
   - include_role:
       name: setup_coldfront
     when: coldfront_enabled | default(false) | bool
+
+# Inert unless a run sets permit_software_updates, as in the sample playbook.
+# tests/playbooks/update-software.yml exercises it, and the idempotence check
+# after it runs this playbook with the gate set.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - include_role:
+      name: update_software

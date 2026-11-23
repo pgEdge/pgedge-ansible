@@ -1,0 +1,8 @@
+---
+
+# The gate. The role sits in the deployment playbooks and does nothing until a
+# run passes -e permit_software_updates=true, because an update restarts every
+# service it touches, and a run against a deployed cluster must otherwise
+# change nothing.
+
+permit_software_updates: false

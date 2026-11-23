@@ -1,0 +1,269 @@
+---
+# Update a running cluster's software with update_software, then move each
+# zone's leader back to its first node, so the steps after this see the cluster
+# as deployed. The caller then runs tests/check-idempotence.sh with
+# -e permit_software_updates=true, which proves that a run with nothing left to
+# update changes nothing.
+#
+# A freshly deployed cluster already has the newest packages, so the updates
+# are made up:
+#
+#   - Every pgEdge node's Snowflake package, and pgBackRest wherever it is
+#     installed, are recorded as an older version than the one installed. The
+#     repositories then offer what the host already has as an update, and
+#     installing it is a real package update. On RHEL the packages are
+#     downgraded instead, as RPM keeps no version that could be edited.
+#   - Every etcd binary is replaced with a script that reports an older release,
+#     which update_software replaces with the release the collection installs.
+#   - Every HAProxy binary is replaced with a copy of itself, which leaves the
+#     running proxy on a file marked deleted, as a package update would.
+#
+# Every zone's leader has a package to update, so every zone switches over.
+#
+# Before any of that, an update with pg_allow_restart off must be refused on
+# every pgEdge node, and change nothing.
+
+- hosts: pgedge
+  any_errors_fatal: false
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - name: Ask for an update with restarts turned off
+    block:
+    - include_role:
+        name: update_software
+      vars:
+        permit_software_updates: true
+        pg_allow_restart: false
+    rescue:
+    - name: Record the refusal
+      set_fact:
+        update_test_refusal: "{{ ansible_failed_result.msg | default('') }}"
+
+  - name: Ensure the update was refused because restarts are off
+    assert:
+      that:
+      - "'pg_allow_restart is off' in update_test_refusal | default('')"
+      fail_msg: >-
+        An update with pg_allow_restart off was not refused:
+        {{ update_test_refusal | default('it ran') }}
+
+- hosts: pgedge:haproxy:backup
+  any_errors_fatal: true
+  become: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    # Snowflake's package is named differently on each platform.
+    fake_packages: >-
+      {{ (ansible_facts.packages.keys() | select('match', '^pgedge-.*snowflake')
+          | sort | list)[:1]
+         + (['pgedge-pgbackrest']
+            if 'pgedge-pgbackrest' in ansible_facts.packages else []) }}
+
+  tasks:
+  - name: Find each zone's primary
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+    when: inventory_hostname in groups['pgedge']
+
+  - name: Record each zone's leader before the update
+    set_fact:
+      update_test_leader: "{{ zone_primary }}"
+    when: inventory_hostname in groups['pgedge']
+
+  - name: Find the packages installed on this host
+    package_facts:
+
+  - name: Record the packages as an older version than the one installed
+    shell: |-
+      set -e
+      for pkg in {{ fake_packages | map('quote') | join(' ') }}; do
+          awk -v pkg="$pkg" '
+              /^Package: / { mine = ($2 == pkg) }
+              mine && /^Version: / { $0 = "Version: 0.0-0" }
+              { print }' /var/lib/dpkg/status > /var/lib/dpkg/status.new
+          mv /var/lib/dpkg/status.new /var/lib/dpkg/status
+      done
+    when:
+    - ansible_facts['os_family'] == 'Debian'
+    - fake_packages | length > 0
+
+  - name: Downgrade the packages to an older version
+    command:
+      argv: "{{ ['dnf', '-y', 'downgrade'] + fake_packages }}"
+    when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - fake_packages | length > 0
+
+  - name: Replace etcd with a script that reports an older release
+    copy:
+      dest: "{{ etcd_install_dir }}/etcd"
+      content: |
+        #!/bin/sh
+        echo "etcd Version: 3.0.0"
+      mode: "0755"
+    when:
+    - inventory_hostname in groups['pgedge']
+    - is_ha_cluster | bool
+    - patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
+
+  - name: Replace HAProxy with a copy of itself
+    shell: |-
+      set -e
+      bin=$(command -v haproxy)
+      cp -p "$bin" "$bin.new"
+      mv "$bin.new" "$bin"
+    when: inventory_hostname in groups['haproxy'] | default([])
+
+- hosts: pgedge:haproxy:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  vars:
+    permit_software_updates: true
+
+  roles:
+  - update_software
+
+- hosts: pgedge:haproxy:backup
+  any_errors_fatal: true
+  become: true
+
+  collections:
+  - pgedge.platform
+
+  tasks:
+  - name: Find each zone's primary after the update
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+    when: inventory_hostname in groups['pgedge']
+
+  - name: Find the packages installed on this host
+    package_facts:
+
+  - name: Ensure no package is left at the made-up version
+    assert:
+      that:
+      - stuck | length == 0
+      fail_msg: "Still at the made-up version: {{ stuck | join(', ') }}"
+    vars:
+      stuck: >-
+        {{ ansible_facts.packages | dict2items
+           | selectattr('value.0.version', 'eq', '0.0-0')
+           | map(attribute='key') | list }}
+    when: ansible_facts['os_family'] == 'Debian'
+
+  - name: Read the etcd release
+    command: "{{ etcd_install_dir }}/etcd --version"
+    register: update_test_etcd
+    changed_when: false
+    when:
+    - inventory_hostname in groups['pgedge']
+    - is_ha_cluster | bool
+    - patroni_dcs.type | default('etcd3') in ('etcd', 'etcd3')
+
+  - name: Ensure etcd is the release the collection installs
+    assert:
+      that:
+      - "('etcd Version: ' ~ etcd_version) in update_test_etcd.stdout"
+      fail_msg: "{{ update_test_etcd.stdout }}"
+    when: update_test_etcd is not skipped
+
+  - name: Ensure HAProxy runs the binary on disk
+    shell: |-
+      readlink /proc/$(systemctl show -p MainPID --value haproxy)/exe
+    register: update_test_haproxy
+    changed_when: false
+    failed_when: "'(deleted)' in update_test_haproxy.stdout"
+    when: inventory_hostname in groups['haproxy'] | default([])
+
+  # Every leader had a package to update, so it was switched over first.
+
+  - name: Ensure each zone's leader was switched over
+    assert:
+      that:
+      - zone_primary != update_test_leader
+      fail_msg: >-
+        Zone {{ zone }} is still led by {{ zone_primary }}, which had a package
+        to update.
+    when:
+    - inventory_hostname in groups['pgedge']
+    - is_ha_cluster | bool
+
+  # Patroni names its members by host name, and the inventory by address.
+
+  - name: Move each zone's leader back to its first node
+    command:
+      argv:
+      - patronictl
+      - -c
+      - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+      - switchover
+      - --leader
+      - "{{ hostvars[zone_primary].ansible_facts['hostname'] }}"
+      - --candidate
+      - "{{ hostvars[first_node_in_zone].ansible_facts['hostname'] }}"
+      - --force
+      - "{{ patroni_scope }}"
+    become_user: postgres
+    when:
+    - inventory_hostname in groups['pgedge']
+    - is_ha_cluster | bool
+    - inventory_hostname == first_node_in_zone
+    - zone_primary != first_node_in_zone
+
+  # The old leader rejoins as a replica after the switchover returns, and the
+  # steps after this expect every member back.
+
+  - name: Wait for every member of each zone to run again
+    command:
+      argv:
+      - patronictl
+      - -c
+      - "{{ patroni_config_dir }}/{{ patroni_config_file }}"
+      - list
+      - -f
+      - json
+      - "{{ patroni_scope }}"
+    register: update_test_members
+    changed_when: false
+    become_user: postgres
+    retries: 60
+    delay: 5
+    until: >-
+      update_test_members.rc == 0
+      and (update_test_members.stdout | from_json
+           | rejectattr('State', 'in', ['running', 'streaming']) | list
+           | length == 0)
+      and (update_test_members.stdout | from_json | length
+           == nodes_in_zone | length)
+    when:
+    - inventory_hostname in groups['pgedge']
+    - is_ha_cluster | bool
+
+  - name: Find each zone's primary after moving the leaders back
+    include_role:
+      name: role_config
+      tasks_from: zone_primary
+      public: true
+    when: inventory_hostname in groups['pgedge']
+
+  - name: Ensure each zone's first node leads it again
+    assert:
+      that:
+      - zone_primary == first_node_in_zone
+      fail_msg: Zone {{ zone }} is led by {{ zone_primary }}.
+    when:
+    - inventory_hostname in groups['pgedge']
+    - is_ha_cluster | bool

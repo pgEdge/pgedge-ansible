@@ -44,3 +44,19 @@
   - role: setup_pgbouncer
     when: pgbouncer_enabled | bool
   - setup_pgedge
+
+# Apply minor updates to the cluster's software. This does nothing unless the
+# run asks for it with -e permit_software_updates=true, so it can stay here
+# while the cluster is deployed and changed as usual. When asked, it updates
+# the packages installed above and restarts each node's Postgres, one node at
+# a time. It refuses to run when pg_allow_restart is off. A simple cluster has
+# one node per zone, so each zone is unavailable while its node restarts.
+
+- hosts: pgedge
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - update_software

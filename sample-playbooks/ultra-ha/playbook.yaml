@@ -121,3 +121,23 @@
 
   roles:
   - finalize_backrest
+
+# Apply minor updates to the cluster's software. This does nothing unless the
+# run asks for it with -e permit_software_updates=true, so it can stay here
+# while the cluster is deployed and changed as usual. When asked, it updates
+# the packages installed above, and etcd, one node at a time: each zone's
+# replicas first, then its leader after a switchover. HAProxy follows, and
+# pgBackRest goes last, everywhere at once. It refuses to run when
+# pg_allow_restart is off, because every pgEdge node's Postgres restarts.
+#
+# It comes after every other play so that it updates a cluster the rest of the
+# playbook has already brought to the state the inventory describes.
+
+- hosts: pgedge:haproxy:backup
+  any_errors_fatal: true
+
+  collections:
+  - pgedge.platform
+
+  roles:
+  - update_software

@@ -86,7 +86,8 @@ access:
 | pgedge_password | secret | Password for pgedge_user. |
 | custom_hba_rules | [] | List of additional pg_hba.conf rules to append to the default rule set. Each rule is a dictionary with contype, users, databases, method, and source fields. |
 | pg_parameters | {} | Postgres configuration parameters, by name, applied over the collection's defaults. `shared_preload_libraries` is merged with the collection's libraries. Parameters the collection controls are rejected. See [pg_parameters](configuration/postgres.md#pg_parameters). |
-| pg_allow_restart | true | Restart Postgres to apply parameters that need a restart. When `false`, pending restarts are reported and left for the operator. |
+| pg_allow_restart | true | Restart Postgres to apply parameters that need a restart. When `false`, pending restarts are reported and left for the operator, and `update_software` refuses to run. |
+| permit_software_updates | false | Apply minor updates to the cluster's software with [`update_software`](roles/update_software.md), which restarts every node that has an update. Pass it with `-e` for the run that updates; don't set it in an inventory. |
 
 ## High Availability Parameters
 
@@ -279,7 +280,7 @@ values are sufficient for most deployments.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| etcd_version | 3.6.5 | etcd version to install. |
+| etcd_version | 3.6.5 | etcd release to install. `update_software` brings every node to it. |
 | etcd_user | etcd | System user that runs the etcd service. |
 | etcd_group | etcd | System group for the etcd service. |
 | etcd_install_dir | /usr/local/etcd | Directory where etcd binaries are installed. |

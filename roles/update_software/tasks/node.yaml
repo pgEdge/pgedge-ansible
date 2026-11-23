@@ -1,0 +1,187 @@
+---
+
+# Update one pgEdge node, update_software_host. Included once per node in
+# update_software_order, on every host, and run only by the node whose turn it
+# is, so the nodes go one at a time and each is back in its zone before the
+# next one goes down.
+#
+# Every node needing an update gets the same treatment, whichever of its
+# software changed: it is switched over if it leads its zone, Patroni (and
+# Postgres with it) and etcd are stopped, etcd and the packages are updated,
+# and everything is started again. One sequence for every node is simpler to
+# follow than one that varies with the package, and a restart a package did not
+# strictly need costs a replica a few seconds. Stopping the services before
+# replacing their files also means no package script restarts one behind the
+# run's back, and etcd's binary is never replaced while it runs.
+
+- when: inventory_hostname == update_software_host
+  block:
+
+  # Patroni asks this node's own etcd, so a node that an earlier run left with
+  # etcd stopped has it started before anything asks Patroni about the zone.
+
+  - name: Start etcd if an earlier run left it stopped
+    service:
+      name: etcd
+      state: started
+    become: true
+    when: "'etcd' in update_software_stopped"
+
+  - name: Find the members of this zone
+    include_tasks: members.yaml
+    when: is_ha_cluster | bool
+
+  # Taking a member down while another is already out can cost a zone its
+  # quorum or its last healthy replica, so the rest of the zone must be whole
+  # first. This node itself may be down already, left that way by a run that
+  # stopped partway through it.
+
+  - name: Ensure every other member of this zone is running before going on
+    assert:
+      that:
+      - others | rejectattr('State', 'in', ['running', 'streaming'])
+        | list | length == 0
+      fail_msg: >-
+        Not every member of zone {{ zone }} is running:
+        {{ others | map(attribute='Member')
+           | zip(others | map(attribute='State'))
+           | map('join', ' ') | join(', ') }}.
+        {{ inventory_hostname }} is not taken down while another member is
+        out. Bring the zone back to health and run this again; the update
+        resumes where it stopped.
+    vars:
+      others: >-
+        {{ update_software_members
+           | rejectattr('Member', 'eq', ansible_facts['hostname']) | list }}
+    when: is_ha_cluster | bool
+
+  - name: Switch this zone's leader over to an updated replica
+    include_tasks: switchover.yaml
+    when:
+    - is_ha_cluster | bool
+    - update_software_members
+      | selectattr('Member', 'eq', ansible_facts['hostname'])
+      | selectattr('Role', 'eq', 'Leader') | list | length > 0
+
+  # Stopping Patroni stops the Postgres it runs. By now this node is a
+  # replica, and its zone carries on without it.
+
+  - name: Stop Patroni, and Postgres with it
+    service:
+      name: "{{ patroni_service_name }}"
+      state: stopped
+    become: true
+    when: is_ha_cluster | bool
+
+  - name: Stop Postgres
+    service:
+      name: "{{ pg_service_name }}"
+      state: stopped
+    become: true
+    when: not is_ha_cluster | bool
+
+  # The same checks setup_etcd makes when it restarts a member, through this
+  # member's own server certificate, which etcd also accepts as a client one.
+  # etcd is down only for as long as installing its binaries takes.
+
+  - name: Update and restart etcd
+    when: update_software_etcd.rc | default(1) == 0
+    vars:
+      etcd_health_command: >-
+        {{ etcd_install_dir }}/etcdctl
+        --endpoints=https://127.0.0.1:2379
+        --cacert={{ etcd_tls_dir }}/ca.crt
+        --cert={{ etcd_tls_dir }}/server.crt
+        --key={{ etcd_tls_dir }}/server.key
+        endpoint health --cluster
+    block:
+    - name: Ensure every etcd member in the zone is healthy before stopping one
+      command: "{{ etcd_health_command }}"
+      changed_when: false
+      become: true
+
+    - name: Stop etcd
+      service:
+        name: etcd
+        state: stopped
+      become: true
+
+    # Not as root: install_etcd unpacks the release in the login user's home.
+
+    - name: Install etcd {{ etcd_version }}
+      include_role:
+        name: install_etcd
+        tasks_from: install.yaml
+      when: update_software_etcd_from | length > 0
+
+    - name: Start etcd
+      service:
+        name: etcd
+        state: started
+      become: true
+
+    - name: Wait for every etcd member in the zone to be healthy again
+      command: "{{ etcd_health_command }}"
+      register: update_software_etcd_health
+      changed_when: false
+      become: true
+      retries: 30
+      delay: 2
+      until: update_software_etcd_health.rc == 0
+
+  - name: Update this node's packages
+    package:
+      name: "{{ update_software_packages | map(attribute='name') | list }}"
+      state: latest
+      lock_timeout: 300
+    retries: 5
+    delay: 20
+    register: result
+    until: result is success
+    become: true
+    when: update_software_packages | length > 0
+
+  - name: Start Patroni, and Postgres with it
+    service:
+      name: "{{ patroni_service_name }}"
+      state: started
+    become: true
+    when: is_ha_cluster | bool
+
+  - name: Start Postgres
+    service:
+      name: "{{ pg_service_name }}"
+      state: started
+    become: true
+    when: not is_ha_cluster | bool
+
+  # pgBouncer is socket-activated, so its listening socket stays open across
+  # the restart and new connections wait for it rather than being refused.
+
+  - name: Restart pgBouncer
+    service:
+      name: pgbouncer
+      state: restarted
+    become: true
+    when: pgbouncer_enabled | bool
+
+  - name: Wait for this node to stream from its leader again
+    include_tasks: members.yaml
+    vars:
+      update_software_wait: true
+    when: is_ha_cluster | bool
+
+  - name: Wait for Postgres to accept connections again
+    command:
+      argv:
+      - "{{ pg_path }}/bin/pg_isready"
+      - --host=/var/run/postgresql
+      - --port={{ pg_port }}
+    register: update_software_ready
+    changed_when: false
+    retries: 30
+    delay: 2
+    until: update_software_ready.rc == 0
+    become: true
+    become_user: postgres
+    when: not is_ha_cluster | bool

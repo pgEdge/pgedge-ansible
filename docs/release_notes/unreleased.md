@@ -18,7 +18,36 @@ Overview, and creates a fresh copy of this page in the same pull request.
 
 ### Added
 
+- The new [`update_software`](../roles/update_software.md) role applies minor
+  updates to a deployed cluster's software. Each sample playbook runs it as
+  its last play, where it does nothing until a run asks for it with
+  `-e permit_software_updates=true`. It then updates every package the
+  collection installed to the newest version the repositories offer, and
+  etcd to `etcd_version`, restarting what needs it, one host at a time:
+
+    - The pgEdge nodes go zone by zone. A zone's replicas go first, then its
+      leader, after a switchover to an updated replica, so no zone's primary
+      restarts in place. Each node's Patroni, Postgres and etcd are stopped
+      before its packages change and started afterwards, and the next node
+      waits until it streams from its leader again.
+    - The Spock and Snowflake extensions are updated on each zone's primary
+      where their packages ship a newer version.
+    - The HAProxy hosts follow, one at a time.
+    - pgBackRest is updated last, on every pgEdge node and backup server at
+      once, because a client and repository host on different versions
+      refuse each other. A running backup stops it.
+
+  The run reports what it will update, and in what order, before it stops
+  anything. It refuses to start when `pg_allow_restart` is `false`, and a run
+  that stops partway resumes where it stopped. A run with nothing to update
+  changes nothing. (#76)
+
 ### Changed
+
+- `etcd_version` and `etcd_install_dir` are defaults of `role_config` rather
+  than of `install_etcd` and `setup_etcd`, so `update_software` can compare a
+  node's etcd with the release the collection installs. Their defaults and
+  meaning are unchanged. (#76)
 
 - `init_server` refuses a `cluster_name` that contains a hyphen on
   Debian-based systems. Debian runs each cluster as the

@@ -95,6 +95,7 @@ nav:
       - wipe_cluster: roles/wipe_cluster.md
       - remove_zone: roles/remove_zone.md
       - recover_postgres: roles/recover_postgres.md
+      - update_software: roles/update_software.md
       - install_lakekeeper: roles/install_lakekeeper.md
       - setup_lakekeeper: roles/setup_lakekeeper.md
       - install_coldfront: roles/install_coldfront.md

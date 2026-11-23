@@ -76,9 +76,14 @@ committed. It also sets up the backup servers before the pgEdge nodes, since the
 restore reads from them, and runs `setup_pgedge` with `pgedge_seed_zone` set to
 the restored zone. See [Recovering a Cluster from Backup](recovery.md).
 
+[`update_software`](roles/update_software.md) comes after the whole sequence,
+in a play of its own, and does nothing unless a run sets
+`permit_software_updates`. It then applies minor updates to the software the
+sequence installed, restarting one host at a time.
+
 ## Role Categories
 
-The roles in this collection fall into six categories.
+The roles in this collection fall into seven categories.
 
 ### Configuration Foundation
 
@@ -123,6 +128,12 @@ The roles in this collection fall into six categories.
 | [`recover_postgres`](roles/recover_postgres.md) | Builds the cluster's Postgres from a backup, in place of `setup_postgres`. |
 | [`wipe_cluster`](roles/wipe_cluster.md) | Tears down every cluster component except the backups, ahead of a redeployment or a recovery. |
 | [`remove_zone`](roles/remove_zone.md) | Detaches one zone from a running cluster, clearing it from every other zone and resetting its databases. |
+
+### Maintenance
+
+| Role | Description |
+|------|-------------|
+| [`update_software`](roles/update_software.md) | Applies minor updates to a deployed cluster's software, restarting one host at a time. |
 
 ### ColdFront Tiered Storage
 

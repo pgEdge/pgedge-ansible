@@ -1,0 +1,71 @@
+---
+
+# Update pgBackRest everywhere at once, last of all.
+#
+# A pgBackRest client and the repository host it talks to over SSH must run
+# exactly the same version, so from the moment the first host has the new one
+# until the last does, WAL archiving fails between them. Postgres keeps every
+# segment it could not archive and tries again, so nothing is lost, but the
+# window is kept as short as possible: every host updates together, and
+# pgBackRest has no daemon to restart afterwards.
+#
+# A backup running across the change would fail, so none may be running.
+# The scheduled backups run from cron, and one could still start in the
+# moment between this check and the update; it would fail and be retried at
+# its next schedule.
+
+- name: Look for a running pgBackRest backup
+  shell: |-
+    pgrep -a pgbackrest | grep -E ' backup(:[a-z]+)?( |$)' || true
+  register: update_software_backups
+  changed_when: false
+  become: true
+  when: "'pgedge-pgbackrest' in update_software_names"
+
+- name: Ensure no pgBackRest backup is running anywhere in the cluster
+  assert:
+    that:
+    - running | length == 0
+    fail_msg: >-
+      A pgBackRest backup is running on {{ running | join(', ') }}. Updating
+      pgBackRest now would make it fail. Run this again when it has finished;
+      everything else is already updated.
+  vars:
+    running: >-
+      {{ ansible_play_hosts | map('extract', hostvars)
+         | selectattr('update_software_backups.stdout', 'defined')
+         | selectattr('update_software_backups.stdout')
+         | map(attribute='inventory_hostname') | list }}
+  run_once: true
+
+- name: Update pgBackRest
+  package:
+    name: pgedge-pgbackrest
+    state: latest
+    lock_timeout: 300
+  retries: 5
+  delay: 20
+  register: result
+  until: result is success
+  become: true
+  when: inventory_hostname in update_software_backrest_hosts
+
+# The RHEL package hands its log directory back to its own owner when it is
+# updated. A backup server runs pgBackRest as backup_repo_user, which could then
+# no longer write its log there, until the next deployment run gave the
+# directory back. setup_backrest gives the directory the same owner and mode;
+# on a pgEdge node pgBackRest runs as postgres.
+
+- name: Give pgBackRest's log directory back to the user that runs it
+  file:
+    path: /var/log/pgbackrest
+    state: directory
+    owner: "{{ owner }}"
+    group: "{{ owner }}"
+    mode: "0700"
+  vars:
+    owner: >-
+      {{ backup_repo_user if inventory_hostname in groups['backup'] | default([])
+         else 'postgres' }}
+  become: true
+  when: inventory_hostname in update_software_backrest_hosts

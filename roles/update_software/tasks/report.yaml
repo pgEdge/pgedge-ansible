@@ -1,0 +1,52 @@
+---
+
+# What the update would change, host by host, and the order it goes in.
+
+- name: Report what the update changes
+  debug:
+    msg: "{{ lines if lines else 'Nothing to update.' }}"
+  run_once: true
+  vars:
+    lines: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts -%}
+      {%-   set v = hostvars[h] -%}
+      {%-   for p in v.update_software_packages + v.update_software_backrest -%}
+      {%-     set _ = out.append(h ~ ': ' ~ p.name ~ ' ' ~ p.installed
+                                 ~ ' -> ' ~ p.available) -%}
+      {%-   endfor -%}
+      {%-   if v.update_software_etcd_from -%}
+      {%-     set _ = out.append(h ~ ': etcd ' ~ v.update_software_etcd_from
+                                 ~ ' -> ' ~ etcd_version) -%}
+      {%-   endif -%}
+      {%-   if v.update_software_patroni_from -%}
+      {%-     set _ = out.append(h ~ ': Patroni runs '
+                                 ~ v.update_software_patroni_from
+                                 ~ ', older than the version installed') -%}
+      {%-   endif -%}
+      {%-   if v.update_software_stopped -%}
+      {%-     set _ = out.append(h ~ ': stopped, and started again: '
+                                 ~ v.update_software_stopped | join(', ')) -%}
+      {%-   endif -%}
+      {%-   if v.update_software_stale -%}
+      {%-     set _ = out.append(h ~ ': still running replaced software: '
+                                 ~ v.update_software_stale | join(', ')) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for h in update_software_order -%}
+      {%-   set v = hostvars[h] -%}
+      {%-   set _ = out.append('Step ' ~ loop.index ~ ': ' ~ h ~ ' (zone '
+                               ~ v.zone ~ (', its leader, after a switchover'
+                                           if h == v.zone_primary
+                                              and v.is_ha_cluster | default(false) | bool
+                                           else '') ~ ')') -%}
+      {%- endfor -%}
+      {%- if update_software_proxy_order -%}
+      {%-   set _ = out.append('Then, one at a time: '
+                               ~ update_software_proxy_order | join(', ')) -%}
+      {%- endif -%}
+      {%- if update_software_backrest_hosts -%}
+      {%-   set _ = out.append('Last, pgBackRest at once on: '
+                               ~ update_software_backrest_hosts | join(', ')) -%}
+      {%- endif -%}
+      {{ out }}
