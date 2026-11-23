@@ -48,8 +48,18 @@ Overview, and creates a fresh copy of this page in the same pull request.
 
 - `etcd_version` and `etcd_install_dir` are defaults of `role_config` rather
   than of `install_etcd` and `setup_etcd`, so `update_software` can compare a
-  node's etcd with the release the collection installs. Their defaults and
-  meaning are unchanged. (#76)
+  node's etcd with the release the collection installs. Their meaning is
+  unchanged. (#76)
+
+- `etcd_version` defaults to 3.6.17 rather than 3.6.5. A new node gets 3.6.17.
+  A deployed node keeps its etcd until a run with `permit_software_updates`
+  brings it to the new default, one node at a time. An inventory that sets
+  `etcd_version` keeps its own release. (#76)
+
+- `spock_version` defaults to `5.0` rather than `5.0.4`, and is documented as
+  reserved for future use. It will name the major version of Spock to install.
+  No role reads it yet, and the newest Spock the repositories offer is still
+  installed. (#76)
 
 - `init_server` refuses a `cluster_name` that contains a hyphen on
   Debian-based systems. Debian runs each cluster as the

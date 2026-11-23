@@ -7,7 +7,7 @@ operational distributed coordination layer for Patroni.
 ## etcd_version
 
 - Type: String
-- Default: `3.6.5`
+- Default: `3.6.17`
 - Description: This parameter specifies the etcd release to install. The
   release archive is downloaded from etcd's GitHub releases.
 

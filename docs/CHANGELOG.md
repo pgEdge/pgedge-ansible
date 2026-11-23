@@ -20,7 +20,9 @@ in full.
 ### Changed
 
 - `etcd_version` and `etcd_install_dir` move to `role_config`'s defaults,
-  unchanged. (#76)
+  and `etcd_version` defaults to 3.6.17. (#76)
+- `spock_version` defaults to `5.0` and is documented as reserved: it will
+  name the Spock major version to install, and nothing reads it yet. (#76)
 - `init_server` refuses a `cluster_name` that contains a hyphen on
   Debian-based systems, whose `postgresql@` service cannot start such a
   cluster. (EE-41)

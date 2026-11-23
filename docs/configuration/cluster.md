@@ -457,9 +457,9 @@ tls_validity_days: 365
 ## spock_version
 
 - Type: String
-- Default: `5.0.4`
-- Description: This parameter specifies the minimum version of the Spock
-  extension to install. The latest available version is always installed.
+- Default: `5.0`
+- Description: **Currently unused**. This parameter will specify the major version
+  of the Spock extension to install. The latest available version is always installed.
 
 !!! warning "Security"
     Never commit passwords to version control. Use Ansible Vault or environment
