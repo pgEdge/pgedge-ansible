@@ -37,6 +37,9 @@ in full.
   `setup_patroni` creates Debian clusters through a script of its own instead
   of the Patroni package's, which read the cluster's name out of the scope.
   (EE-41)
+- `finalize_backrest` no longer fails on a zone whose timeline is 10 or
+  later. It read the timeline's history file under a lowercase hex name.
+  (#77)
 
 ## v2.2.0
 

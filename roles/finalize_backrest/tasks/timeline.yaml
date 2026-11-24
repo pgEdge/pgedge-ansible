@@ -7,6 +7,10 @@
 # moves to a new timeline only at its next restartpoint, so just after a
 # failover it can still report the old one, and a backup already taken on the
 # new timeline would look unrestorable and be replaced by a full one.
+#
+# Postgres names history files in uppercase hex, and to_hex() returns
+# lowercase, so the name is folded with upper(). Without it the two agree only
+# up to timeline 9, and from 0000000A on the file is not found.
 
 - name: Read this cluster's timeline and its history
   community.postgresql.postgresql_query:
@@ -16,8 +20,9 @@
     query: >-
       SELECT timeline_id,
              CASE WHEN timeline_id > 1
-                  THEN pg_read_file('pg_wal/' || lpad(to_hex(timeline_id), 8, '0')
-                                    || '.history')
+                  THEN pg_read_file('pg_wal/' ||
+                                    upper(lpad(to_hex(timeline_id), 8, '0')) ||
+                                    '.history')
                   ELSE '' END AS history
         FROM pg_control_checkpoint()
   register: backrest_timeline
