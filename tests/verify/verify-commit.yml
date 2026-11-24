@@ -117,13 +117,14 @@
     when: inventory_hostname == first_node_in_zone
 
   # A history line reads "parent<TAB>switchpoint<TAB>reason". Timeline 1 has no
-  # history file, and nothing branched before it.
+  # history file, and nothing branched before it. History files are named in
+  # uppercase hex, and to_hex() returns lowercase.
 
   - name: Read the history that led to that timeline
     become_user: postgres
     command: >
       psql -d postgres -t -A -c
-      "SELECT pg_read_file('pg_wal/' || lpad(to_hex(timeline_id), 8, '0')
+      "SELECT pg_read_file('pg_wal/' || upper(lpad(to_hex(timeline_id), 8, '0'))
               || '.history')
          FROM pg_control_checkpoint() WHERE timeline_id > 1"
     register: history

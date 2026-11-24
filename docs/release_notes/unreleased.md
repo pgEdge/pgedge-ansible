@@ -105,3 +105,14 @@ Overview, and creates a fresh copy of this page in the same pull request.
   zone and to clone a replica. A configuration directory left behind by a
   node whose data is gone is cleared before the cluster is created again.
   (EE-41)
+
+- `finalize_backrest` no longer fails on a zone whose primary is on timeline
+  10 or later. To check that the newest backup can restore the cluster, it
+  reads the current timeline's history file, and it built the file's name
+  with `to_hex()`, which returns lowercase hex. Postgres names history files
+  in uppercase, so from timeline 10 the role asked for `0000000a.history`
+  while the file was `0000000A.history`, and the deployment playbook failed.
+  Every switchover or failover moves a zone to a new timeline, so a zone
+  reached this after nine of them. The role now folds the name to uppercase,
+  and so does the end-to-end check in `tests/verify/verify-commit.yml` that
+  reads the same file. (#77)
