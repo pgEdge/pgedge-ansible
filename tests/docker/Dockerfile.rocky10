@@ -24,10 +24,14 @@ RUN dnf -y install systemd openssh-server openssh-clients python3 sudo iproute p
 # one of them until its EPEL trees fell a day behind: a refresh that took
 # its index asked the others for files they had already pruned, and its
 # own copies were too slow to arrive before dnf gave up.
+# EPEL 10 builds a tree for each RHEL minor release, and the unversioned 10
+# tree points at whichever minor EPEL currently targets, which can move past
+# the Rocky minor in this image. The path names this image's minor instead,
+# as Fedora's mirror list does for a Rocky host.
 # install_repos finds epel-release already installed and leaves it alone;
 # the package marks the file as config, so an upgrade keeps these edits.
 RUN dnf -y install epel-release && \
-    sed -i '/^\[epel\]/,/^\[/{ s|^metalink=|#metalink=|; s|^#baseurl=.*|baseurl=https://ftp-osl.osuosl.org/pub/fedora-epel/10/Everything/$basearch/ https://dl.fedoraproject.org/pub/epel/10/Everything/$basearch/| }' \
+    sed -i '/^\[epel\]/,/^\[/{ s|^metalink=|#metalink=|; s|^#baseurl=.*|baseurl=https://ftp-osl.osuosl.org/pub/fedora-epel/${releasever_major}.${releasever_minor}/Everything/$basearch/ https://dl.fedoraproject.org/pub/epel/${releasever_major}.${releasever_minor}/Everything/$basearch/| }' \
         /etc/yum.repos.d/epel.repo && \
     dnf clean all
 
