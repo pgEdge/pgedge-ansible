@@ -13,24 +13,52 @@
   tags:
   - debug
 
+# The systemd settings below go in drop-ins rather than in coredump.conf and
+# system.conf under /etc/systemd, which EL10 no longer installs: its systemd
+# keeps the defaults in /usr/lib/systemd and leaves /etc for the
+# administrator's overrides. Every supported distribution's systemd reads
+# these drop-in directories.
+
+- name: Create the systemd drop-in directories for core dumps
+  file:
+    path: "/etc/systemd/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+  - coredump.conf.d
+  - system.conf.d
+  become: true
+  tags:
+  - debug
+
 - name: Limit core dump processing to 32GB each, and 64GB total
-  blockinfile:
-    path: /etc/systemd/coredump.conf
-    marker: "# {mark} ANSIBLE MANAGED"
-    insertafter: "EOF"
-    block: |
+  copy:
+    dest: /etc/systemd/coredump.conf.d/50-pgedge.conf
+    content: |
+      # Managed by Ansible (pgedge.platform init_server).
+      [Coredump]
       ProcessSizeMax=32G
       ExternalSizeMax=32G
       MaxUse=64G
+    owner: root
+    group: root
+    mode: '0644'
   become: true
   tags:
   - debug
 
 - name: Set the default systemd core limit to "infinity"
-  lineinfile:
-    path: /etc/systemd/system.conf
-    regexp: "^#?DefaultLimitCORE="
-    line: "DefaultLimitCORE=infinity:infinity"
+  copy:
+    dest: /etc/systemd/system.conf.d/50-pgedge.conf
+    content: |
+      # Managed by Ansible (pgedge.platform init_server).
+      [Manager]
+      DefaultLimitCORE=infinity:infinity
+    owner: root
+    group: root
+    mode: '0644'
   become: true
   tags:
   - debug

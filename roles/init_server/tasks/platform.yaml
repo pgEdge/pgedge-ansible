@@ -4,12 +4,32 @@
 # (which is the DEFAULT on Debian systems), logging out of a shell will trigger
 # systemd to deallocate all shared memory segments owned by that user. This can
 # instantly crash Postgres, so we must ensure this is disabled globally.
+#
+# The setting goes in a drop-in rather than in /etc/systemd/logind.conf, which
+# EL10 no longer installs: its systemd keeps the defaults in /usr/lib/systemd
+# and leaves /etc for the administrator's overrides. Every supported
+# distribution's systemd reads logind.conf.d, and a package upgrade never
+# touches it.
+
+- name: Create the systemd-logind drop-in directory
+  file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
 
 - name: Ensure RemoveIPC setting is disabled system-wide
-  lineinfile:
-    path: /etc/systemd/logind.conf
-    line: RemoveIPC=no
-    regexp: '^#?RemoveIPC='
+  copy:
+    dest: /etc/systemd/logind.conf.d/50-pgedge.conf
+    content: |
+      # Managed by Ansible (pgedge.platform init_server).
+      [Login]
+      RemoveIPC=no
+    owner: root
+    group: root
+    mode: '0644'
   register: ipc_status
   become: true
 

@@ -85,14 +85,16 @@ change.
 
 When you enable `debug_pgedge`, this role configures `systemd-coredump`
 settings, sets appropriate storage limits, and configures kernel parameters
-to allow unlimited core dump sizes.
+to allow unlimited core dump sizes. The systemd settings go in drop-in files
+under `/etc/systemd/coredump.conf.d/` and `/etc/systemd/system.conf.d/`.
 
 ### RemoveIPC
 
-This role disables the `RemoveIPC` setting in `systemd-logind.conf`. This
-prevents systemd from removing shared memory segments when a user session
-ends, which can disrupt running Postgres instances. The logind service
-restarts only if the setting was changed.
+This role disables the `RemoveIPC` setting of `systemd-logind` in the drop-in
+file `/etc/systemd/logind.conf.d/50-pgedge.conf`. This prevents systemd from
+removing shared memory segments when a user session ends, which can disrupt
+running Postgres instances. The logind service restarts only if the file was
+changed.
 
 ### Host File Management
 
@@ -145,9 +147,10 @@ inventory hosts:
 | `{{ backup_repo_path }}/.ssh/id_ed25519` | New | SSH private key for the backup OS user. |
 | `{{ backup_repo_path }}/.ssh/authorized_keys` | New | Authorized keys file for backup user SSH access. |
 | `/etc/hosts` | Modified | Updated with cluster node entries. |
-| `/etc/systemd/logind.conf` | Modified | Disables `RemoveIPC` to prevent shared memory disruption. |
+| `/etc/systemd/logind.conf.d/50-pgedge.conf` | New | Disables `RemoveIPC` to prevent shared memory disruption. |
 | `/etc/security/limits.conf` | Modified | Configures PAM to allow unlimited core files. |
-| `/etc/systemd/coredump.conf` | Modified | Limits total stored core files to 64 GB. |
+| `/etc/systemd/coredump.conf.d/50-pgedge.conf` | New | Limits core dump processing to 32 GB each and stored core files to 64 GB. |
+| `/etc/systemd/system.conf.d/50-pgedge.conf` | New | Sets the default core file size limit to unlimited. |
 
 ## Platform-Specific Behavior
 

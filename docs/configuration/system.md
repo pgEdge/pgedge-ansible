@@ -2,7 +2,7 @@
 
 These parameters affect the base operating system configuration on inventory
 hosts. The collection supports Debian and RHEL variant Linux systems including
-Debian 12 and 13, Ubuntu 24.04 and 26.04, Rocky Linux 9, and similar
+Debian 12 and 13, Ubuntu 24.04 and 26.04, Rocky Linux 9 and 10, and similar
 distributions.
 
 ## debug_pgedge

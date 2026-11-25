@@ -1,0 +1,60 @@
+# Rocky's own image, which follows the current 10.x release, as the Rocky 9
+# image does. Rocky 10 builds for x86-64-v3, so the host's CPU needs AVX2.
+FROM rockylinux/rockylinux:10
+
+RUN cat <<EOF > /etc/dnf/dnf.conf
+[main]
+gpgcheck=1
+installonly_limit=3
+clean_requirements_on_remove=True
+best=True
+skip_if_unavailable=False
+max_parallel_downloads=10
+fastestmirror=True
+EOF
+
+RUN dnf -y install systemd openssh-server openssh-clients python3 sudo iproute passwd && \
+    dnf clean all
+
+# Fetch EPEL from a fixed list of mirrors instead of Fedora's mirror list.
+# The mirror list also accepts the previous days' repomd.xml, and with
+# fastestmirror a stale CDN-fronted mirror can win every time. Its index
+# names files that every mirror has since pruned, so each one returns 404
+# and the run fails. These mirrors sync directly. mirrors.kernel.org was
+# one of them until its EPEL trees fell a day behind: a refresh that took
+# its index asked the others for files they had already pruned, and its
+# own copies were too slow to arrive before dnf gave up.
+# EPEL 10 builds a tree for each RHEL minor release, and the unversioned 10
+# tree points at whichever minor EPEL currently targets, which can move past
+# the Rocky minor in this image. The path names this image's minor instead,
+# as Fedora's mirror list does for a Rocky host.
+# install_repos finds epel-release already installed and leaves it alone;
+# the package marks the file as config, so an upgrade keeps these edits.
+RUN dnf -y install epel-release && \
+    sed -i '/^\[epel\]/,/^\[/{ s|^metalink=|#metalink=|; s|^#baseurl=.*|baseurl=https://ftp-osl.osuosl.org/pub/fedora-epel/${releasever_major}.${releasever_minor}/Everything/$basearch/ https://dl.fedoraproject.org/pub/epel/${releasever_major}.${releasever_minor}/Everything/$basearch/| }' \
+        /etc/yum.repos.d/epel.repo && \
+    dnf clean all
+
+RUN useradd -m -s /bin/bash ansible && \
+    echo 'ansible ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ansible && \
+    chmod 440 /etc/sudoers.d/ansible && \
+    mkdir -p /home/ansible/.ssh && \
+    chown ansible:ansible /home/ansible/.ssh && \
+    chmod 700 /home/ansible/.ssh
+
+# Rocky ships /etc/shadow with mode 0000, which root can read only with a
+# capability that bypasses file permissions. On GitHub's Ubuntu 24.04
+# runners, the runner's AppArmor unix-chkpwd profile is applied to this
+# image's unix_chkpwd, since the privileged containers run without a
+# profile of their own, and it does not grant that capability, so
+# pam_unix's account check fails and sshd refuses every login. With mode
+# 0400 root reads the file as its owner.
+RUN chmod 0400 /etc/shadow
+
+COPY authorized_keys /home/ansible/.ssh/authorized_keys
+RUN chown ansible:ansible /home/ansible/.ssh/authorized_keys && \
+    chmod 600 /home/ansible/.ssh/authorized_keys
+
+RUN ssh-keygen -A && systemctl enable sshd
+
+CMD ["/usr/sbin/init"]

@@ -30,6 +30,7 @@ The collection has been validated on the following Linux platforms:
 - Ubuntu 24.04 (Noble Numbat)
 - Ubuntu 26.04 (Resolute Raccoon)
 - Rocky Linux 9
+- Rocky Linux 10
 
 The collection may also work on other Debian or RHEL variants, but
 compatibility with those distributions has not been validated.
