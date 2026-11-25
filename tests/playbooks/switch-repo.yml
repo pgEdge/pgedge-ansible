@@ -9,8 +9,14 @@
   - repo_environment is defined and repo_environment != 'release'
   - repo_url | default('') | length == 0
   block:
+  # replace rather than sed: the e2e tests run the deployment a second time and
+  # fail on any change, and replace reports one only when it edits the file.
+  # The pattern swaps the first "release" on each line, as sed's s/// does.
   - name: Switch pgEdge yum repo
-    command: sed -i 's/release/{{ repo_environment }}/' /etc/yum.repos.d/pgedge.repo
+    replace:
+      path: /etc/yum.repos.d/pgedge.repo
+      regexp: '^(.*?)release'
+      replace: '\g<1>{{ repo_environment }}'
     when: ansible_facts['os_family'] == 'RedHat'
     become: true
 
@@ -21,7 +27,10 @@
     become: true
 
   - name: Switch pgEdge apt repo
-    command: sed -i 's/release/{{ repo_environment }}/' /etc/apt/sources.list.d/pgedge.sources
+    replace:
+      path: /etc/apt/sources.list.d/pgedge.sources
+      regexp: '^(.*?)release'
+      replace: '\g<1>{{ repo_environment }}'
     when: ansible_facts['os_family'] == 'Debian'
     become: true
 
