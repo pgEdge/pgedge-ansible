@@ -15,6 +15,7 @@ Release notes start with the release after v1.1.0. The Changelog describes
 v1.1.0 and earlier releases.
 
 - [Unreleased](release_notes/unreleased.md)
+- [v2.3.0](release_notes/v2.3.0.md)
 - [v2.2.0](release_notes/v2.2.0.md)
 - [v2.1.0](release_notes/v2.1.0.md)
 - [v2.0.0](release_notes/v2.0.0.md)

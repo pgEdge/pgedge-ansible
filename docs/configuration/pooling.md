@@ -46,17 +46,17 @@ of the zone can become that leader.
   configured and no pooled endpoint exists. It belongs in the vars of the
   `pgedge` group.
 
-  Pooling is a property of the cluster rather than of a node, and the
-  `init_server` role rejects an inventory whose pgEdge nodes disagree about it.
-  A zone that pooled only some of its nodes would have a pooled endpoint that
-  worked until the Patroni leader moved to a node with no pooler, at which
-  point the endpoint would have no backend at all — and the direct endpoint
-  cannot stand in for it, because the two resolve against different client
-  authentication rules.
+    Pooling is a property of the cluster rather than of a node, and the
+    `init_server` role rejects an inventory whose pgEdge nodes disagree about it.
+    A zone that pooled only some of its nodes would have a pooled endpoint that
+    worked until the Patroni leader moved to a node with no pooler, at which
+    point the endpoint would have no backend at all — and the direct endpoint
+    cannot stand in for it, because the two resolve against different client
+    authentication rules.
 
-  Set `pgbouncer_auth_password` alongside it. The pooler's own PostgreSQL login
-  is written to disk, so `init_server` refuses to deploy a pooled cluster while
-  that password is still the default.
+    Set `pgbouncer_auth_password` alongside it. The pooler's own PostgreSQL login
+    is written to disk, so `init_server` refuses to deploy a pooled cluster while
+    that password is still the default.
 
 In the following example, the inventory gives every node in the cluster a
 pooled endpoint:

@@ -12,10 +12,10 @@ in your pgEdge cluster.
   when they occur during data synchronization. The available options provide
   different levels of intervention:
 
-  - `discard` skips only the offending statement and continues replication.
-  - `transdiscard` skips the entire offending transaction and continues.
-  - `sub_disable` disables the subscription and requires manual intervention
-    to re-enable it.
+    - `discard` skips only the offending statement and continues replication.
+    - `transdiscard` skips the entire offending transaction and continues.
+    - `sub_disable` disables the subscription and requires manual intervention
+      to re-enable it.
 
 See the
 [Spock documentation](https://docs.pgedge.com/platform/exception#spockexception_behaviour)
