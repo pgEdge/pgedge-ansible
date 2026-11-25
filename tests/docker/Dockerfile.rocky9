@@ -20,12 +20,14 @@ RUN dnf -y install systemd openssh-server openssh-clients python3 sudo iproute p
 # The mirror list also accepts the previous days' repomd.xml, and with
 # fastestmirror a stale CDN-fronted mirror can win every time. Its index
 # names files that every mirror has since pruned, so each one returns 404
-# and the run fails. These mirrors sync directly, and dnf tries them in
-# order, so dl.fedoraproject.org only serves if both of them fail.
+# and the run fails. These mirrors sync directly. mirrors.kernel.org was
+# one of them until its EPEL trees fell a day behind: a refresh that took
+# its index asked the others for files they had already pruned, and its
+# own copies were too slow to arrive before dnf gave up.
 # install_repos finds epel-release already installed and leaves it alone;
 # the package marks the file as config, so an upgrade keeps these edits.
 RUN dnf -y install epel-release && \
-    sed -i '/^\[epel\]/,/^\[/{ s|^metalink=|#metalink=|; s|^#baseurl=.*|baseurl=https://mirrors.kernel.org/fedora-epel/9/Everything/$basearch/ https://ftp-osl.osuosl.org/pub/fedora-epel/9/Everything/$basearch/ https://dl.fedoraproject.org/pub/epel/9/Everything/$basearch/| }' \
+    sed -i '/^\[epel\]/,/^\[/{ s|^metalink=|#metalink=|; s|^#baseurl=.*|baseurl=https://ftp-osl.osuosl.org/pub/fedora-epel/9/Everything/$basearch/ https://dl.fedoraproject.org/pub/epel/9/Everything/$basearch/| }' \
         /etc/yum.repos.d/epel.repo && \
     dnf clean all
 
