@@ -12,6 +12,7 @@ on:
           - all
           - debian12
           - rocky9
+          - rocky10
       environment:
         description: Package repository environment
         type: choice

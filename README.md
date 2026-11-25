@@ -39,6 +39,7 @@ platforms:
 - Ubuntu 24.04 / Noble Numbat
 - Ubuntu 26.04 / Resolute Raccoon
 - Rocky Linux 9
+- Rocky Linux 10
 
 The collection may also work with other Debian or RHEL variants, but the
 pgEdge team has not validated compatibility.

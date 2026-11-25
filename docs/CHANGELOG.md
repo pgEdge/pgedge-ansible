@@ -29,6 +29,10 @@ in full.
 
 ### Fixed
 
+- `init_server` writes its systemd settings to drop-in files, so it works on
+  Rocky Linux 10, which installs no `logind.conf`, `coredump.conf` or
+  `system.conf` in `/etc/systemd/`, and Rocky Linux 10 joins the validated
+  platforms. Lines that earlier releases added to those files stay. (#80)
 - The end-to-end tests pass the repository client certificate to every
   deployment: the Ultra-HA node-add and switchover steps, both workflows'
   zone-join jobs, and `tests/run-test.sh`, which reads it from

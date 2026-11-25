@@ -14,6 +14,16 @@ Overview, and creates a fresh copy of this page in the same pull request.
 
 ## Upgrading from v2.2.0
 
+`init_server` now writes its systemd settings to drop-in files under
+`/etc/systemd/` rather than editing the main configuration files there; see
+[Fixed](#fixed). On a host deployed by an earlier release, the lines those
+releases added stay where they are: `RemoveIPC=no` in
+`/etc/systemd/logind.conf`, and with `debug_pgedge`, the `ANSIBLE MANAGED`
+block in `/etc/systemd/coredump.conf` and `DefaultLimitCORE` in
+`/etc/systemd/system.conf`. They set the same values as the drop-ins, so they
+do no harm and can stay or be removed. The first run after upgrading creates
+the drop-ins and restarts `systemd-logind` once.
+
 ## Changes
 
 ### Added
@@ -76,6 +86,19 @@ Overview, and creates a fresh copy of this page in the same pull request.
   hyphen. (EE-41)
 
 ### Fixed
+
+- `init_server` works on Rocky Linux 10 and other EL10 distributions. Their
+  systemd keeps its default configuration in `/usr/lib/systemd/` and installs
+  no `logind.conf`, `coredump.conf` or `system.conf` in `/etc/systemd/`, so
+  the task that disables `RemoveIPC` stopped every deployment with
+  "Destination /etc/systemd/logind.conf does not exist", and with
+  `debug_pgedge`, the default, the core dump settings would have failed the
+  same way. The role now writes each setting to a drop-in file named
+  `50-pgedge.conf` in `/etc/systemd/logind.conf.d/`,
+  `/etc/systemd/coredump.conf.d/` and `/etc/systemd/system.conf.d/`, which
+  every supported distribution reads. Rocky Linux 10 joins the validated
+  platforms. The e2e tests gain Rocky 10 images and a `rocky10` choice for
+  the workflows' `os` input. (#80)
 
 - The end-to-end tests pass the repository client certificate to every
   deployment run. Hosts that never had the certificate installed failed to

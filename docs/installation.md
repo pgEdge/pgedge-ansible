@@ -21,6 +21,7 @@ Each target node must run one of the following:
 - Ubuntu 24.04 (Noble Numbat)
 - Ubuntu 26.04 (Resolute Raccoon)
 - Rocky Linux 9
+- Rocky Linux 10
 
 The collection may work with other Debian or RHEL variants, but the pgEdge team
 has not validated compatibility. The Ansible user on each target node must
