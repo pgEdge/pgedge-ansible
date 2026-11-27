@@ -19,12 +19,12 @@ in full.
 ## v2.3.0
 
 This release applies minor software updates to a deployed cluster: the new
-`update_software` role updates one host at a time, and never restarts a
-zone's primary in place. Rocky Linux 10 joins the validated platforms. On
-Debian-based systems, Patroni replicas start with a per-zone `patroni_scope`,
-and `init_server` refuses a `cluster_name` with a hyphen. Hosts deployed by
-earlier releases keep the systemd lines those releases added; see
-[Upgrading from v2.2.0](release_notes/v2.3.0.md#upgrading-from-v220).
+`update_software` role updates one host at a time, and on Ultra-HA never
+restarts a zone's primary in place. Rocky Linux 10 joins the validated
+platforms. On Debian-based systems, Patroni replicas start with a per-zone
+`patroni_scope`, and `init_server` refuses a `cluster_name` with a hyphen.
+Hosts deployed by earlier releases keep the systemd lines those releases added;
+see [Upgrading from v2.2.0](release_notes/v2.3.0.md#upgrading-from-v220).
 
 The [release notes](release_notes/v2.3.0.md#changes) describe each change
 in full.
