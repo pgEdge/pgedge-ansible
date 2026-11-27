@@ -36,8 +36,8 @@ pg_port: 5433
   OS user. The value primarily determines defaults for other path variables.
   Override this parameter only when your system uses a non-standard location.
 
-  - For RHEL-family systems, the default is `/var/lib/pgsql`.
-  - For Debian-family systems, the default is `/var/lib/postgresql`.
+    - For RHEL-family systems, the default is `/var/lib/pgsql`.
+    - For Debian-family systems, the default is `/var/lib/postgresql`.
 
 In the following example, the inventory specifies a custom home directory:
 
@@ -53,9 +53,9 @@ pg_home: /home/postgres
   binaries and libraries. Override this parameter only for custom
   installations.
 
-  - For RHEL-family systems, the default is `/usr/pgsql-{{ pg_version }}`.
-  - For Debian-family systems, the default is
-    `/usr/lib/postgresql/{{ pg_version }}`.
+    - For RHEL-family systems, the default is `/usr/pgsql-{{ pg_version }}`.
+    - For Debian-family systems, the default is
+      `/usr/lib/postgresql/{{ pg_version }}`.
 
 In the following example, the inventory specifies a custom binary path:
 
@@ -70,10 +70,10 @@ pg_path: /opt/postgresql/17
 - Description: This parameter specifies the Postgres data directory. Override
   this parameter only for custom installation locations.
 
-  - For RHEL-family systems, the default is
-    `{{ pg_home }}/{{ pg_version }}/data`.
-  - For Debian-family systems, the default is
-    `{{ pg_home }}/{{ pg_version }}/{{ cluster_name }}`.
+    - For RHEL-family systems, the default is
+      `{{ pg_home }}/{{ pg_version }}/data`.
+    - For Debian-family systems, the default is
+      `{{ pg_home }}/{{ pg_version }}/{{ cluster_name }}`.
 
 In the following example, the inventory specifies a custom data directory:
 
@@ -90,16 +90,16 @@ pg_data: /data/postgresql
   least-privilege model and only include entries for known users and database
   combinations. Each rule dictionary accepts the following fields:
 
-  - `contype` specifies the connection type such as `local`, `host`, or
-    `hostssl`; the default is `host`.
-  - `users` specifies a comma-separated list of database users; the default
-    is `postgres`.
-  - `databases` specifies a comma-separated list of databases; the default
-    is `postgres`.
-  - `method` specifies the authentication method; the default is
-    `scram-sha-256`.
-  - `source` specifies the IP address and mask or hostname of allowed
-    connections; the default is `127.0.0.1/32`.
+    - `contype` specifies the connection type such as `local`, `host`, or
+      `hostssl`; the default is `host`.
+    - `users` specifies a comma-separated list of database users; the default
+      is `postgres`.
+    - `databases` specifies a comma-separated list of databases; the default
+      is `postgres`.
+    - `method` specifies the authentication method; the default is
+      `scram-sha-256`.
+    - `source` specifies the IP address and mask or hostname of allowed
+      connections; the default is `127.0.0.1/32`.
 
 In the following example, the inventory adds a custom HBA rule for SSL
 connections from a specific network:
@@ -121,20 +121,20 @@ custom_hba_rules:
   need to name the parameters you want to change. The parameters work the same
   way on a simple cluster and on an Ultra-HA cluster.
 
-  - Names are matched without regard to case, as Postgres matches them, so
-    `TimeZone` overrides the collection's default `timezone`.
-  - YAML booleans become `on` and `off`. Numbers are written as numbers, and
-    every other value as a quoted string, so `work_mem: 64MB` works as
-    written.
-  - A `null` value removes a collection default, and Postgres then uses its
-    built-in value.
-  - `shared_preload_libraries` accepts a list or a comma-separated string, and
-    its libraries are **added** to the ones the collection loads. `spock` and
-    `snowflake` always load first, followed by `pg_stat_statements`. Setting
-    `shared_preload_libraries` to `null` drops `pg_stat_statements` but never
-    `spock` or `snowflake`.
-  - Removing a parameter from `pg_parameters` removes it from the cluster at the
-    next run.
+    - Names are matched without regard to case, as Postgres matches them, so
+      `TimeZone` overrides the collection's default `timezone`.
+    - YAML booleans become `on` and `off`. Numbers are written as numbers, and
+      every other value as a quoted string, so `work_mem: 64MB` works as
+      written.
+    - A `null` value removes a collection default, and Postgres then uses its
+      built-in value.
+    - `shared_preload_libraries` accepts a list or a comma-separated string, and
+      its libraries are **added** to the ones the collection loads. `spock` and
+      `snowflake` always load first, followed by `pg_stat_statements`. Setting
+      `shared_preload_libraries` to `null` drops `pg_stat_statements` but never
+      `spock` or `snowflake`.
+    - Removing a parameter from `pg_parameters` removes it from the cluster at the
+      next run.
 
 In the following example, the inventory tunes memory, logs slow statements,
 and loads `auto_explain` beside the collection's libraries:
